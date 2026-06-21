@@ -1,0 +1,40 @@
+"""base.py — Interface de stockage.
+
+Aujourd'hui : SqliteStore (local). Demain : SupabaseStore (online), même interface.
+Le pipeline ne dépend que de cette interface → swap trivial.
+"""
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+
+class BaseStore(ABC):
+    @abstractmethod
+    def get_listing(self, listing_id: str) -> dict | None: ...
+
+    @abstractmethod
+    def has_images(self, listing_id: str) -> bool: ...
+
+    @abstractmethod
+    def touch_listing(self, listing_id: str) -> None:
+        """Marque une annonce vue (status active + last_seen=maintenant) sans
+        re-télécharger la fiche/les images — pour la dédup incrémentale."""
+
+    @abstractmethod
+    def upsert_listing(self, norm: dict, images: list[dict] | None) -> tuple[str, float | None]:
+        """Insère/maj une annonce. Retourne (statut, ancien_prix) où
+        statut ∈ {"new","changed","unchanged"}. Enregistre price_history si besoin."""
+
+    @abstractmethod
+    def mark_missing_inactive(self, source: str, seen_ids: set[str],
+                              deal_type: str | None = None) -> int: ...
+
+    @abstractmethod
+    def record_scan_run(self, source: str, scanned: int, new: int,
+                        removed: int, changed: int, notes: str = "") -> None: ...
+
+    @abstractmethod
+    def khet_stats(self) -> list[dict]: ...
+
+    def close(self) -> None:  # optionnel
+        pass

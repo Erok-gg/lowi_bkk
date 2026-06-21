@@ -1,0 +1,24 @@
+{
+  "_comment": "Variables de scraping FazWaz — MODIFIABLES sans toucher au code. base_url, recherches (par deal_type), pagination, débit, taille image, etc.",
+  "source": "fazwaz",
+  "base_url": "https://www.fazwaz.com",
+  "user_agent": "Mozilla/5.0 (compatible; bkk-perso/0.1; personal research)",
+  "rate_limit_seconds": 2.5,
+  "image_rate_limit_seconds": 0.4,
+  "timeout_seconds": 30,
+  "max_pages": 2,
+  "respect_robots": true,
+  "searches": [
+    { "path": "/condo-for-sale/thailand/bangkok", "deal_type": "sale" },
+    { "path": "/condo-for-rent/thailand/bangkok", "deal_type": "rent" }
+  ],
+  "page_param": "page",
+  "fetch_detail": true,
+  "image": {
+    "width": 1024,
+    "height": 768,
+    "format": "webp",
+    "quality": 80,
+    "max_per_listing": 6
+  }
+}

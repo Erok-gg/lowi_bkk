@@ -1,0 +1,6 @@
+# Scraper local — dépendances minimales (pas de Supabase tant qu'on est en local).
+requests>=2.31
+beautifulsoup4>=4.12
+Pillow>=10.2
+# partie online (Supabase via Postgres direct) :
+psycopg[binary]>=3.1

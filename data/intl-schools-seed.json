@@ -1,0 +1,26 @@
+{
+  "_comment": "Écoles internationales de Bangkok ABSENTES ou mal taguées dans OSM — ajoutées manuellement pour garantir l'exhaustivité. Coordonnées approximatives, éditables. Fusionné dans public/data/pois.geojson par `npm run geo:pois`. Pour en ajouter une : copier un objet feature, mettre name + [lng, lat]. Ne pas dupliquer une école déjà présente via OSM (dédup auto par nom+position).",
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "category": "school", "name": "Bangkok Patana School", "source": "seed" },
+      "geometry": { "type": "Point", "coordinates": [100.6314, 13.6699] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "category": "school", "name": "Denla British School (DBS)", "source": "seed" },
+      "geometry": { "type": "Point", "coordinates": [100.4078, 13.8009] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "category": "school", "name": "KIS International School", "source": "seed" },
+      "geometry": { "type": "Point", "coordinates": [100.5792, 13.7666] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "category": "school", "name": "St. Andrews International School Sukhumvit 107", "source": "seed" },
+      "geometry": { "type": "Point", "coordinates": [100.6063, 13.6840] }
+    }
+  ]
+}

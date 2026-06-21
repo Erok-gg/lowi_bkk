@@ -1,0 +1,24 @@
+{
+  "_comment": "Variables de scraping DDproperty — MODIFIABLES sans toucher au code. App Next.js : données dans __NEXT_DATA__. Détail accessible via session (cookie Cloudflare obtenu en parcourant la liste d'abord).",
+  "source": "ddproperty",
+  "base_url": "https://www.ddproperty.com",
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  "rate_limit_seconds": 3.0,
+  "image_rate_limit_seconds": 0.4,
+  "timeout_seconds": 30,
+  "max_pages": 2,
+  "page_param": "page",
+  "respect_robots": true,
+  "fetch_detail": true,
+  "searches": [
+    { "path": "/en/property-for-sale?freetext=Bangkok&property_type_code%5B%5D=CONDO&listing_type=sale", "deal_type": "sale" },
+    { "path": "/en/property-for-rent?freetext=Bangkok&property_type_code%5B%5D=CONDO&listing_type=rent", "deal_type": "rent" }
+  ],
+  "image": {
+    "width": 1024,
+    "height": 768,
+    "format": "webp",
+    "quality": 80,
+    "max_per_listing": 6
+  }
+}
