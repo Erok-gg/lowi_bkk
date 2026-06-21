@@ -1,7 +1,7 @@
 # Ne pas uploader vers Vercel (runtime Next.js uniquement) :
 scraper/
 scripts/
-data/
+/data/
 .claude/
 .env
 .env*.local
