@@ -96,7 +96,13 @@ def main() -> None:
         image_rate_limit_seconds=cfg.get("image_rate_limit_seconds", 0.4),
     )
     matcher = KhetMatcher()
+    load_env()  # SUPABASE_* pour le store et le Storage
     store = make_store(args.store)
+
+    from pipeline.storage import SupabaseStorage
+    storage = SupabaseStorage.from_env() if args.store == "supabase" else None
+    if storage:
+        print(f"→ images : upload Storage (bucket '{storage.bucket}')")
 
     print(f"▶ Scan {args.source} (max_pages={cfg.get('max_pages')}, limit={args.limit})")
 
@@ -141,6 +147,11 @@ def main() -> None:
             process_images(fetcher, norm["id"], norm["image_urls"], OUTPUT_DIR, cfg["image"])
             if need_images else None
         )
+
+        # upload des images vers Storage (object path = storage_path)
+        if storage and images:
+            for im in images:
+                storage.upload(str(OUTPUT_DIR / im["storage_path"]), im["storage_path"])
 
         status, old_price = store.upsert_listing(norm, images)
         if status == "new":
