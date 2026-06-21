@@ -1,0 +1,9 @@
+# Ne pas uploader vers Vercel (runtime Next.js uniquement) :
+scraper/
+scripts/
+data/
+.claude/
+.env
+.env*.local
+supabase/
+*.md
