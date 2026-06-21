@@ -14,7 +14,7 @@ Outil **perso, non public** : carte interactive de Bangkok découpée par quarti
 | Backend/stockage | **Supabase (Postgres + Storage)** | DB relationnelle + stockage images webp |
 | Scraping | **Python**, pattern adaptateurs | Modulaire ; ajouter un site = un module |
 | Images | **webp 1024×768** optimisées (Pillow) | Efficacité / poids |
-| Accès privé | **Basic auth** (middleware Next.js, mot de passe en env) | Simple, compatible voyage |
+| Accès privé | **Mot de passe partagé** (page `/login` + cookie, runtime Node — `lib/auth.ts`) | Le middleware Edge plante sur Vercel (`__dirname` injecté par leur runtime, bundle pourtant propre) → gate en Node |
 | Posture scraping | Perso non-commercial, ~hebdo, robots.txt respecté | Risque ToS accepté, documenté |
 
 ## Principe directeur : TOUT modulaire / interchangeable
@@ -100,7 +100,8 @@ Usage perso non-commercial. Fréquence ~hebdo (pas de boucle serrée). Respect r
   - [x] **Online Supabase FAIT** : projet **Lowi_bkk** (`qbyxxbtzxxzuofiptnxe`, région ap-southeast-1), schéma appliqué + **RLS activé**. `store/supabase_store.py` (psycopg, **connexion Postgres directe via pooler session** `aws-1-ap-southeast-1.pooler.supabase.com:5432`, bypass RLS) ; `run.py --store supabase`. Peuplé (~20 biens, images, price_history, scan_runs ; dédup OK online). App Next lit Supabase via `lib/listings-db.ts` quand `SUPABASE_DB_URL` est défini (`pg`, sinon fallback SQLite). Connexions/clés dans `.env.local` + `scraper/.env` (gitignorés).
   - [x] **Images → Supabase Storage** : bucket public `listings`, upload via clé secret (en-tête `apikey`) — `scraper/pipeline/storage.py`, backfill `scraper/upload_images.py`, sync auto au scrape (`run.py --store supabase`). App résout l'URL via `lib/image-url.ts` (Storage si `NEXT_PUBLIC_SUPABASE_URL`, sinon `/api/img` local).
   - [x] **GitHub** : repo isolé (`git init` dans Lowi_bkk, le parent était le home), poussé sur `Erok-gg/lowi_bkk` (public ; site protégé par basic-auth). Secrets hors repo (`.env.local`, `scraper/.env` gitignorés).
-  - **Reste online** : déploiement **Vercel** (connecter le repo + variables d'env + basic-auth).
+  - [x] **Déploiement Vercel FAIT** : **https://lowi-bkk.vercel.app** (projet `lowi-bkk`, team schoenaueranthony). Build Next 15.4.11, env (`SUPABASE_DB_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `BASIC_AUTH_PASSWORD`). Accès : page `/login`, mot de passe **anthoicare** (cookie `lowi_auth`). Données Supabase + images Storage.
+    - **Pièges rencontrés** : (1) `framework: None` sur le projet → 404 partout → corrigé en `nextjs` ; (2) middleware Edge → `__dirname is not defined` (runtime Vercel) même en no-op → remplacé par gate cookie en Node ; (3) Next **downgradé 15.5.19 → 15.4.11** ; (4) protection SSO Vercel désactivée (on utilise notre mot de passe).
 - [~] **Phase UI** — *(AVANT l'online, décision user)* Infrastructure d'interface :
   - [x] Header **Lowi re-teinté sombre** (`components/LowiHeader.tsx`, logo « lowi » police MCTen `public/fonts/mcten.ttf`, accent or), **hamburger + drawer**, langues FR/EN/TH, sans auth Supabase ✓
   - [x] **Carte plein écran** en vue par défaut (`/`), header au-dessus, layout flex ✓
