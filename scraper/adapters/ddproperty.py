@@ -192,8 +192,8 @@ class DdpropertyAdapter(BaseAdapter):
         html = fetcher.get_text(rec["source_url"], referer=self.config["base_url"])
         if html:
             self._enrich_from_detail(html, rec)
-            # Freehold uniquement : tenureCode 'F' = Freehold, on écarte le reste
-            if rec.get("_skip"):
+            # Freehold uniquement — seulement pour la vente (une location n'a pas de tenure)
+            if rec.get("deal_type") == "sale" and rec.get("_skip"):
                 return None
 
         rec["raw_data"] = {k: stub.get(k) for k in

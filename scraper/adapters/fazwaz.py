@@ -23,7 +23,8 @@ from pipeline.fetch import Fetcher
 
 ID_RE = re.compile(r"-u(\d+)(?:[/?#]|$)")
 PRICE_RE = re.compile(r"฿\s*([0-9][0-9,]*)")
-LISTING_HREF_RE = re.compile(r"/property-(sales|rentals)/[^\"'#?]+-u\d+")
+# location FazWaz = /property-rent/ (singulier), vente = /property-sales/
+LISTING_HREF_RE = re.compile(r"/property-(sales|rent)/[^\"'#?]+-u\d+")
 OWNERSHIP_RE = re.compile(r'"ownership":\[\[(\d+)\]')
 # Code d'ownership de l'unité FazWaz → (quota, freehold). Codes "Quota" = freehold ;
 # leasehold/company (autres codes) = écartés (on ne scrape que du freehold).
@@ -110,7 +111,7 @@ class FazwazAdapter(BaseAdapter):
         for url, d in by_url.items():
             clean = url.split("?")[0].split("#")[0]
             m = ID_RE.search(clean)
-            deal = "rent" if "/property-rentals/" in clean else "sale"
+            deal = "rent" if "/property-rent/" in clean else "sale"
             stub = {
                 "source_url": clean,
                 "source_id": m.group(1) if m else clean,
@@ -137,8 +138,9 @@ class FazwazAdapter(BaseAdapter):
 
         if self.config.get("fetch_detail"):
             self._enrich_from_detail(fetcher, rec)
-            # Freehold uniquement : on écarte le leasehold/company
-            if rec.get("_skip"):
+            # Freehold uniquement — UNIQUEMENT pour la vente. Une location n'a pas
+            # de notion de quota/tenure → on ne la jette jamais.
+            if rec.get("deal_type") == "sale" and rec.get("_skip"):
                 return None
 
         rec["raw_data"] = {k: stub.get(k) for k in

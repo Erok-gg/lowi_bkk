@@ -23,9 +23,13 @@ def normalize(rec: dict) -> dict:
 
     source = rec["source"]
     source_id = rec.get("source_id") or rec["source_url"]
+    deal = rec.get("deal_type") or "sale"
+    # deal_type dans l'id : une même unité peut être listée en vente ET en location
+    # (ex. FazWaz partage l'id d'unité) → 2 lignes distinctes, indispensable pour
+    # le rendement et le « vendu ET loué ».
 
     return {
-        "id": f"{source}:{source_id}",
+        "id": f"{source}:{deal}:{source_id}",
         "source": source,
         "source_url": rec["source_url"],
         "title": rec.get("title"),

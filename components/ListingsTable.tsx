@@ -4,29 +4,33 @@ import { useEffect, useMemo, useState } from "react";
 import type { Listing } from "@/lib/types";
 import { applyFilters, filtersToParams, filtersFromParams, type Filters } from "@/lib/filters";
 
-/* ───────────────────────── Réglette double-curseur ───────────────────────── */
+/* ───────────────────────── Réglette double-curseur (activable) ───────────── */
 function RangeSlider({
-  label, min, max, step, lo, hi, onChange, fmt,
+  label, min, max, step, lo, hi, onChange, fmt, active, onToggleActive,
 }: {
   label: string; min: number; max: number; step: number;
   lo: number; hi: number; onChange: (lo: number, hi: number) => void;
-  fmt: (v: number) => string;
+  fmt: (v: number) => string; active: boolean; onToggleActive: (v: boolean) => void;
 }) {
   const span = max - min || 1;
   const leftPct = ((lo - min) / span) * 100;
   const rightPct = ((hi - min) / span) * 100;
   return (
-    <div className="mb-4">
+    <div className={`mb-4 ${active ? "" : "opacity-50"}`}>
       <div className="mb-1 flex items-center justify-between text-xs text-text-muted">
-        <span>{label}</span>
+        <label className="flex cursor-pointer items-center gap-1.5">
+          <input type="checkbox" checked={active}
+            onChange={(e) => onToggleActive(e.target.checked)} className="accent-violet-fluo" />
+          {label}
+        </label>
         <span className="text-text">{fmt(lo)} – {fmt(hi)}</span>
       </div>
       <div className="range-dual">
         <div className="range-track" />
         <div className="range-fill" style={{ left: `${leftPct}%`, right: `${100 - rightPct}%` }} />
-        <input type="range" min={min} max={max} step={step} value={lo}
+        <input type="range" min={min} max={max} step={step} value={lo} disabled={!active}
           onChange={(e) => onChange(Math.min(+e.target.value, hi), hi)} />
-        <input type="range" min={min} max={max} step={step} value={hi}
+        <input type="range" min={min} max={max} step={step} value={hi} disabled={!active}
           onChange={(e) => onChange(lo, Math.max(+e.target.value, lo))} />
       </div>
     </div>
@@ -62,7 +66,7 @@ function MultiToggle({
 }
 
 /* ───────────────────────────── helpers ───────────────────────────── */
-type SortKey = "name" | "khet" | "price" | "bedrooms" | "bathrooms" | "areaSqm";
+type SortKey = "name" | "khet" | "dealType" | "price" | "pricePerSqm" | "bedrooms" | "bathrooms" | "areaSqm";
 const fmtInt = (v: number) => Math.round(v).toLocaleString("fr-FR");
 const name = (l: Listing) => l.condoName || l.title || "—";
 
@@ -102,21 +106,30 @@ export default function ListingsTable({ listings }: { listings: Listing[] }) {
   const [khetSel, setKhetSel] = useState<Set<string>>(init.khet);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "price", dir: -1 });
 
-  // Filtres courants (objet partagé) — ne pousse dans l'URL que les bornes resserrées
+  // Activation par réglette (case à cocher). Active d'office si l'URL portait le critère.
+  const [active, setActive] = useState<Record<string, boolean>>({
+    price: init.priceMin != null || init.priceMax != null,
+    area: init.areaMin != null || init.areaMax != null,
+    ppsqm: init.ppsqmMin != null || init.ppsqmMax != null,
+    beds: init.bedsMin != null || init.bedsMax != null,
+    baths: init.bathsMin != null || init.bathsMax != null,
+  });
+  const setAct = (k: string, v: boolean) => setActive((p) => ({ ...p, [k]: v }));
+
+  // Filtres courants : une fourchette ne compte que si sa case est cochée
   const filters = useMemo<Filters>(() => ({
-    priceMin: price[0] > pB0 ? price[0] : undefined,
-    priceMax: price[1] < pB1 ? price[1] : undefined,
-    areaMin: area[0] > aB0 ? area[0] : undefined,
-    areaMax: area[1] < aB1 ? area[1] : undefined,
-    ppsqmMin: ppsqm[0] > ppB0 ? ppsqm[0] : undefined,
-    ppsqmMax: ppsqm[1] < ppB1 ? ppsqm[1] : undefined,
-    bedsMin: beds[0] > 0 ? beds[0] : undefined,
-    bedsMax: beds[1] < bedMax ? beds[1] : undefined,
-    bathsMin: baths[0] > 0 ? baths[0] : undefined,
-    bathsMax: baths[1] < bathMax ? baths[1] : undefined,
+    priceMin: active.price ? price[0] : undefined,
+    priceMax: active.price ? price[1] : undefined,
+    areaMin: active.area ? area[0] : undefined,
+    areaMax: active.area ? area[1] : undefined,
+    ppsqmMin: active.ppsqm ? ppsqm[0] : undefined,
+    ppsqmMax: active.ppsqm ? ppsqm[1] : undefined,
+    bedsMin: active.beds ? beds[0] : undefined,
+    bedsMax: active.beds ? beds[1] : undefined,
+    bathsMin: active.baths ? baths[0] : undefined,
+    bathsMax: active.baths ? baths[1] : undefined,
     quota, deal, source: src, khet: khetSel,
-  }), [price, area, ppsqm, beds, baths, quota, deal, src, khetSel,
-       pB0, pB1, aB0, aB1, ppB0, ppB1, bedMax, bathMax]);
+  }), [active, price, area, ppsqm, beds, baths, quota, deal, src, khetSel]);
 
   // Sync vers l'URL (la carte relit ces params pour ses pinpoints)
   useEffect(() => {
@@ -138,6 +151,7 @@ export default function ListingsTable({ listings }: { listings: Listing[] }) {
       let va: string | number, vb: string | number;
       if (key === "name") { va = name(a).toLowerCase(); vb = name(b).toLowerCase(); }
       else if (key === "khet") { va = (a.khet || "").toLowerCase(); vb = (b.khet || "").toLowerCase(); }
+      else if (key === "dealType") { va = a.dealType; vb = b.dealType; }
       else { va = (a[key] ?? -Infinity) as number; vb = (b[key] ?? -Infinity) as number; }
       return va < vb ? -dir : va > vb ? dir : 0;
     });
@@ -152,7 +166,9 @@ export default function ListingsTable({ listings }: { listings: Listing[] }) {
   const cols: { key: SortKey; label: string; align?: string }[] = [
     { key: "name", label: "Nom de l'annonce" },
     { key: "khet", label: "Quartier" },
+    { key: "dealType", label: "Type" },
     { key: "price", label: "Prix", align: "text-right" },
+    { key: "pricePerSqm", label: "Prix/m²", align: "text-right" },
     { key: "bedrooms", label: "Ch.", align: "text-right" },
     { key: "bathrooms", label: "SDB", align: "text-right" },
     { key: "areaSqm", label: "Surface", align: "text-right" },
@@ -163,17 +179,23 @@ export default function ListingsTable({ listings }: { listings: Listing[] }) {
       {/* ───── Filtres (colonne gauche) ───── */}
       <aside className="w-72 shrink-0 overflow-y-auto border-r border-violet-soft bg-surface/40 p-4">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-gold">Filtres</h2>
+        <p className="mb-2 text-[11px] text-text-faint">Coche une réglette pour l'activer.</p>
         <RangeSlider label="Prix (THB)" min={pB0} max={pB1} step={Math.max(1, Math.round((pB1 - pB0) / 100))}
           lo={price[0]} hi={price[1]} onChange={(a, b) => setPrice([a, b])}
+          active={!!active.price} onToggleActive={(v) => setAct("price", v)}
           fmt={(v) => (v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : fmtInt(v))} />
         <RangeSlider label="Surface (m²)" min={aB0} max={aB1} step={1}
-          lo={area[0]} hi={area[1]} onChange={(a, b) => setArea([a, b])} fmt={fmtInt} />
+          lo={area[0]} hi={area[1]} onChange={(a, b) => setArea([a, b])}
+          active={!!active.area} onToggleActive={(v) => setAct("area", v)} fmt={fmtInt} />
         <RangeSlider label="Prix/m² (THB)" min={ppB0} max={ppB1} step={Math.max(1, Math.round((ppB1 - ppB0) / 100))}
-          lo={ppsqm[0]} hi={ppsqm[1]} onChange={(a, b) => setPpsqm([a, b])} fmt={fmtInt} />
+          lo={ppsqm[0]} hi={ppsqm[1]} onChange={(a, b) => setPpsqm([a, b])}
+          active={!!active.ppsqm} onToggleActive={(v) => setAct("ppsqm", v)} fmt={fmtInt} />
         <RangeSlider label="Chambres" min={0} max={bedMax} step={1}
-          lo={beds[0]} hi={beds[1]} onChange={(a, b) => setBeds([a, b])} fmt={(v) => `${v}`} />
+          lo={beds[0]} hi={beds[1]} onChange={(a, b) => setBeds([a, b])}
+          active={!!active.beds} onToggleActive={(v) => setAct("beds", v)} fmt={(v) => `${v}`} />
         <RangeSlider label="Salles de bains" min={0} max={bathMax} step={1}
-          lo={baths[0]} hi={baths[1]} onChange={(a, b) => setBaths([a, b])} fmt={(v) => `${v}`} />
+          lo={baths[0]} hi={baths[1]} onChange={(a, b) => setBaths([a, b])}
+          active={!!active.baths} onToggleActive={(v) => setAct("baths", v)} fmt={(v) => `${v}`} />
 
         <MultiToggle label="Quota" selected={quota} onToggle={toggle(quota, setQuota)}
           options={[{ value: "foreigner", label: "Foreigner" }, { value: "thai", label: "Thai" }]} />
@@ -211,14 +233,20 @@ export default function ListingsTable({ listings }: { listings: Listing[] }) {
                   </a>
                 </td>
                 <td className="px-4 py-2.5 text-text-muted">{l.khet?.replace(" District", "") || "—"}</td>
+                <td className="px-4 py-2.5">
+                  <span className={l.dealType === "rent" ? "text-blue" : "text-gold"}>
+                    {l.dealType === "rent" ? "Location" : "Vente"}
+                  </span>
+                </td>
                 <td className="px-4 py-2.5 text-right">{l.price ? fmtInt(l.price) : "—"}</td>
+                <td className="px-4 py-2.5 text-right text-text-muted">{l.pricePerSqm ? fmtInt(l.pricePerSqm) : "—"}</td>
                 <td className="px-4 py-2.5 text-right">{l.bedrooms ?? "—"}</td>
                 <td className="px-4 py-2.5 text-right">{l.bathrooms ?? "—"}</td>
                 <td className="px-4 py-2.5 text-right">{l.areaSqm ? `${fmtInt(l.areaSqm)} m²` : "—"}</td>
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-10 text-center text-text-faint">
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-text-faint">
                 Aucun bien ne correspond aux filtres.
               </td></tr>
             )}

@@ -81,11 +81,19 @@ def main() -> None:
     ap.add_argument("--no-images", action="store_true", help="saute le traitement des images")
     ap.add_argument("--store", default="sqlite", choices=["sqlite", "supabase"],
                     help="destination : SQLite local (défaut) ou Supabase")
+    ap.add_argument("--deal-type", default=None, choices=["sale", "rent"],
+                    help="ne scraper qu'une catégorie (vente ou location)")
     args = ap.parse_args()
 
     cfg = load_config(args.source)
     if args.fetch_detail:
         cfg["fetch_detail"] = True
+    # filtre les recherches selon le deal_type (jour vente / jour location)
+    if args.deal_type:
+        cfg["searches"] = [s for s in cfg.get("searches", [])
+                           if s.get("deal_type") == args.deal_type]
+        if not cfg["searches"]:
+            sys.exit(f"Aucune recherche '{args.deal_type}' dans la config {args.source}")
 
     adapter = ADAPTERS[args.source](cfg)
     fetcher = Fetcher(
@@ -111,7 +119,7 @@ def main() -> None:
     price_alerts: list[str] = []
 
     for stub in adapter.list_urls(fetcher, limit=args.limit):
-        lid = f"{args.source}:{stub.get('source_id')}"
+        lid = f"{args.source}:{stub.get('deal_type') or 'sale'}:{stub.get('source_id')}"
         seen_ids.add(lid)
         n_total += 1
 
@@ -175,7 +183,8 @@ def main() -> None:
 
     removed = 0
     if args.full:
-        delisted = store.mark_missing_inactive(args.source, seen_ids)
+        # scope l'inactivation au deal_type scrapé (sinon on délisterait l'autre catégorie)
+        delisted = store.mark_missing_inactive(args.source, seen_ids, deal_type=args.deal_type)
         removed = len(delisted)
         # Délistés → on supprime leurs photos (Storage + lignes images), on garde
         # l'annonce en DB (inactive + delisted_at) pour l'historique/comparaison.
