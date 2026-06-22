@@ -62,6 +62,24 @@ export default function MapView() {
     map.on("load", async () => {
       applyThemeToBaseStyle(map);
 
+      // Biens (récupérés une fois) : servent aux compteurs par quartier ET aux pinpoints
+      let listings: Listing[] = [];
+      try {
+        const res = await fetch("/api/listings");
+        if (res.ok) {
+          const all: Listing[] = (await res.json()).listings ?? [];
+          const params = new URLSearchParams(window.location.search);
+          listings = applyUrlFilters(all, params);
+        }
+      } catch {
+        /* pas de DB / API */
+      }
+      // nb de biens par quartier (clé = khet, qui = name_en du GeoJSON via point-in-polygon)
+      const countByKhet: Record<string, number> = {};
+      for (const l of listings) {
+        if (l.khet) countByKhet[l.khet] = (countByKhet[l.khet] ?? 0) + 1;
+      }
+
       // Charge les quartiers (GeoJSON statique généré via Overpass)
       let data: GeoJSON.FeatureCollection | null = null;
       try {
@@ -75,9 +93,11 @@ export default function MapView() {
         return;
       }
 
-      // ids stables pour le feature-state (hover)
+      // ids stables (hover) + nb de biens par quartier
       data.features.forEach((f, i) => {
         if (f.id == null) f.id = i;
+        const name = (f.properties?.name_en || f.properties?.name) as string | undefined;
+        if (f.properties) f.properties.count = name ? countByKhet[name] ?? 0 : 0;
       });
 
       map.addSource(LAYERS.districtsSource, {
@@ -136,20 +156,36 @@ export default function MapView() {
         },
       });
 
-      // Labels des quartiers
+      // Labels des quartiers — GRANDS + nb de biens (en or), uniquement en dézoom
       map.addLayer({
         id: LAYERS.districtsLabel,
         type: "symbol",
         source: LAYERS.districtsSource,
+        maxzoom: 11.6, // disparaît dès qu'on zoome un peu
         layout: {
-          "text-field": ["coalesce", ["get", "name_en"], ["get", "name"]],
-          "text-size": 11,
+          "text-field": [
+            "format",
+            ["coalesce", ["get", "name_en"], ["get", "name"]],
+            {},
+            "\n",
+            {},
+            [
+              "concat",
+              ["to-string", ["get", "count"]],
+              ["case", [">", ["get", "count"], 1], " biens", " bien"],
+            ],
+            { "text-color": colors.districtLineHover, "font-scale": 1.15 },
+          ],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 9, 19, 11.6, 12],
           "text-font": ["Noto Sans Regular"],
+          "text-line-height": 1.3,
+          "text-allow-overlap": false,
+          "text-padding": 2,
         },
         paint: {
-          "text-color": colors.label,
+          "text-color": "#ece9f5",
           "text-halo-color": colors.labelHalo,
-          "text-halo-width": 1.4,
+          "text-halo-width": 1.8,
         },
       });
 
@@ -184,21 +220,16 @@ export default function MapView() {
       // Couches POI (métro, hôpitaux, écoles, bus, commerces…) — pilotées par poi-config
       await addPoiLayers(map);
 
-      // ── Pinpoints des biens (filtrés selon l'URL, partagés avec le tableau) ──
-      try {
-        const res = await fetch("/api/listings");
-        if (res.ok) {
-          const all: Listing[] = (await res.json()).listings ?? [];
-          const params = new URLSearchParams(window.location.search);
-          const listings = applyUrlFilters(all, params).filter(
-            (l) => l.lat != null && l.lng != null
-          );
-          listingsById.current = new Map(listings.map((l) => [l.id, l]));
+      // ── Pinpoints des biens (réutilise les biens déjà récupérés) ──
+      {
+        const geoListings = listings.filter((l) => l.lat != null && l.lng != null);
+        if (geoListings.length) {
+          listingsById.current = new Map(geoListings.map((l) => [l.id, l]));
           map.addSource("listings", {
             type: "geojson",
             data: {
               type: "FeatureCollection",
-              features: listings.map((l) => ({
+              features: geoListings.map((l) => ({
                 type: "Feature",
                 properties: { id: l.id },
                 geometry: { type: "Point", coordinates: [l.lng!, l.lat!] },
@@ -234,8 +265,6 @@ export default function MapView() {
             map.getCanvas().style.cursor = "";
           });
         }
-      } catch {
-        /* pas de DB / API : carte sans pinpoints */
       }
 
       // Clic → zoom plein cadre sur le quartier
