@@ -27,7 +27,17 @@ class BaseStore(ABC):
 
     @abstractmethod
     def mark_missing_inactive(self, source: str, seen_ids: set[str],
-                              deal_type: str | None = None) -> int: ...
+                              deal_type: str | None = None) -> list[str]:
+        """Passe en inactive les annonces non revues. Retourne la liste des ids
+        délistés (status→inactive, delisted_at=maintenant)."""
+
+    @abstractmethod
+    def get_image_paths(self, listing_id: str) -> list[str]:
+        """Chemins Storage des images d'une annonce (pour suppression)."""
+
+    @abstractmethod
+    def delete_images(self, listing_id: str) -> None:
+        """Supprime les lignes listing_images d'une annonce (fichiers délistés)."""
 
     @abstractmethod
     def record_scan_run(self, source: str, scanned: int, new: int,
@@ -35,6 +45,10 @@ class BaseStore(ABC):
 
     @abstractmethod
     def khet_stats(self) -> list[dict]: ...
+
+    @abstractmethod
+    def record_khet_snapshots(self) -> int:
+        """Fige les stats par quartier dans khet_snapshots (comparaison par date)."""
 
     def close(self) -> None:  # optionnel
         pass

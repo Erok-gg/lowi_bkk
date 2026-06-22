@@ -60,6 +60,9 @@ export function applyThemeToBaseStyle(map: MapLibreMap) {
         map.setPaintProperty(layer.id, "background-color", colors.background);
       } else if (/water|ocean|sea/i.test(layer.id) && layer.type === "fill") {
         map.setPaintProperty(layer.id, "fill-color", colors.water);
+      } else if (/boundary|admin/i.test(layer.id)) {
+        // masque les frontières admin du fond → évite le double trait avec nos quartiers
+        map.setLayoutProperty(layer.id, "visibility", "none");
       }
     } catch {
       // certaines couches n'ont pas la propriété — on ignore

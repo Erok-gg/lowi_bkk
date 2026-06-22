@@ -27,6 +27,7 @@ create table if not exists listings (
   status        text not null default 'active' check (status in ('active','inactive','sold')),
   first_seen    timestamptz not null default now(),
   last_seen     timestamptz not null default now(),
+  delisted_at   timestamptz,                  -- date de passage inactive/sold (délistage)
   raw_data      jsonb
 );
 create index if not exists idx_listings_khet   on listings (khet);
@@ -105,3 +106,31 @@ select
 from listings
 where street is not null
 group by street;
+
+-- Doublons inter-plateformes (mêmes biens sur 2 sources) — paires candidates.
+create or replace view cross_source_duplicates as
+select
+  a.id as id_a, a.source as source_a, a.condo_name as name_a,
+  b.id as id_b, b.source as source_b, b.condo_name as name_b,
+  a.bedrooms, a.area_sqm as area_a, b.area_sqm as area_b,
+  a.price as price_a, b.price as price_b, a.khet,
+  round((abs(a.lat - b.lat) + abs(a.lng - b.lng))::numeric, 5) as coord_delta
+from listings a
+join listings b
+  on a.source < b.source
+ and a.status = 'active' and b.status = 'active'
+ and a.lat is not null and b.lat is not null
+ and abs(a.lat - b.lat) < 0.0015 and abs(a.lng - b.lng) < 0.0015
+ and coalesce(a.bedrooms, -1) = coalesce(b.bedrooms, -1)
+ and (a.area_sqm is null or b.area_sqm is null
+      or abs(a.area_sqm - b.area_sqm) <= greatest(a.area_sqm, b.area_sqm) * 0.15);
+
+-- Snapshots par quartier (séries temporelles, comparaison par date)
+create table if not exists khet_snapshots (
+  id                   bigserial primary key,
+  taken_at             timestamptz not null default now(),
+  khet                 text not null,
+  active_count         integer,
+  avg_price_per_sqm    numeric,
+  median_price_per_sqm numeric
+);

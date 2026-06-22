@@ -49,3 +49,16 @@ class SupabaseStorage:
         except Exception as e:
             print(f"  upload erreur {object_path}: {e}")
             return False
+
+    def delete(self, object_path: str) -> bool:
+        url = f"{self.base}/storage/v1/object/{self.bucket}/{object_path}"
+        try:
+            r = self.session.delete(
+                url,
+                headers={"apikey": self.key, "Authorization": f"Bearer {self.key}"},
+                timeout=20,
+            )
+            return r.status_code in (200, 204, 404)  # 404 = déjà absent
+        except Exception as e:
+            print(f"  delete erreur {object_path}: {e}")
+            return False

@@ -20,7 +20,11 @@ create table if not exists listings (
   area_sqm real, price_per_sqm real, bedrooms integer, bathrooms integer,
   condo_name text, address_raw text, khet text, khwaeng text, street text,
   lat real, lng real, status text not null default 'active',
-  first_seen text not null, last_seen text not null, raw_data text
+  first_seen text not null, last_seen text not null, delisted_at text, raw_data text
+);
+create table if not exists khet_snapshots (
+  id integer primary key autoincrement, taken_at text not null, khet text not null,
+  active_count integer, avg_price_per_sqm real, median_price_per_sqm real
 );
 create table if not exists listing_images (
   id integer primary key autoincrement, listing_id text not null,
@@ -138,18 +142,33 @@ class SqliteStore(BaseStore):
             )
 
     def mark_missing_inactive(self, source: str, seen_ids: set[str],
-                              deal_type: str | None = None) -> int:
+                              deal_type: str | None = None) -> list[str]:
         q = "select id from listings where source=? and status='active'"
         params: list = [source]
         if deal_type:
             q += " and deal_type=?"
             params.append(deal_type)
         active = {r["id"] for r in self.db.execute(q, params).fetchall()}
-        missing = active - seen_ids
+        missing = list(active - seen_ids)
+        now = _now()
         for lid in missing:
-            self.db.execute("update listings set status='inactive' where id=?", (lid,))
+            self.db.execute(
+                "update listings set status='inactive', delisted_at=? where id=?", (now, lid)
+            )
         self.db.commit()
-        return len(missing)
+        return missing
+
+    def get_image_paths(self, listing_id: str) -> list[str]:
+        return [
+            r["storage_path"]
+            for r in self.db.execute(
+                "select storage_path from listing_images where listing_id=?", (listing_id,)
+            ).fetchall()
+        ]
+
+    def delete_images(self, listing_id: str) -> None:
+        self.db.execute("delete from listing_images where listing_id=?", (listing_id,))
+        self.db.commit()
 
     def record_scan_run(self, source: str, scanned: int, new: int,
                         removed: int, changed: int, notes: str = "") -> None:
@@ -169,6 +188,18 @@ class SqliteStore(BaseStore):
             "group by khet order by active_count desc"
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def record_khet_snapshots(self) -> int:
+        now = _now()
+        rows = self.khet_stats()
+        for r in rows:
+            self.db.execute(
+                "insert into khet_snapshots (taken_at,khet,active_count,avg_price_per_sqm,"
+                "median_price_per_sqm) values (?,?,?,?,?)",
+                (now, r["khet"], r["active_count"], r["avg_price_per_sqm"], None),
+            )
+        self.db.commit()
+        return len(rows)
 
     def close(self) -> None:
         self.db.close()

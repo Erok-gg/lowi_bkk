@@ -185,7 +185,7 @@ export default function MapView() {
         paint: {
           "text-color": "#ece9f5",
           "text-halo-color": colors.labelHalo,
-          "text-halo-width": 1.8,
+          "text-halo-width": 1.4,
         },
       });
 

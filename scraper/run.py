@@ -175,10 +175,25 @@ def main() -> None:
 
     removed = 0
     if args.full:
-        removed = store.mark_missing_inactive(args.source, seen_ids)
+        delisted = store.mark_missing_inactive(args.source, seen_ids)
+        removed = len(delisted)
+        # Délistés → on supprime leurs photos (Storage + lignes images), on garde
+        # l'annonce en DB (inactive + delisted_at) pour l'historique/comparaison.
+        for lid in delisted:
+            if storage:
+                for path in store.get_image_paths(lid):
+                    storage.delete(path)
+            store.delete_images(lid)
+        if delisted:
+            print(f"  ↓ {removed} délistées → photos supprimées, conservées en DB (inactive)")
 
     store.record_scan_run(args.source, n_total, n_new, removed, n_changed,
                           notes="full" if args.full else "partial")
+    # Snapshot des stats par quartier (séries temporelles)
+    try:
+        store.record_khet_snapshots()
+    except Exception as e:
+        print(f"  (snapshot khet ignoré : {e})")
 
     print("\n── Résumé ──")
     print(f"  scannées : {n_total} | nouvelles : {n_new} | changées : {n_changed} "

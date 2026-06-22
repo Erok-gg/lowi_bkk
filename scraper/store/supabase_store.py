@@ -103,17 +103,30 @@ class SupabaseStore(BaseStore):
             )
 
     def mark_missing_inactive(self, source: str, seen_ids: set[str],
-                              deal_type: str | None = None) -> int:
+                              deal_type: str | None = None) -> list[str]:
         q = "select id from listings where source=%s and status='active'"
         params: list = [source]
         if deal_type:
             q += " and deal_type=%s"
             params.append(deal_type)
         active = {r[0] for r in self.db.execute(q, params).fetchall()}
-        missing = active - seen_ids
+        missing = list(active - seen_ids)
+        now = _now()
         for lid in missing:
-            self.db.execute("update listings set status='inactive' where id=%s", (lid,))
-        return len(missing)
+            self.db.execute(
+                "update listings set status='inactive', delisted_at=%s where id=%s", (now, lid)
+            )
+        return missing
+
+    def get_image_paths(self, listing_id: str) -> list[str]:
+        return [
+            r[0] for r in self.db.execute(
+                "select storage_path from listing_images where listing_id=%s", (listing_id,)
+            ).fetchall()
+        ]
+
+    def delete_images(self, listing_id: str) -> None:
+        self.db.execute("delete from listing_images where listing_id=%s", (listing_id,))
 
     def record_scan_run(self, source: str, scanned: int, new: int,
                         removed: int, changed: int, notes: str = "") -> None:
@@ -131,6 +144,23 @@ class SupabaseStore(BaseStore):
             "from listings where khet is not null group by khet order by active_count desc"
         ).fetchall()
         return [{"khet": r[0], "active_count": r[1], "avg_price_per_sqm": r[2]} for r in rows]
+
+    def record_khet_snapshots(self) -> int:
+        now = _now()
+        rows = self.db.execute(
+            "select khet, count(*) filter (where status='active') as ac, "
+            "round(avg(price_per_sqm) filter (where status='active')) as avg, "
+            "percentile_cont(0.5) within group (order by price_per_sqm) "
+            "  filter (where status='active') as med "
+            "from listings where khet is not null group by khet"
+        ).fetchall()
+        for khet, ac, avg, med in rows:
+            self.db.execute(
+                "insert into khet_snapshots (taken_at,khet,active_count,avg_price_per_sqm,"
+                "median_price_per_sqm) values (%s,%s,%s,%s,%s)",
+                (now, khet, ac, avg, med),
+            )
+        return len(rows)
 
     def close(self) -> None:
         self.db.close()
