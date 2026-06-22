@@ -317,15 +317,9 @@ export default function MapView() {
 
       <Legend hidden={hidden} onToggle={toggleCategory} />
 
-      {/* Fiche bien au survol d'un pinpoint */}
+      {/* Fiche bien — position fixe SOUS le bloc Calques (haut-droite) */}
       {card && (
-        <div
-          className="absolute z-20"
-          style={{
-            left: Math.max(8, Math.min(card.x + 14, (containerRef.current?.clientWidth ?? 9999) - 336)),
-            top: Math.max(8, Math.min(card.y + 14, (containerRef.current?.clientHeight ?? 9999) - 360)),
-          }}
-        >
+        <div className="absolute right-4 top-[22rem] z-20">
           <div className="relative">
             <button
               onClick={() => setCard(null)}
