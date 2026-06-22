@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from adapters.fazwaz import FazwazAdapter  # noqa: E402
 from adapters.ddproperty import DdpropertyAdapter  # noqa: E402
+from adapters.propertyscout import PropertyscoutAdapter  # noqa: E402
 from pipeline.fetch import Fetcher  # noqa: E402
 from pipeline.normalize import normalize  # noqa: E402
 from pipeline.geo_match import KhetMatcher  # noqa: E402
@@ -31,7 +32,11 @@ from pipeline.images import process_images  # noqa: E402
 from pipeline.fiche import write_fiche  # noqa: E402
 from store.sqlite_store import SqliteStore  # noqa: E402
 
-ADAPTERS = {"fazwaz": FazwazAdapter, "ddproperty": DdpropertyAdapter}
+ADAPTERS = {
+    "fazwaz": FazwazAdapter,
+    "ddproperty": DdpropertyAdapter,
+    "propertyscout": PropertyscoutAdapter,
+}
 ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "config"
 OUTPUT_DIR = ROOT / "output"

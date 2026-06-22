@@ -1,0 +1,18 @@
+{
+  "_comment": "PropertyScout — app Next.js. Données dans __NEXT_DATA__ (pageProps.rentals.data sur les SERP). URLs séparées sales/rentals. robots autorise /en/*/.",
+  "source": "propertyscout",
+  "base_url": "https://propertyscout.co.th",
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  "rate_limit_seconds": 3.0,
+  "image_rate_limit_seconds": 0.4,
+  "timeout_seconds": 30,
+  "max_pages": 6,
+  "page_param": "page",
+  "respect_robots": true,
+  "fetch_detail": true,
+  "searches": [
+    { "path": "/en/bangkok/sales/", "deal_type": "sale" },
+    { "path": "/en/bangkok/rentals/", "deal_type": "rent" }
+  ],
+  "image": { "width": 1024, "height": 768, "format": "webp", "quality": 80, "max_per_listing": 6 }
+}
