@@ -176,16 +176,18 @@ export default function MapView() {
             ],
             { "text-color": colors.districtLineHover, "font-scale": 1.15 },
           ],
-          "text-size": ["interpolate", ["linear"], ["zoom"], 9, 19, 11.6, 12],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 9, 20, 11.6, 13],
           "text-font": ["Noto Sans Regular"],
           "text-line-height": 1.3,
-          "text-allow-overlap": false,
-          "text-padding": 2,
+          // toujours visibles : ne cèdent pas la place aux pins/POI
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
         },
         paint: {
           "text-color": "#ece9f5",
           "text-halo-color": colors.labelHalo,
-          "text-halo-width": 1.4,
+          "text-halo-width": 2.6,
+          "text-halo-blur": 0.4,
         },
       });
 
@@ -241,10 +243,10 @@ export default function MapView() {
             type: "circle",
             source: "listings",
             paint: {
-              // pins des BIENS : or Lowi + anneau blanc (distincts des POI)
+              // pins des BIENS : or Lowi, contour fin
               "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 6, 16, 11],
               "circle-color": "#c9a84c",
-              "circle-stroke-width": 2.5,
+              "circle-stroke-width": 0.5,
               "circle-stroke-color": "#ffffff",
               "circle-opacity": 1,
             },
@@ -266,6 +268,9 @@ export default function MapView() {
           });
         }
       }
+
+      // Labels quartiers TOUJOURS au-dessus (pins + POI)
+      if (map.getLayer(LAYERS.districtsLabel)) map.moveLayer(LAYERS.districtsLabel);
 
       // Clic → zoom plein cadre sur le quartier
       map.on("click", LAYERS.districtsFill, (e) => {
