@@ -19,6 +19,40 @@ from pipeline.fetch import Fetcher
 
 LD_RE = re.compile(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', re.S)
 ID_RE = re.compile(r"-(\d+)/?$")
+
+# ── Extraction du nom de condo depuis le titre Nestopa ──────────────────────
+# Le titre porte le nom du projet après "at/in <projet>" ou juste après le
+# préfixe "N Bed N Bath N sqm". On retire dimensions + adjectifs/bruit marketing.
+_DIM = re.compile(r"\b\d+(?:\.\d+)?[\s-]*(?:sq\.?\s*m\.?|sqm|bed(?:room)?s?|baths?|bathrooms?)\b", re.I)
+_FLOOR = re.compile(r"\bon\s+\d+(?:st|nd|rd|th)?\s+floor\b", re.I)
+_NOISE = re.compile(
+    r"\b(?:for\s+(?:sale|rent)|condo(?:minium)?|duplex|penthouse|studio|house|townhouse|villa|"
+    r"retail\s+space|corner|buy[\s-]?to[\s-]?let|spacious|stunning|exclusive|design|large|unique|"
+    r"modern|luxury|luxurious|beautiful|gorgeous|brand[\s-]?new|new|prime|rare|high[\s-]?end|"
+    r"well[\s-]?maintained|family|tranquil|renovated|with\s+garden|high\s+floor|riverfront|"
+    r"architect|fully\s+furnished|ready\s+to\s+move|upscale|massive|prestigious|elegant|cozy|"
+    r"bright|triplex|triple|with\s+triplex)\b",
+    re.I,
+)
+_PREP = re.compile(r"\b(?:at|in)\s+", re.I)
+
+
+def clean_condo_name(title: str | None) -> str | None:
+    """Déduit le nom du condo depuis un titre d'annonce Nestopa."""
+    if not title:
+        return None
+    # retire un éventuel préfixe "NBR — " issu d'un ancien titre
+    t = re.sub(r"^\d+BR\s*—\s*", "", title).split(",")[0]
+    t = _FLOOR.sub(" ", t)
+    m = list(_PREP.finditer(t))
+    cand = t[m[-1].end():] if m else _DIM.sub(" ", t)
+    cand = _NOISE.sub(" ", cand)
+    cand = _DIM.sub(" ", cand)
+    # retire mentions sale/rent isolées + ponctuation résiduelle
+    cand = re.sub(r"\b(?:sale|rent|bangkok)\b", " ", cand, flags=re.I)
+    cand = re.sub(r"\s+", " ", cand)
+    cand = re.sub(r"^[\s\-/:.]+|[\s\-/:.]+$", "", cand)
+    return cand.strip() or None
 # Le nom du Product ("1 Bedroom 1 Bathroom 46 Sq.m ...") est plus fiable que le
 # slug (qui perd les décimales : "38-5-sqm"). On parse le nom en priorité.
 BEDS_RE = re.compile(r"(\d+)\s*(?:bedroom|bed)\b", re.I)
@@ -118,7 +152,8 @@ class NestopaAdapter(BaseAdapter):
                         "bathrooms": int(baths.group(1)) if baths else None,
                         "lat": None,
                         "lng": None,
-                        "condo_name": p.get("name"),
+                        "condo_name": clean_condo_name(name) or name,
+                        "raw_title": name,
                         "district": self._match_khet(loc_slug),
                         "image_urls": [img] if img else [],
                     }
@@ -131,9 +166,7 @@ class NestopaAdapter(BaseAdapter):
         rec["source"] = self.source
         rec["currency"] = "THB"
         rec["amenities"] = []
-        name = stub.get("condo_name") or "Condo"
-        beds = stub.get("bedrooms")
-        rec["title"] = f"{beds}BR — {name}" if beds else name
+        rec["title"] = stub.get("raw_title") or stub.get("condo_name") or "Condo"
         rec["raw_data"] = {k: stub.get(k) for k in
                            ("condo_name", "bedrooms", "area_sqm", "district", "price")}
         return rec
