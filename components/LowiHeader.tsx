@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 const LINKS = [
   { href: "/", label: "Carte" },
   { href: "/biens", label: "Biens" },
+  { href: "/rendements", label: "Rendements" },
 ];
 const LANGS = ["FR", "EN", "TH"] as const;
 
