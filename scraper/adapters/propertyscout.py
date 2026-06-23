@@ -74,18 +74,18 @@ class PropertyscoutAdapter(BaseAdapter):
 
         for search in self.config["searches"]:
             deal = search["deal_type"]
+            base_path = urljoin(base + "/", search["path"].lstrip("/")).rstrip("/")
             for page in range(1, max_pages + 1):
-                url = urljoin(base + "/", search["path"].lstrip("/"))
-                if page > 1:
-                    url = f"{url}?{page_param}={page}"
+                # pagination par chemin : /en/bangkok/sales/page-2/
+                url = base_path + "/" if page == 1 else f"{base_path}/page-{page}/"
                 html = fetcher.get_text(url, referer=base)
                 if not html:
                     break
                 data = _next_data(html)
                 if not data:
                     break
-                items = (((data.get("props") or {}).get("pageProps") or {})
-                         .get("rentals") or {}).get("data") or []
+                pp = (data.get("props") or {}).get("pageProps") or {}
+                items = (pp.get("rentals") or {}).get("data") or []
                 if not items:
                     break
                 # map id -> URL de fiche depuis les ancres HTML
@@ -115,6 +115,9 @@ class PropertyscoutAdapter(BaseAdapter):
                     yielded += 1
                     if limit and yielded >= limit:
                         return
+                # plus de page suivante → on arrête
+                if not (pp.get("paginationLinks") or {}).get("nextLink"):
+                    break
 
     def parse_listing(self, fetcher: Fetcher, stub: dict) -> dict | None:
         rec = dict(stub)
