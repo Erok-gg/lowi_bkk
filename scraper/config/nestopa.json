@@ -1,0 +1,18 @@
+{
+  "_comment": "Nestopa — SPA, mais le flux /th-en/for-sale|for-rent expose 24 annonces/page en ld+json (Product). L'URL de fiche encode localisation+chambres+SDB+surface+condo. On pagine le flux global et on filtre Bangkok par l'URL (/property/bangkok-...). Pas de coords serveur → khet par texte. robots: * Allow / (bloque seulement bots IA).",
+  "source": "nestopa",
+  "base_url": "https://nestopa.com",
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  "rate_limit_seconds": 3.0,
+  "image_rate_limit_seconds": 0.4,
+  "timeout_seconds": 30,
+  "max_pages": 40,
+  "page_param": "page",
+  "respect_robots": true,
+  "fetch_detail": false,
+  "searches": [
+    { "path": "/th-en/for-sale", "deal_type": "sale" },
+    { "path": "/th-en/for-rent", "deal_type": "rent" }
+  ],
+  "image": { "width": 1024, "height": 768, "format": "webp", "quality": 80, "max_per_listing": 1 }
+}

@@ -3,8 +3,8 @@ import "./globals.css";
 import LowiHeader from "@/components/LowiHeader";
 
 export const metadata: Metadata = {
-  title: "Lowi BKK — Carte immobilière",
-  description: "Carte interactive immobilière de Bangkok (privé)",
+  title: "Lowi BKK — Real estate map",
+  description: "Interactive Bangkok real estate map (private)",
   robots: "noindex, nofollow",
 };
 
@@ -14,7 +14,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="fr">
+    <html lang="en">
       <body className="bg-anthracite-deep text-text antialiased">
         <div className="flex h-screen flex-col overflow-hidden">
           <LowiHeader />

@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from adapters.fazwaz import FazwazAdapter  # noqa: E402
 from adapters.ddproperty import DdpropertyAdapter  # noqa: E402
 from adapters.propertyscout import PropertyscoutAdapter  # noqa: E402
+from adapters.nestopa import NestopaAdapter  # noqa: E402
 from pipeline.fetch import Fetcher  # noqa: E402
 from pipeline.normalize import normalize  # noqa: E402
 from pipeline.geo_match import KhetMatcher  # noqa: E402
@@ -36,6 +37,7 @@ ADAPTERS = {
     "fazwaz": FazwazAdapter,
     "ddproperty": DdpropertyAdapter,
     "propertyscout": PropertyscoutAdapter,
+    "nestopa": NestopaAdapter,
 }
 ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "config"
@@ -88,6 +90,8 @@ def main() -> None:
                     help="destination : SQLite local (défaut) ou Supabase")
     ap.add_argument("--deal-type", default=None, choices=["sale", "rent"],
                     help="ne scraper qu'une catégorie (vente ou location)")
+    ap.add_argument("--geocode", action="store_true",
+                    help="complète street/coords manquants via Nominatim (1 req/s, caché)")
     args = ap.parse_args()
 
     cfg = load_config(args.source)
@@ -109,6 +113,11 @@ def main() -> None:
         image_rate_limit_seconds=cfg.get("image_rate_limit_seconds", 0.4),
     )
     matcher = KhetMatcher()
+    geocoder = None
+    if args.geocode:
+        from pipeline.geocode import Geocoder
+        geocoder = Geocoder()
+        print("→ géocodage Nominatim activé (street/coords manquants)")
     load_env()  # SUPABASE_* pour le store et le Storage
     store = make_store(args.store)
 
@@ -152,6 +161,20 @@ def main() -> None:
         khet = matcher.match(norm.get("lat"), norm.get("lng"))
         if khet:
             norm["khet"] = khet
+
+        # géocodage optionnel : complète street/coords manquants (ex. Nestopa)
+        if geocoder and norm.get("condo_name") and (
+            not norm.get("street") or norm.get("lat") is None
+        ):
+            res = geocoder.lookup(norm["condo_name"], norm.get("khet"))
+            if res:
+                if res.get("street") and not norm.get("street"):
+                    norm["street"] = res["street"]
+                if res.get("lat") and norm.get("lat") is None:
+                    norm["lat"], norm["lng"] = res["lat"], res["lng"]
+                    m2 = matcher.match(norm["lat"], norm["lng"])
+                    if m2 and not norm.get("khet"):
+                        norm["khet"] = m2
 
         need_images = (not args.no_images) and bool(norm.get("image_urls")) and (
             existing is None or not store.has_images(norm["id"])

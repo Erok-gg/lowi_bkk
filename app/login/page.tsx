@@ -37,22 +37,22 @@ function LoginForm() {
             bkk
           </span>
         </div>
-        <p className="mb-5 text-sm text-text-muted">Accès privé</p>
+        <p className="mb-5 text-sm text-text-muted">Private access</p>
         <input
           type="password"
           autoFocus
           value={pw}
           onChange={(e) => setPw(e.target.value)}
-          placeholder="Mot de passe"
+          placeholder="Password"
           className="mb-3 w-full rounded-md border border-violet-soft bg-anthracite-deep px-3 py-2 text-text outline-none focus:border-violet-fluo"
         />
-        {err && <p className="mb-3 text-sm text-red-400">Mot de passe incorrect.</p>}
+        {err && <p className="mb-3 text-sm text-red-400">Wrong password.</p>}
         <button
           type="submit"
           disabled={loading}
           className="w-full rounded-md bg-violet px-3 py-2 font-medium text-white transition hover:bg-violet-fluo disabled:opacity-50"
         >
-          {loading ? "…" : "Entrer"}
+          {loading ? "…" : "Enter"}
         </button>
       </form>
     </div>

@@ -278,7 +278,7 @@ export default function MapView() {
         if (!f) return;
         const props = f.properties as KhetProps;
         setCard(null);
-        setSelected(props.name_en || props.name || "Quartier");
+        setSelected(props.name_en || props.name || "District");
         const bounds = geometryBounds(f.geometry);
         if (bounds) {
           map.fitBounds(bounds, { padding: 40, duration: 800, maxZoom: 15 });
@@ -317,14 +317,14 @@ export default function MapView() {
 
       <Legend hidden={hidden} onToggle={toggleCategory} />
 
-      {/* Fiche bien — position fixe SOUS le bloc Calques (haut-droite) */}
+      {/* Property card — top-left of the screen (tooltip) */}
       {card && (
-        <div className="absolute right-4 top-[22rem] z-20">
+        <div className="absolute left-4 top-4 z-30">
           <div className="relative">
             <button
               onClick={() => setCard(null)}
               className="absolute -right-2 -top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-violet-soft bg-surface text-text-muted hover:text-text"
-              aria-label="Fermer"
+              aria-label="Close"
             >
               ×
             </button>
@@ -333,25 +333,27 @@ export default function MapView() {
         </div>
       )}
 
-      {/* Bandeau titre */}
-      <div className="pointer-events-none absolute left-4 top-4 z-10">
-        <h1 className="text-lg font-semibold tracking-wide text-text">
-          Bangkok <span className="text-violet-fluo">Real Estate</span>
-        </h1>
-        {selected && (
-          <p className="mt-1 text-sm text-text-muted">
-            Quartier : <span className="text-glow">{selected}</span>
-          </p>
-        )}
-      </div>
+      {/* Title banner — hidden while a property card is shown (avoid overlap) */}
+      {!card && (
+        <div className="pointer-events-none absolute left-4 top-4 z-10">
+          <h1 className="text-lg font-semibold tracking-wide text-text">
+            Bangkok <span className="text-violet-fluo">Real Estate</span>
+          </h1>
+          {selected && (
+            <p className="mt-1 text-sm text-text-muted">
+              District: <span className="text-glow">{selected}</span>
+            </p>
+          )}
+        </div>
+      )}
 
-      {/* Bouton retour vue d'ensemble */}
+      {/* Back to overview */}
       {selected && (
         <button
           onClick={resetView}
           className="absolute bottom-6 left-4 z-10 rounded-md border border-violet-soft bg-surface px-3 py-2 text-sm text-text shadow-violet-glow transition hover:border-violet-fluo"
         >
-          ← Vue d&apos;ensemble
+          ← Overview
         </button>
       )}
     </div>

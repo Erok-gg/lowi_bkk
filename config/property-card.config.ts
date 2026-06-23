@@ -27,7 +27,7 @@ export interface SectionDef {
 }
 
 const fmtPrice = (l: Listing) =>
-  l.price ? `${l.price.toLocaleString("fr-FR")} ${l.currency}` : null;
+  l.price ? `${l.price.toLocaleString("en-US")} ${l.currency}` : null;
 const fmtArea = (l: Listing) => (l.areaSqm ? `${l.areaSqm} m²` : null);
 const fmtDist = (m?: number) =>
   m == null ? null : m < 1000 ? `${m} m` : `${(m / 1000).toFixed(1)} km`;
@@ -35,26 +35,26 @@ const fmtDist = (m?: number) =>
 export const PROPERTY_CARD_SECTIONS: SectionDef[] = [
   {
     id: "summary",
-    title: "Le bien",
+    title: "Property",
     kind: "fields",
     fields: [
-      { key: "name", label: "Nom", get: (l) => l.condoName || l.title },
-      { key: "price", label: "Prix", get: fmtPrice },
-      { key: "area", label: "Surface", get: fmtArea },
+      { key: "name", label: "Name", get: (l) => l.condoName || l.title },
+      { key: "price", label: "Price", get: fmtPrice },
+      { key: "area", label: "Area", get: fmtArea },
       {
         key: "ppsqm",
-        label: "Prix/m²",
+        label: "Price/m²",
         get: (l) =>
           l.pricePerSqm
-            ? `${Math.round(l.pricePerSqm).toLocaleString("fr-FR")} ${l.currency}`
+            ? `${Math.round(l.pricePerSqm).toLocaleString("en-US")} ${l.currency}`
             : null,
       },
-      { key: "beds", label: "Chambres", get: (l) => l.bedrooms?.toString() ?? null },
-      { key: "baths", label: "SDB", get: (l) => l.bathrooms?.toString() ?? null },
+      { key: "beds", label: "Beds", get: (l) => l.bedrooms?.toString() ?? null },
+      { key: "baths", label: "Baths", get: (l) => l.bathrooms?.toString() ?? null },
       {
         key: "deal",
         label: "Type",
-        get: (l) => (l.dealType === "sale" ? "Vente" : "Location"),
+        get: (l) => (l.dealType === "sale" ? "For sale" : "For rent"),
       },
       {
         key: "quota",
@@ -65,18 +65,18 @@ export const PROPERTY_CARD_SECTIONS: SectionDef[] = [
   },
   {
     id: "amenities",
-    title: "Amenities du condominium",
+    title: "Condominium amenities",
     kind: "list",
     getList: (l) => l.amenities ?? [],
   },
   {
     id: "proximity",
-    title: "Proximité",
+    title: "Proximity",
     kind: "fields",
     fields: [
       {
         key: "school1",
-        label: "École la + proche",
+        label: "Nearest school",
         get: (l) => {
           const s = l.proximity?.nearestSchools?.[0];
           return s ? `${s.name} (${fmtDist(s.distanceM)})` : null;
@@ -84,7 +84,7 @@ export const PROPERTY_CARD_SECTIONS: SectionDef[] = [
       },
       {
         key: "school2",
-        label: "2e école",
+        label: "2nd school",
         get: (l) => {
           const s = l.proximity?.nearestSchools?.[1];
           return s ? `${s.name} (${fmtDist(s.distanceM)})` : null;
@@ -92,7 +92,7 @@ export const PROPERTY_CARD_SECTIONS: SectionDef[] = [
       },
       {
         key: "metro1",
-        label: "Métro le + proche",
+        label: "Nearest metro",
         get: (l) => {
           const m = l.proximity?.nearestMetro?.[0];
           return m ? `${m.name} (${fmtDist(m.distanceM)})` : null;
@@ -100,7 +100,7 @@ export const PROPERTY_CARD_SECTIONS: SectionDef[] = [
       },
       {
         key: "metro2",
-        label: "2e métro",
+        label: "2nd metro",
         get: (l) => {
           const m = l.proximity?.nearestMetro?.[1];
           return m ? `${m.name} (${fmtDist(m.distanceM)})` : null;
@@ -108,7 +108,7 @@ export const PROPERTY_CARD_SECTIONS: SectionDef[] = [
       },
       {
         key: "bus",
-        label: "Arrêt de bus",
+        label: "Bus stop",
         get: (l) => {
           const b = l.proximity?.nearestBusStop;
           return b ? `${b.name} (${fmtDist(b.distanceM)})` : null;
@@ -116,7 +116,7 @@ export const PROPERTY_CARD_SECTIONS: SectionDef[] = [
       },
       {
         key: "cbd",
-        label: "Distance CBD",
+        label: "CBD distance",
         get: (l) => fmtDist(l.proximity?.cbdDistanceM),
       },
     ],

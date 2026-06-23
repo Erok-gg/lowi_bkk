@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 
 export default async function RendementsPage() {
   if (!(await isAuthed())) redirect("/login?next=/rendements");
-  const rows = computeYieldsByKhet(await getListings());
-  return <YieldsTable rows={rows} />;
+  const listings = await getListings();
+  const rows = computeYieldsByKhet(listings);
+  return <YieldsTable rows={rows} listings={listings} />;
 }

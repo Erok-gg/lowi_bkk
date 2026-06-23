@@ -65,12 +65,16 @@ On doit pouvoir changer **variables de scraping** et **présentation des donnée
 - **Palette** : anthracite (fond) + violet fluo (accents) + violet sombre (surfaces) + touches de bleu ; jaune réservé au glow de survol.
 
 ## Interface & navigation
-- **Direction visuelle : TOUT SOMBRE.** Header Lowi **re-teinté en sombre** (on garde logo « lowi », structure, l'accent or `#C9A84C` comme touche premium sur anthracite). La carte et le tableau restent dans le thème dark violet/anthracite.
-- **Vue par défaut = Carte plein écran** (grand format, zoomable), affichée en premier.
-- **Header Lowi** (porté depuis `++FILES++/Github/lowi`) : `LowiNav.tsx` (logo, liens, **menu hamburger + drawer**, sélecteur de langue FR/EN/TH) ; styles `dashboard/app/(public)/public.css` ; tokens `lowi-tokens.css` ; police `mc-ten-lowercase-alt.ttf`. **Adapté** : on retire l'auth Supabase du header (l'app est privée, basic-auth) ; liens = **Carte** / **Biens (tableau)**.
-- **Menu hamburger** → bascule Carte ↔ **Vue Tableau des biens**.
-- **Vue Tableau** : toutes les annonces, colonnes **Nom de l'annonce · Quartier · Prix · Chambres · SDB · Surface**. **Toutes triables** (asc/desc).
-- **Filtres (colonne de gauche, réglettes/sliders)** : fourchette de **prix**, fourchette de **surface (m²)**, **chambres** (min/max), **SDB** (min/max), **quota** (foreigner / thai), **type** (vente / location), fourchette **prix/m²**, **quartier** (multi-sélection), **source** (FazWaz / DDproperty). Filtres et tri combinables, reflétés aussi sur les pinpoints de la carte.
+- **Langue : ANGLAIS uniquement.** Pas de sélecteur de langue, pas de menu hamburger (retirés).
+- **Direction visuelle : TOUT SOMBRE.** Header Lowi **re-teinté en sombre** (logo « lowi », accent or `#C9A84C`). Carte et tableaux en thème dark violet/anthracite.
+- **Header** (`components/LowiHeader.tsx`, police MCTen, sans auth Supabase) : nav **inline** toujours visible — `The map` (`/`) · `For sale` (`/for-sale`) · `To rent` (`/to-rent`) · `Yields` (`/rendements`).
+- **Vue par défaut = Carte plein écran** (`/`). Fiche bien (tooltip) au **survol d'un pin** → coin **haut-gauche** de l'écran.
+- **Pages vente/location SÉPARÉES** (`components/ListingsTable.tsx`, prop `deal`) :
+  - `/for-sale` : ventes uniquement, **exclut < 800 000 et > 100 000 000 THB**. Colonnes : Listing name · District · Price · Price per sqm · Beds · Baths · Area · **Monthly rent** · **Annual yield** (les 2 dernières = unité location recoupée, sinon —).
+  - `/to-rent` : locations uniquement. Réglettes/colonnes **Rent (monthly)** / **Rent per sqm** (au lieu de Price/Price per sqm) ; 2 dernières colonnes : **Sale price** · **Annual yield** (unité vente recoupée).
+- **Recoupement même-unité** (`lib/cross-match.ts`) : même condo normalisé + khet + chambres + surface ±7 % → on associe vente↔location (pas de fusion) et on calcule le **rendement annuel réel** = loyer×12/prix.
+- **Page Yields** (`/rendements`, `components/YieldsTable.tsx` + `lib/yields.ts`) : rendement brut par quartier (médianes), **clic sur un quartier → rendement par rue répertoriée** (`computeYieldsByStreet`). Les rues proviennent du géocodage (cf. pipeline).
+- **Filtres (colonne gauche, réglettes activables par case à cocher)** : prix/loyer, surface, prix/m² ou loyer/m², chambres, SDB, **quota** (page vente), **source**, **quartier** (multi). Filtre `type` retiré (la page fixe déjà le deal_type). Combinables, reflétés sur la carte via l'URL (`lib/filters.ts`).
 
 ## Pipeline scraping
 1. `run.py` lit les sites actifs depuis `config/scrapers/`.
@@ -102,15 +106,18 @@ Usage perso non-commercial. Fréquence ~hebdo (pas de boucle serrée). Respect r
   - [x] **GitHub** : repo isolé (`git init` dans Lowi_bkk, le parent était le home), poussé sur `Erok-gg/lowi_bkk` (public ; site protégé par basic-auth). Secrets hors repo (`.env.local`, `scraper/.env` gitignorés).
   - [x] **Déploiement Vercel FAIT** : **https://lowi-bkk.vercel.app** (projet `lowi-bkk`, team schoenaueranthony). Build Next 15.4.11, env (`SUPABASE_DB_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `BASIC_AUTH_PASSWORD`). Accès : page `/login`, mot de passe **anthoicare** (cookie `lowi_auth`). Données Supabase + images Storage.
     - **Pièges rencontrés** : (1) `framework: None` sur le projet → 404 partout → corrigé en `nextjs` ; (2) middleware Edge → `__dirname is not defined` (runtime Vercel) même en no-op → remplacé par gate cookie en Node ; (3) Next **downgradé 15.5.19 → 15.4.11** ; (4) protection SSO Vercel désactivée (on utilise notre mot de passe).
-- [~] **Phase UI** — *(AVANT l'online, décision user)* Infrastructure d'interface :
-  - [x] Header **Lowi re-teinté sombre** (`components/LowiHeader.tsx`, logo « lowi » police MCTen `public/fonts/mcten.ttf`, accent or), **hamburger + drawer**, langues FR/EN/TH, sans auth Supabase ✓
+- [x] **Phase UI** — Infrastructure d'interface :
+  - [x] Header **Lowi re-teinté sombre** (`components/LowiHeader.tsx`, logo MCTen, accent or), sans auth Supabase ✓
   - [x] **Carte plein écran** en vue par défaut (`/`), header au-dessus, layout flex ✓
-  - [x] **Vue Tableau** (`/biens`) : colonnes Nom · Quartier · Prix · Chambres · SDB · Surface, **toutes triables** (`components/ListingsTable.tsx`) ✓
-  - [x] **Filtres latéraux (réglettes double-curseur)** : prix, surface, prix/m², chambres, SDB + multi-toggles quota (foreigner/thai), type (vente/location), source, quartier — combinables ✓
-  - [x] **Données** : lecture SQLite local via `node:sqlite` (`lib/listings-db.ts`, `/api/listings`, page `/biens`) — bascule Supabase à l'online sans changer l'UI ✓
-  - [x] **Filtres ↔ carte** : `lib/filters.ts` (logique unique), le tableau écrit les filtres dans l'URL (`history.replaceState`), la carte relit ces params pour ses pinpoints (`applyUrlFilters`) ✓
+  - [x] **Réglettes double-curseur activables** + multi-toggles (quota, source, quartier) ✓
+  - [x] **Données** : `lib/listings-db.ts` (Supabase si `SUPABASE_DB_URL`, sinon SQLite local) ✓
+  - [x] **Filtres ↔ carte** : `lib/filters.ts` (logique unique), tableau écrit l'URL (`history.replaceState`), carte relit (`applyUrlFilters`) ✓
   - Note dev : `reactStrictMode:false` (le double-mount dev annulait le chargement du style MapLibre). `window.__map` exposé pour debug.
+- [x] **Phase UI v2 (2026-06-23)** — **Anglais only** (sélecteur de langue + hamburger retirés) ; nav `The map / For sale / To rent / Yields`. **Pages vente/location séparées** (`/for-sale` exclut <800k & >100M ; `/to-rent` relabel Rent/Rent per sqm). Colonne+filtre **Type retirés**. **Recoupement même-unité** `lib/cross-match.ts` → colonnes Monthly rent/Sale price + **Annual yield** réel. **Yields par rue** (clic quartier, `computeYieldsByStreet`). Tooltip carte → **haut-gauche**. PropertyCard/property-card.config en anglais.
 - [x] **Règles scraping freehold/quota** — **DDproperty** : `tenureCode='F'` → freehold gardé, leasehold écarté ; quota non exposé (None). **FazWaz** : freehold par défaut + quota best-effort via code `ownership` de l'unité (snapshot Livewire inconstant → souvent None). `tenure` ajouté au schéma (SQLite + `supabase/schema.sql`).
 - [x] **Phase 4** — Pinpoints biens sur carte (or Lowi + anneau blanc, `components/MapView.tsx`) ✓ ; **PropertyCard data-driven** (`components/PropertyCard.tsx` piloté par `config/property-card.config.ts`, photo via `/api/img`) au survol ✓ ; **proximité** client-side (`lib/proximity.ts` : école 1re/2e, métro 1er/2e, bus le + proche, distance CBD, via les POI de `/public`) ✓. Reste : amenities FazWaz enrichies, géoloc DDproperty (déjà précise via fiche).
+- [x] **Sources locatif + 2 nouveaux sites (2026-06-23)** : adaptateurs **PropertyScout** (`adapters/propertyscout.py`, Next.js `__NEXT_DATA__`, pagination `/page-N/`) et **Nestopa** (`adapters/nestopa.py`, ld+json `Product` du flux `/th-en/for-sale|for-rent`, filtre Bangkok par l'URL, champs depuis le slug/nom ; **pas de coords serveur** → khet par slug, coords via géocodage). **FazWaz rent réparé** (URL `/property-rent/`, id inclut le deal_type). Supabase **~1002 actives** (vente 563 / location 439) sur 4 sources. **Utiliser `.venv/Scripts/python.exe`** (psycopg).
+- [x] **Géocodage condos Nominatim (2026-06-23)** : `scraper/pipeline/geocode.py` (1 req/s, cache `output/geocode-cache.json`, échecs cachés) ; flag `run.py --geocode` (complète street/coords manquants au scrape) ; backfill `scraper/backfill_geocode.py` (ne remplit que le manquant, ne crase pas les coords précises, redéduit le khet sur nouvelles coords). Taux de hit Nominatim ~35-40 % sur noms de condos thaï.
 - [ ] **Phase 3** — Vues stats affinées (déjà : diff/price_history/stats khet en local) + street_stats
 - [ ] **Phase 6** — Autres adaptateurs (Hipflat…), cron hebdo, alertes email, stats affinées
+- [ ] **Idées plus tard** : jitter/mouvements aléatoires anti-ban ; heatmaps loyers & prix sur la carte (couche MapLibre pondérée).
