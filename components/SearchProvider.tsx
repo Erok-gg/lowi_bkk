@@ -9,10 +9,11 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
 export type Suggestion = { val: string; kind: string };
+export type DealFilter = "all" | "sale" | "rent";
 
 export interface SearchController {
-  run: (query: string) => void; // filtre les pins + recadre la carte
-  suggest: (query: string) => Suggestion[]; // rues / condos / quartiers
+  run: (query: string, deal: DealFilter) => void; // filtre pins (type + texte) + recadre
+  suggest: (query: string, deal: DealFilter) => Suggestion[]; // rues / condos / quartiers
 }
 
 interface Ctx {

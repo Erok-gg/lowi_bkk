@@ -18,7 +18,7 @@ import PropertyCard from "@/components/PropertyCard";
 import { computeProximity } from "@/lib/proximity";
 import { applyUrlFilters } from "@/lib/filters";
 import { searchListings } from "@/lib/search";
-import { useSearch, type Suggestion } from "@/components/SearchProvider";
+import { useSearch, type Suggestion, type DealFilter } from "@/components/SearchProvider";
 import type { Listing } from "@/lib/types";
 
 interface KhetProps {
@@ -321,11 +321,11 @@ export default function MapView() {
   // setController (setter useState) est stable → enregistrement unique.
   useEffect(() => {
     if (!setController) return;
-    const run = (value: string) => {
+    const run = (value: string, deal: DealFilter) => {
       const map = mapRef.current;
       const src = map?.getSource("listings") as maplibregl.GeoJSONSource | undefined;
       if (!map || !src) return;
-      const base = geoRef.current;
+      const base = deal === "all" ? geoRef.current : geoRef.current.filter((l) => l.dealType === deal);
       const matched = value.trim() ? searchListings(base, value) : base;
       src.setData({
         type: "FeatureCollection",
@@ -341,12 +341,13 @@ export default function MapView() {
         map.fitBounds(b, { padding: 90, maxZoom: 15.5, duration: 800 });
       }
     };
-    const suggest = (value: string): Suggestion[] => {
+    const suggest = (value: string, deal: DealFilter): Suggestion[] => {
       const v = value.trim().toLowerCase();
       if (!v) return [];
+      const base = deal === "all" ? geoRef.current : geoRef.current.filter((l) => l.dealType === deal);
       const seen = new Set<string>();
       const out: Suggestion[] = [];
-      for (const l of geoRef.current) {
+      for (const l of base) {
         for (const [val, kind] of [
           [l.street, "street"], [l.condoName, "condo"], [l.khet, "district"],
         ] as const) {
