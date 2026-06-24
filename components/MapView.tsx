@@ -156,7 +156,7 @@ export default function MapView() {
         },
       });
 
-      // Labels des quartiers — GRANDS + nb de biens (en or), uniquement en dézoom
+      // Labels des quartiers — GRANDS + nb de biens (vert fluo doux), uniquement en dézoom
       map.addLayer({
         id: LAYERS.districtsLabel,
         type: "symbol",
@@ -174,7 +174,7 @@ export default function MapView() {
               ["to-string", ["get", "count"]],
               ["case", [">", ["get", "count"], 1], " biens", " bien"],
             ],
-            { "text-color": colors.districtLineHover, "font-scale": 1.15 },
+            { "text-color": "#3ad97f", "font-scale": 1.15 },
           ],
           "text-size": ["interpolate", ["linear"], ["zoom"], 9, 20, 11.6, 13],
           "text-font": ["Noto Sans Regular"],
