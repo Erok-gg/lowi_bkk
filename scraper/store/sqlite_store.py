@@ -141,6 +141,14 @@ class SqliteStore(BaseStore):
                 "insert into listing_amenities (listing_id,name) values (?,?)", (listing_id, a)
             )
 
+    def count_active(self, source: str, deal_type: str | None = None) -> int:
+        q = "select count(*) c from listings where source=? and status='active'"
+        params: list = [source]
+        if deal_type:
+            q += " and deal_type=?"
+            params.append(deal_type)
+        return self.db.execute(q, params).fetchone()["c"]
+
     def mark_missing_inactive(self, source: str, seen_ids: set[str],
                               deal_type: str | None = None) -> list[str]:
         q = "select id from listings where source=? and status='active'"

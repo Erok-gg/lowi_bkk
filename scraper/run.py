@@ -43,6 +43,11 @@ ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "config"
 OUTPUT_DIR = ROOT / "output"
 
+# Garde-fou --full : on n'autorise le délistage que si le scan a vu au moins
+# cette fraction des annonces actives déjà en base (sinon : site en panne/scan
+# partiel → on annule pour ne pas vider la base).
+FULL_DELIST_MIN_RATIO = 0.5
+
 
 def load_env() -> None:
     """Charge scraper/.env (simple) dans os.environ (sans dépendance)."""
@@ -239,18 +244,27 @@ def main() -> None:
 
     removed = 0
     if args.full:
-        # scope l'inactivation au deal_type scrapé (sinon on délisterait l'autre catégorie)
-        delisted = store.mark_missing_inactive(args.source, seen_ids, deal_type=args.deal_type)
-        removed = len(delisted)
-        # Délistés → on supprime leurs photos (Storage + lignes images), on garde
-        # l'annonce en DB (inactive + delisted_at) pour l'historique/comparaison.
-        for lid in delisted:
-            if storage:
-                for path in store.get_image_paths(lid):
-                    storage.delete(path)
-            store.delete_images(lid)
-        if delisted:
-            print(f"  ↓ {removed} délistées → photos supprimées, conservées en DB (inactive)")
+        # Garde-fou anti-accident : si le scan a trouvé anormalement peu d'annonces
+        # (site en panne, pagination cassée, blocage…), on ANNULE le délistage pour
+        # ne pas vider la base. Seuil : < 50 % des actives en base pour ce scope.
+        active_n = store.count_active(args.source, args.deal_type)
+        if active_n > 0 and len(seen_ids) < FULL_DELIST_MIN_RATIO * active_n:
+            print(f"  ⚠ GARDE-FOU : scan {len(seen_ids)} annonces < "
+                  f"{int(FULL_DELIST_MIN_RATIO * 100)} % des {active_n} actives en base "
+                  f"→ délistage ANNULÉ (site en panne / scan partiel ?). Relance un scan complet.")
+        else:
+            # scope l'inactivation au deal_type scrapé (sinon on délisterait l'autre catégorie)
+            delisted = store.mark_missing_inactive(args.source, seen_ids, deal_type=args.deal_type)
+            removed = len(delisted)
+            # Délistés → on supprime leurs photos (Storage + lignes images), on garde
+            # l'annonce en DB (inactive + delisted_at) pour l'historique/comparaison.
+            for lid in delisted:
+                if storage:
+                    for path in store.get_image_paths(lid):
+                        storage.delete(path)
+                store.delete_images(lid)
+            if delisted:
+                print(f"  ↓ {removed} délistées → photos supprimées, conservées en DB (inactive)")
 
     store.record_scan_run(args.source, n_total, n_new, removed, n_changed,
                           notes="full" if args.full else "partial")

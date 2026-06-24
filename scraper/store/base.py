@@ -26,6 +26,11 @@ class BaseStore(ABC):
         statut ∈ {"new","changed","unchanged"}. Enregistre price_history si besoin."""
 
     @abstractmethod
+    def count_active(self, source: str, deal_type: str | None = None) -> int:
+        """Nb d'annonces actives pour une source (et un deal_type si fourni).
+        Sert au garde-fou anti-délistage massif."""
+
+    @abstractmethod
     def mark_missing_inactive(self, source: str, seen_ids: set[str],
                               deal_type: str | None = None) -> list[str]:
         """Passe en inactive les annonces non revues. Retourne la liste des ids
