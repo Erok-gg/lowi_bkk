@@ -6,7 +6,7 @@
   "rate_limit_seconds": 3.0,
   "image_rate_limit_seconds": 0.4,
   "timeout_seconds": 30,
-  "max_pages": 6,
+  "max_pages": 150,
   "page_param": "page",
   "respect_robots": true,
   "fetch_detail": true,
