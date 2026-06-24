@@ -17,6 +17,7 @@ import Legend from "@/components/Legend";
 import PropertyCard from "@/components/PropertyCard";
 import { computeProximity } from "@/lib/proximity";
 import { applyUrlFilters } from "@/lib/filters";
+import { searchListings } from "@/lib/search";
 import type { Listing } from "@/lib/types";
 
 interface KhetProps {
@@ -31,6 +32,9 @@ export default function MapView() {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const hoveredId = useRef<string | number | null>(null);
   const listingsById = useRef<Map<string, Listing>>(new Map());
+  const geoRef = useRef<Listing[]>([]); // biens géolocalisés (base de la recherche)
+  const [query, setQuery] = useState("");
+  const [showSug, setShowSug] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [card, setCard] = useState<{ listing: Listing; x: number; y: number } | null>(null);
   // catégories POI masquées (cochées par défaut sauf defaultVisible:false)
@@ -225,6 +229,7 @@ export default function MapView() {
       // ── Pinpoints des biens (réutilise les biens déjà récupérés) ──
       {
         const geoListings = listings.filter((l) => l.lat != null && l.lng != null);
+        geoRef.current = geoListings; // base de la recherche (déjà filtrée par l'URL)
         if (geoListings.length) {
           listingsById.current = new Map(geoListings.map((l) => [l.id, l]));
           map.addSource("listings", {
@@ -311,11 +316,94 @@ export default function MapView() {
     if (mapRef.current) setCategoryVisibility(mapRef.current, categoryId, visible);
   };
 
+  // Recherche : filtre les pins sur les biens correspondants + recadre la carte.
+  const runSearch = (value: string) => {
+    setQuery(value);
+    const map = mapRef.current;
+    const src = map?.getSource("listings") as maplibregl.GeoJSONSource | undefined;
+    if (!map || !src) return;
+    const base = geoRef.current;
+    const matched = value.trim() ? searchListings(base, value) : base;
+    src.setData({
+      type: "FeatureCollection",
+      features: matched.map((l) => ({
+        type: "Feature",
+        properties: { id: l.id },
+        geometry: { type: "Point", coordinates: [l.lng!, l.lat!] },
+      })),
+    });
+    if (value.trim() && matched.length) {
+      const b = new maplibregl.LngLatBounds();
+      matched.forEach((l) => b.extend([l.lng!, l.lat!]));
+      map.fitBounds(b, { padding: 90, maxZoom: 15.5, duration: 800 });
+    }
+  };
+
+  // Suggestions (rue / condo / quartier) dérivées des biens géolocalisés.
+  const suggestions: { val: string; kind: string }[] = (() => {
+    const v = query.trim().toLowerCase();
+    if (!v) return [];
+    const seen = new Set<string>();
+    const out: { val: string; kind: string }[] = [];
+    for (const l of geoRef.current) {
+      for (const [val, kind] of [
+        [l.street, "street"], [l.condoName, "condo"], [l.khet, "district"],
+      ] as const) {
+        if (!val) continue;
+        const key = kind + "|" + val.toLowerCase();
+        if (seen.has(key) || !val.toLowerCase().includes(v)) continue;
+        seen.add(key);
+        out.push({ val, kind });
+        if (out.length >= 8) return out;
+      }
+    }
+    return out;
+  })();
+
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
 
       <Legend hidden={hidden} onToggle={toggleCategory} />
+
+      {/* Barre de recherche — filtre les pins + recadre sur le lieu/rue/condo */}
+      <div className="absolute left-1/2 top-4 z-30 w-80 max-w-[80vw] -translate-x-1/2">
+        <div className="relative">
+          <input
+            value={query}
+            onChange={(e) => { runSearch(e.target.value); setShowSug(true); }}
+            onFocus={() => setShowSug(true)}
+            onBlur={() => setTimeout(() => setShowSug(false), 150)}
+            placeholder="Search a street, condo, district…"
+            className="w-full rounded-md border border-violet-soft bg-surface/95 px-3 py-2 pr-8 text-sm text-text shadow-violet-glow outline-none focus:border-violet-fluo"
+          />
+          {query && (
+            <button
+              onClick={() => { runSearch(""); setShowSug(false); }}
+              aria-label="Clear"
+              className="absolute right-2 top-1.5 flex h-6 w-6 items-center justify-center rounded text-text-muted hover:text-text"
+            >
+              ×
+            </button>
+          )}
+        </div>
+        {showSug && suggestions.length > 0 && (
+          <ul className="mt-1 max-h-72 overflow-auto rounded-md border border-violet-soft bg-surface/95 text-sm shadow-xl">
+            {suggestions.map((s) => (
+              <li key={s.kind + s.val}>
+                <button
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { runSearch(s.val); setShowSug(false); }}
+                  className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-anthracite-deep"
+                >
+                  <span className="truncate text-text">{s.val}</span>
+                  <span className="shrink-0 text-[10px] uppercase tracking-wide text-text-faint">{s.kind}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       {/* Property card — top-left of the screen (tooltip) */}
       {card && (
