@@ -64,6 +64,20 @@ def load_config(source: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_excludes() -> list[str]:
+    """Fragments de nom à exclure (toutes sources). Voir config/exclude.json."""
+    path = CONFIG_DIR / "exclude.json"
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return [s.lower() for s in data.get("condo_name_contains", [])]
+
+
+def is_excluded(excludes: list[str], *fields: str | None) -> bool:
+    blob = " ".join(f.lower() for f in fields if f)
+    return any(frag in blob for frag in excludes)
+
+
 def make_store(kind: str):
     if kind == "supabase":
         load_env()
@@ -128,11 +142,20 @@ def main() -> None:
 
     print(f"▶ Scan {args.source} (max_pages={cfg.get('max_pages')}, limit={args.limit})")
 
-    n_new = n_changed = n_unchanged = n_skipped = n_total = 0
+    excludes = load_excludes()
+    if excludes:
+        print(f"→ exclusions actives : {', '.join(excludes)}")
+
+    n_new = n_changed = n_unchanged = n_skipped = n_total = n_excluded = 0
     seen_ids: set[str] = set()
     price_alerts: list[str] = []
 
     for stub in adapter.list_urls(fetcher, limit=args.limit):
+        # Exclusion à la source (avant dédup/délistage) : on ne l'ajoute pas à
+        # seen_ids → avec --full une annonce exclue déjà en base sera délistée.
+        if is_excluded(excludes, stub.get("condo_name"), stub.get("title")):
+            n_excluded += 1
+            continue
         lid = f"{args.source}:{stub.get('deal_type') or 'sale'}:{stub.get('source_id')}"
         seen_ids.add(lid)
         n_total += 1
@@ -157,6 +180,11 @@ def main() -> None:
         if not rec:
             continue
         norm = normalize(rec)
+        # filet de sécurité : nom de condo connu seulement via la fiche détail
+        if is_excluded(excludes, norm.get("condo_name"), norm.get("title")):
+            n_excluded += 1
+            seen_ids.discard(lid)
+            continue
         # matching khet par lat/lng (sinon district texte du JSON-LD)
         khet = matcher.match(norm.get("lat"), norm.get("lng"))
         if khet:
@@ -235,7 +263,7 @@ def main() -> None:
     print("\n── Résumé ──")
     print(f"  scannées : {n_total} | nouvelles : {n_new} | changées : {n_changed} "
           f"| inchangées : {n_unchanged} (dont {n_skipped} dédup, fiche non re-visitée) "
-          f"| retirées : {removed}")
+          f"| retirées : {removed} | exclues : {n_excluded}")
     if price_alerts:
         print("\nAlertes prix :")
         print("\n".join(price_alerts))

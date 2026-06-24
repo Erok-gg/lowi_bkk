@@ -1,0 +1,6 @@
+{
+  "_comment": "Exclusion à la source : toute annonce dont condo_name/title contient l'un de ces fragments (insensible à la casse) est ignorée au scrap, quelle que soit la source. Ultra-luxe non pertinent pour l'usage achat-pour-louer.",
+  "condo_name_contains": [
+    "one bangkok"
+  ]
+}
