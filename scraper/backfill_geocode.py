@@ -45,6 +45,9 @@ def main() -> None:
                     help="nb max de condos distincts à géocoder (test)")
     args = ap.parse_args()
 
+    from pipeline.keepawake import prevent_sleep
+    prevent_sleep()  # pas de veille système pendant le backfill (long)
+
     load_env()
     dsn = os.environ.get("SUPABASE_DB_URL")
     if not dsn:

@@ -31,6 +31,7 @@ from pipeline.normalize import normalize  # noqa: E402
 from pipeline.geo_match import KhetMatcher  # noqa: E402
 from pipeline.images import process_images  # noqa: E402
 from pipeline.fiche import write_fiche  # noqa: E402
+from pipeline.keepawake import prevent_sleep  # noqa: E402
 from store.sqlite_store import SqliteStore  # noqa: E402
 
 ADAPTERS = {
@@ -47,6 +48,7 @@ OUTPUT_DIR = ROOT / "output"
 # cette fraction des annonces actives déjà en base (sinon : site en panne/scan
 # partiel → on annule pour ne pas vider la base).
 FULL_DELIST_MIN_RATIO = 0.5
+
 
 
 def load_env() -> None:
@@ -112,6 +114,8 @@ def main() -> None:
     ap.add_argument("--geocode", action="store_true",
                     help="complète street/coords manquants via Nominatim (1 req/s, caché)")
     args = ap.parse_args()
+
+    prevent_sleep()  # pas de veille système pendant le scrap (écran libre)
 
     cfg = load_config(args.source)
     if args.fetch_detail:
