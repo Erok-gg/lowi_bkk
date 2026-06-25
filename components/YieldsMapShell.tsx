@@ -1,7 +1,16 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import type { YieldRow } from "@/lib/yields";
+import type { DealType } from "@/lib/types";
+
+export interface YListing {
+  khet: string | null;
+  dealType: DealType;
+  pricePerSqm: number | null;
+  bedrooms: number | null;
+  lat: number | null;
+  lng: number | null;
+}
 
 // MapLibre touche `window` → chargement client uniquement.
 const YieldsMap = dynamic(() => import("./YieldsMap"), {
@@ -13,6 +22,6 @@ const YieldsMap = dynamic(() => import("./YieldsMap"), {
   ),
 });
 
-export default function YieldsMapShell({ rows }: { rows: YieldRow[] }) {
-  return <YieldsMap rows={rows} />;
+export default function YieldsMapShell({ listings }: { listings: YListing[] }) {
+  return <YieldsMap listings={listings} />;
 }

@@ -67,6 +67,30 @@ function nearest(points: PoiPoint[], lat: number, lng: number, n: number) {
     .slice(0, n);
 }
 
+/**
+ * Distances (m) au métro et à l'école les plus proches, pour un lot de points.
+ * Charge les POI une seule fois. Utilisé par la carte des rendements (filtres).
+ */
+export async function computeNearestMetroSchool(
+  points: { lat: number; lng: number }[]
+): Promise<{ metroM: number | null; schoolM: number | null }[]> {
+  const pois = await loadPois();
+  const metros = pois.filter((p) => p.category === "metro_station");
+  const schools = pois.filter((p) => p.category === "school");
+  const minD = (arr: PoiPoint[], lat: number, lng: number): number | null => {
+    let best = Infinity;
+    for (const p of arr) {
+      const d = haversineM(lat, lng, p.lat, p.lng);
+      if (d < best) best = d;
+    }
+    return best === Infinity ? null : best;
+  };
+  return points.map((pt) => ({
+    metroM: minD(metros, pt.lat, pt.lng),
+    schoolM: minD(schools, pt.lat, pt.lng),
+  }));
+}
+
 export async function computeProximity(lat: number, lng: number): Promise<Proximity> {
   const pois = await loadPois();
   const schools = pois.filter((p) => p.category === "school");
