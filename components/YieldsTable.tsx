@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Fragment, useMemo, useState } from "react";
 import type { YieldRow } from "@/lib/yields";
 import { computeYieldsByStreet } from "@/lib/yields";
@@ -45,9 +46,14 @@ export default function YieldsTable({ rows, listings }: { rows: YieldRow[]; list
   return (
     <div className="h-full overflow-auto p-4">
       <div className="mb-3">
-        <h1 className="text-lg font-semibold text-text">
-          Yields <span className="text-gold">by district</span>
-        </h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-semibold text-text">
+            Yields <span className="text-gold">by district</span>
+          </h1>
+          <Link href="/yields-map" className="rounded-md border border-violet-soft px-3 py-1.5 text-sm text-text-muted transition hover:border-violet-fluo hover:text-text">
+            Map view →
+          </Link>
+        </div>
         <p className="text-sm text-text-muted">
           Gross yield ≈ rent/m² × 12 ÷ sale price/m² (avg of the 3 median listings). Indicative — more
           reliable when a district has enough sale AND rent listings. Click a row
