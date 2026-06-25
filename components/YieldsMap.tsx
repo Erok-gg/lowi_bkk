@@ -68,15 +68,19 @@ export default function YieldsMap({ rows }: { rows: YieldRow[] }) {
 
       map.addSource("khet-yields", { type: "geojson", data });
 
-      const interp: (number | string)[] = ["interpolate", ["linear"], ["get", "yield"]];
-      for (const [v, c] of STOPS) interp.push(v, c);
+      const fillColor = [
+        "case",
+        ["<", ["get", "yield"], 0],
+        NO_DATA,
+        ["interpolate", ["linear"], ["get", "yield"], ...STOPS.flatMap(([v, c]) => [v, c])],
+      ] as unknown as maplibregl.ExpressionSpecification;
 
       map.addLayer({
         id: "khet-yields-fill",
         type: "fill",
         source: "khet-yields",
         paint: {
-          "fill-color": ["case", ["<", ["get", "yield"], 0], NO_DATA, interp] as unknown as maplibregl.ExpressionSpecification,
+          "fill-color": fillColor,
           "fill-opacity": 0.8,
         },
       });
