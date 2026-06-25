@@ -59,6 +59,9 @@ class Geocoder:
         hit = data[0]
         addr = hit.get("address", {})
         street = addr.get("road") or addr.get("neighbourhood") or addr.get("suburb")
+        # rejette les "rues" qui sont en fait un nom de quartier/district
+        if street and (street.endswith("District") or street.endswith("เขต")):
+            street = addr.get("road")  # seulement la vraie voie, sinon None
         return {
             "street": street,
             "lat": float(hit["lat"]) if hit.get("lat") else None,
