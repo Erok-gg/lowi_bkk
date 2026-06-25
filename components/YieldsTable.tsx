@@ -49,7 +49,7 @@ export default function YieldsTable({ rows, listings }: { rows: YieldRow[]; list
           Yields <span className="text-gold">by district</span>
         </h1>
         <p className="text-sm text-text-muted">
-          Gross yield ≈ rent/m² × 12 ÷ sale price/m² (medians). Indicative — more
+          Gross yield ≈ rent/m² × 12 ÷ sale price/m² (avg of the 3 median listings). Indicative — more
           reliable when a district has enough sale AND rent listings. Click a row
           for the per-street breakdown.
         </p>

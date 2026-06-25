@@ -23,11 +23,19 @@ export interface StreetYieldRow {
   grossYieldPct: number | null;
 }
 
-function median(vals: number[]): number | null {
+/**
+ * Moyenne des 3 biens médians : on trie, on prend les ~3 valeurs centrées sur la
+ * médiane et on les moyenne. Plus robuste qu'un seul point médian (lisse un
+ * médian isolé) tout en restant insensible aux extrêmes. <3 valeurs → moyenne
+ * de ce qu'on a ; 0 valeur → null.
+ */
+function medianTrioAvg(vals: number[]): number | null {
   const f = vals.filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
   if (!f.length) return null;
   const mid = Math.floor(f.length / 2);
-  return f.length % 2 ? f[mid] : (f[mid - 1] + f[mid]) / 2;
+  const start = Math.max(0, Math.min(mid - 1, f.length - 3));
+  const trio = f.slice(start, start + 3);
+  return trio.reduce((s, x) => s + x, 0) / trio.length;
 }
 
 export function computeYieldsByKhet(listings: Listing[]): YieldRow[] {
@@ -43,8 +51,8 @@ export function computeYieldsByKhet(listings: Listing[]): YieldRow[] {
   for (const [khet, arr] of byKhet) {
     const sale = arr.filter((l) => l.dealType === "sale");
     const rent = arr.filter((l) => l.dealType === "rent");
-    const saleP = median(sale.map((l) => l.pricePerSqm ?? NaN));
-    const rentP = median(rent.map((l) => l.pricePerSqm ?? NaN));
+    const saleP = medianTrioAvg(sale.map((l) => l.pricePerSqm ?? NaN));
+    const rentP = medianTrioAvg(rent.map((l) => l.pricePerSqm ?? NaN));
     rows.push({
       khet,
       nSale: sale.length,
@@ -72,8 +80,8 @@ export function computeYieldsByStreet(listings: Listing[], khet: string): Street
   for (const [street, arr] of byStreet) {
     const sale = arr.filter((l) => l.dealType === "sale");
     const rent = arr.filter((l) => l.dealType === "rent");
-    const saleP = median(sale.map((l) => l.pricePerSqm ?? NaN));
-    const rentP = median(rent.map((l) => l.pricePerSqm ?? NaN));
+    const saleP = medianTrioAvg(sale.map((l) => l.pricePerSqm ?? NaN));
+    const rentP = medianTrioAvg(rent.map((l) => l.pricePerSqm ?? NaN));
     rows.push({
       street,
       nSale: sale.length,
