@@ -43,6 +43,28 @@ def _int(v):
     return int(f) if f is not None else None
 
 
+_WORDNUM = {
+    "studio": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}
+
+
+def _rooms(v):
+    """Nombre de pièces : accepte un entier, "4", ou un mot ("four_bedrooms")."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return int(v)
+    s = str(v).lower()
+    m = re.search(r"\d+", s)
+    if m:
+        return int(m.group())
+    for w, n in _WORDNUM.items():
+        if w in s:
+            return n
+    return None
+
+
 def _imgs(item: dict) -> list[str]:
     out: list[str] = []
     cdn = item.get("cdnImages") or item.get("sortedImages")
@@ -104,8 +126,8 @@ class PropertyscoutAdapter(BaseAdapter):
                         "deal_type": deal,
                         "price": price,
                         "area_sqm": _num(it.get("floorSize")),
-                        "bedrooms": _int(it.get("numberBedrooms") or it.get("bedroomsCount")),
-                        "bathrooms": _int(it.get("numberBathrooms")),
+                        "bedrooms": _rooms(it.get("bedroomsCount") if it.get("bedroomsCount") is not None else it.get("numberBedrooms")),
+                        "bathrooms": _rooms(it.get("numberBathrooms")),
                         "lat": _num(it.get("gpsLat")),
                         "lng": _num(it.get("gpsLong")),
                         "condo_name": it.get("buildingName"),
@@ -148,9 +170,9 @@ class PropertyscoutAdapter(BaseAdapter):
             return
         # chambres / SDB / surface (souvent absents du SERP)
         if rec.get("bedrooms") is None:
-            rec["bedrooms"] = _int(p.get("numberBedrooms") or p.get("bedroomsCount"))
+            rec["bedrooms"] = _rooms(p.get("bedroomsCount") if p.get("bedroomsCount") is not None else p.get("numberBedrooms"))
         if rec.get("bathrooms") is None:
-            rec["bathrooms"] = _int(p.get("numberBathrooms"))
+            rec["bathrooms"] = _rooms(p.get("numberBathrooms"))
         if not rec.get("area_sqm"):
             rec["area_sqm"] = _num(p.get("floorSize"))
         # quota (vente) : saleQuota = "foreign"/"thai"
