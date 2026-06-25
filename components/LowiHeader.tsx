@@ -10,11 +10,12 @@ import { useSearch, type DealFilter } from "@/components/SearchProvider";
  * Nav inline en anglais, sans sélecteur de langue ni menu hamburger.
  * Barre de recherche centrée (uniquement sur la carte) : filtre les pins.
  */
-const LINKS = [
+const LINKS: { href: string; label: string; match?: string[] }[] = [
   { href: "/", label: "The map" },
   { href: "/for-sale", label: "For sale" },
   { href: "/to-rent", label: "To rent" },
-  { href: "/rendements", label: "Yields" },
+  // Yields ouvre la CARTE en premier ; la table reste accessible via "Table view".
+  { href: "/yields-map", label: "Yields", match: ["/yields-map", "/rendements"] },
 ];
 
 const DEALS: { value: DealFilter; label: string }[] = [
@@ -115,19 +116,20 @@ export default function LowiHeader() {
       </div>
 
       <nav className="flex items-center gap-1">
-        {LINKS.map((l) => (
-          <Link
-            key={l.href}
-            href={l.href}
-            className={`rounded-md px-3 py-1.5 text-sm transition ${
-              pathname === l.href
-                ? "bg-surface text-gold"
-                : "text-text-muted hover:text-text"
-            }`}
-          >
-            {l.label}
-          </Link>
-        ))}
+        {LINKS.map((l) => {
+          const active = (l.match ?? [l.href]).includes(pathname);
+          return (
+            <Link
+              key={l.href}
+              href={l.href}
+              className={`rounded-md px-3 py-1.5 text-sm transition ${
+                active ? "bg-surface text-gold" : "text-text-muted hover:text-text"
+              }`}
+            >
+              {l.label}
+            </Link>
+          );
+        })}
       </nav>
     </header>
   );
