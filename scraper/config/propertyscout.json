@@ -11,8 +11,20 @@
   "respect_robots": true,
   "fetch_detail": true,
   "searches": [
-    { "path": "/en/bangkok/sales/", "deal_type": "sale" },
-    { "path": "/en/bangkok/rentals/", "deal_type": "rent" }
+    {
+      "path": "/en/bangkok/sales/",
+      "deal_type": "sale"
+    },
+    {
+      "path": "/en/bangkok/rentals/",
+      "deal_type": "rent"
+    }
   ],
-  "image": { "width": 1024, "height": 768, "format": "webp", "quality": 80, "max_per_listing": 6 }
+  "image": {
+    "width": 1024,
+    "height": 768,
+    "format": "webp",
+    "quality": 80,
+    "max_per_listing": 1
+  }
 }

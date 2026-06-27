@@ -24,19 +24,21 @@ export interface StreetYieldRow {
 }
 
 /**
- * Moyenne des 3 biens médians : on trie, on prend les ~3 valeurs centrées sur la
- * médiane et on les moyenne. Plus robuste qu'un seul point médian (lisse un
- * médian isolé) tout en restant insensible aux extrêmes. <3 valeurs → moyenne
+ * Moyenne des `n` biens médians : on trie, on prend les ~`n` valeurs centrées sur
+ * la médiane et on les moyenne. Plus robuste qu'un seul point médian (lisse un
+ * médian isolé) tout en restant insensible aux extrêmes. `<n` valeurs → moyenne
  * de ce qu'on a ; 0 valeur → null.
  */
-function medianTrioAvg(vals: number[]): number | null {
+export function medianAvg(vals: number[], n = 3): number | null {
   const f = vals.filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
   if (!f.length) return null;
   const mid = Math.floor(f.length / 2);
-  const start = Math.max(0, Math.min(mid - 1, f.length - 3));
-  const trio = f.slice(start, start + 3);
-  return trio.reduce((s, x) => s + x, 0) / trio.length;
+  const start = Math.max(0, Math.min(mid - Math.floor(n / 2), f.length - n));
+  const win = f.slice(start, start + n);
+  return win.reduce((s, x) => s + x, 0) / win.length;
 }
+
+const medianTrioAvg = (vals: number[]) => medianAvg(vals, 3);
 
 export function computeYieldsByKhet(listings: Listing[]): YieldRow[] {
   const byKhet = new Map<string, Listing[]>();

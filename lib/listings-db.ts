@@ -117,3 +117,34 @@ async function fromSqlite(): Promise<Listing[]> {
 export async function getListings(): Promise<Listing[]> {
   return process.env.SUPABASE_DB_URL ? fromSupabase() : fromSqlite();
 }
+
+/**
+ * Prix d'origine (max historique) par listing_id, depuis price_history.
+ * Sert à la décote temporelle (baisse de prix depuis le 1er relevé).
+ */
+export async function getOriginalPrices(): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (process.env.SUPABASE_DB_URL) {
+    const db = await getPool();
+    const { rows } = await db.query(
+      "select listing_id, max(price) as orig from price_history group by listing_id"
+    );
+    for (const r of rows) out.set(r.listing_id, Number(r.orig));
+    return out;
+  }
+  const { DatabaseSync } = await import("node:sqlite");
+  const { join } = await import("node:path");
+  const { existsSync } = await import("node:fs");
+  const dbPath = join(process.cwd(), "scraper", "output", "bangkok.db");
+  if (!existsSync(dbPath)) return out;
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const rows = db
+      .prepare("select listing_id, max(price) as orig from price_history group by listing_id")
+      .all() as Record<string, unknown>[];
+    for (const r of rows) out.set(r.listing_id as string, Number(r.orig));
+  } finally {
+    db.close();
+  }
+  return out;
+}

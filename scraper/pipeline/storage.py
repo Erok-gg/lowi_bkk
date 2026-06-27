@@ -50,6 +50,31 @@ class SupabaseStorage:
             print(f"  upload erreur {object_path}: {e}")
             return False
 
+    def delete_many(self, object_paths: list[str]) -> int:
+        """Suppression en lot (API Storage : body {"prefixes": [...]}). Renvoie le
+        nb d'objets supprimés. Bien plus rapide que delete() un par un."""
+        if not object_paths:
+            return 0
+        url = f"{self.base}/storage/v1/object/{self.bucket}"
+        try:
+            r = self.session.delete(
+                url,
+                json={"prefixes": object_paths},
+                headers={
+                    "apikey": self.key,
+                    "Authorization": f"Bearer {self.key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=60,
+            )
+            if r.status_code in (200, 204):
+                return len(object_paths)
+            print(f"  delete_many échec: HTTP {r.status_code} {r.text[:150]}")
+            return 0
+        except Exception as e:
+            print(f"  delete_many erreur: {e}")
+            return 0
+
     def delete(self, object_path: str) -> bool:
         url = f"{self.base}/storage/v1/object/{self.bucket}/{object_path}"
         try:

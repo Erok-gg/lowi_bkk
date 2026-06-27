@@ -9,8 +9,14 @@
   "max_pages": 150,
   "respect_robots": true,
   "searches": [
-    { "path": "/condo-for-sale/thailand/bangkok", "deal_type": "sale" },
-    { "path": "/condo-for-rent/thailand/bangkok", "deal_type": "rent" }
+    {
+      "path": "/condo-for-sale/thailand/bangkok",
+      "deal_type": "sale"
+    },
+    {
+      "path": "/condo-for-rent/thailand/bangkok",
+      "deal_type": "rent"
+    }
   ],
   "page_param": "page",
   "fetch_detail": true,
@@ -19,6 +25,6 @@
     "height": 768,
     "format": "webp",
     "quality": 80,
-    "max_per_listing": 6
+    "max_per_listing": 1
   }
 }

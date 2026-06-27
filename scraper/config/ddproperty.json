@@ -11,14 +11,20 @@
   "respect_robots": true,
   "fetch_detail": true,
   "searches": [
-    { "path": "/en/property-for-sale?freetext=Bangkok&property_type_code%5B%5D=CONDO&listing_type=sale", "deal_type": "sale" },
-    { "path": "/en/property-for-rent?freetext=Bangkok&property_type_code%5B%5D=CONDO&listing_type=rent", "deal_type": "rent" }
+    {
+      "path": "/en/property-for-sale?freetext=Bangkok&property_type_code%5B%5D=CONDO&listing_type=sale",
+      "deal_type": "sale"
+    },
+    {
+      "path": "/en/property-for-rent?freetext=Bangkok&property_type_code%5B%5D=CONDO&listing_type=rent",
+      "deal_type": "rent"
+    }
   ],
   "image": {
     "width": 1024,
     "height": 768,
     "format": "webp",
     "quality": 80,
-    "max_per_listing": 6
+    "max_per_listing": 1
   }
 }
