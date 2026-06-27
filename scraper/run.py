@@ -155,9 +155,10 @@ def main() -> None:
     if excludes:
         print(f"→ exclusions actives : {', '.join(excludes)}")
 
-    n_new = n_changed = n_unchanged = n_skipped = n_total = n_excluded = 0
+    n_new = n_changed = n_unchanged = n_skipped = n_total = n_excluded = n_errors = 0
     seen_ids: set[str] = set()
     price_alerts: list[str] = []
+    completed = False  # True si le scan est allé au bout (cond. au délistage --full)
 
     for stub in adapter.list_urls(fetcher, limit=args.limit):
         # Exclusion à la source (avant dédup/délistage) : on ne l'ajoute pas à
@@ -169,85 +170,95 @@ def main() -> None:
         seen_ids.add(lid)
         n_total += 1
 
-        # ── Dédup incrémentale : on évite de re-visiter la fiche d'une annonce
-        # déjà connue dont le prix (lu dans la liste) n'a pas bougé. Raccourcit
-        # fortement les scraps futurs.
-        existing = store.get_listing(lid)
-        stub_price = stub.get("price")
-        if (existing is not None and stub_price is not None
-                and existing["price"] is not None
-                and float(existing["price"]) == float(stub_price)
-                and store.has_images(lid)):
-            store.touch_listing(lid)
-            n_unchanged += 1
-            n_skipped += 1
-            print(f"  [skip-dedup] {lid} — {stub.get('condo_name')} (prix inchangé)")
-            continue
+        # Une erreur isolée (réseau, parse, image, DB momentanée) ne doit PAS
+        # tuer tout le run : on logue, on saute l'annonce, on continue.
+        try:
+            # ── Dédup incrémentale : on évite de re-visiter la fiche d'une annonce
+            # déjà connue dont le prix (lu dans la liste) n'a pas bougé. Raccourcit
+            # fortement les scraps futurs.
+            existing = store.get_listing(lid)
+            stub_price = stub.get("price")
+            if (existing is not None and stub_price is not None
+                    and existing["price"] is not None
+                    and float(existing["price"]) == float(stub_price)
+                    and store.has_images(lid)):
+                store.touch_listing(lid)
+                n_unchanged += 1
+                n_skipped += 1
+                print(f"  [skip-dedup] {lid} — {stub.get('condo_name')} (prix inchangé)")
+                continue
 
-        # Nouvelle annonce ou prix changé → on visite la fiche (détail + galerie)
-        rec = adapter.parse_listing(fetcher, stub)
-        if not rec:
-            continue
-        norm = normalize(rec)
-        # filet de sécurité : nom de condo connu seulement via la fiche détail
-        if is_excluded(excludes, norm.get("condo_name"), norm.get("title")):
-            n_excluded += 1
-            seen_ids.discard(lid)
-            continue
-        # matching khet par lat/lng (sinon district texte du JSON-LD)
-        khet = matcher.match(norm.get("lat"), norm.get("lng"))
-        if khet:
-            norm["khet"] = khet
+            # Nouvelle annonce ou prix changé → on visite la fiche (détail + galerie)
+            rec = adapter.parse_listing(fetcher, stub)
+            if not rec:
+                continue
+            norm = normalize(rec)
+            # filet de sécurité : nom de condo connu seulement via la fiche détail
+            if is_excluded(excludes, norm.get("condo_name"), norm.get("title")):
+                n_excluded += 1
+                seen_ids.discard(lid)
+                continue
+            # matching khet par lat/lng (sinon district texte du JSON-LD)
+            khet = matcher.match(norm.get("lat"), norm.get("lng"))
+            if khet:
+                norm["khet"] = khet
 
-        # géocodage optionnel : complète street/coords manquants (ex. Nestopa)
-        if geocoder and norm.get("condo_name") and (
-            not norm.get("street") or norm.get("lat") is None
-        ):
-            res = geocoder.lookup(norm["condo_name"], norm.get("khet"))
-            if res:
-                if res.get("street") and not norm.get("street"):
-                    norm["street"] = res["street"]
-                if res.get("lat") and norm.get("lat") is None:
-                    norm["lat"], norm["lng"] = res["lat"], res["lng"]
-                    m2 = matcher.match(norm["lat"], norm["lng"])
-                    if m2 and not norm.get("khet"):
-                        norm["khet"] = m2
+            # géocodage optionnel : complète street/coords manquants (ex. Nestopa)
+            if geocoder and norm.get("condo_name") and (
+                not norm.get("street") or norm.get("lat") is None
+            ):
+                res = geocoder.lookup(norm["condo_name"], norm.get("khet"))
+                if res:
+                    if res.get("street") and not norm.get("street"):
+                        norm["street"] = res["street"]
+                    if res.get("lat") and norm.get("lat") is None:
+                        norm["lat"], norm["lng"] = res["lat"], res["lng"]
+                        m2 = matcher.match(norm["lat"], norm["lng"])
+                        if m2 and not norm.get("khet"):
+                            norm["khet"] = m2
 
-        need_images = (not args.no_images) and bool(norm.get("image_urls")) and (
-            existing is None or not store.has_images(norm["id"])
-        )
-        images = (
-            process_images(fetcher, norm["id"], norm["image_urls"], OUTPUT_DIR, cfg["image"])
-            if need_images else None
-        )
-
-        # upload des images vers Storage (object path = storage_path)
-        if storage and images:
-            for im in images:
-                storage.upload(str(OUTPUT_DIR / im["storage_path"]), im["storage_path"])
-
-        status, old_price = store.upsert_listing(norm, images)
-        if status == "new":
-            n_new += 1
-        elif status == "changed":
-            n_changed += 1
-            price_alerts.append(
-                f"  ⚠ prix changé {norm['id']}: {old_price} → {norm['price']} {norm['currency']}"
+            need_images = (not args.no_images) and bool(norm.get("image_urls")) and (
+                existing is None or not store.has_images(norm["id"])
             )
-        else:
-            n_unchanged += 1
+            images = (
+                process_images(fetcher, norm["id"], norm["image_urls"], OUTPUT_DIR, cfg["image"])
+                if need_images else None
+            )
 
-        # fiche HTML (relit les images stockées si on n'en a pas reprocessé)
-        imgs_for_fiche = images or [
-            {"storage_path": f"images/{norm['id'].replace(':', '_')}/0.webp"}
-        ] if norm.get("image_urls") else []
-        write_fiche(norm, imgs_for_fiche, OUTPUT_DIR)
+            # upload des images vers Storage (object path = storage_path)
+            if storage and images:
+                for im in images:
+                    storage.upload(str(OUTPUT_DIR / im["storage_path"]), im["storage_path"])
 
-        print(f"  [{status:9}] {norm['id']} — {norm.get('condo_name')} "
-              f"({norm.get('price')} {norm['currency']}, {norm.get('khet')})")
+            status, old_price = store.upsert_listing(norm, images)
+            if status == "new":
+                n_new += 1
+            elif status == "changed":
+                n_changed += 1
+                price_alerts.append(
+                    f"  ⚠ prix changé {norm['id']}: {old_price} → {norm['price']} {norm['currency']}"
+                )
+            else:
+                n_unchanged += 1
+
+            # fiche HTML (relit les images stockées si on n'en a pas reprocessé)
+            imgs_for_fiche = images or [
+                {"storage_path": f"images/{norm['id'].replace(':', '_')}/0.webp"}
+            ] if norm.get("image_urls") else []
+            write_fiche(norm, imgs_for_fiche, OUTPUT_DIR)
+
+            print(f"  [{status:9}] {norm['id']} — {norm.get('condo_name')} "
+                  f"({norm.get('price')} {norm['currency']}, {norm.get('khet')})")
+        except Exception as e:
+            n_errors += 1
+            seen_ids.discard(lid)  # pas vu correctement → ne pas le compter pour le délistage
+            print(f"  [erreur] {lid} : {e}")
+            continue
+
+    completed = True  # boucle allée au bout
 
     removed = 0
-    if args.full:
+    if completed and args.full:
         # Garde-fou anti-accident : si le scan a trouvé anormalement peu d'annonces
         # (site en panne, pagination cassée, blocage…), on ANNULE le délistage pour
         # ne pas vider la base. Seuil : < 50 % des actives en base pour ce scope.
@@ -281,7 +292,7 @@ def main() -> None:
     print("\n── Résumé ──")
     print(f"  scannées : {n_total} | nouvelles : {n_new} | changées : {n_changed} "
           f"| inchangées : {n_unchanged} (dont {n_skipped} dédup, fiche non re-visitée) "
-          f"| retirées : {removed} | exclues : {n_excluded}")
+          f"| retirées : {removed} | exclues : {n_excluded} | erreurs : {n_errors}")
     if price_alerts:
         print("\nAlertes prix :")
         print("\n".join(price_alerts))
