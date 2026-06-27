@@ -7,11 +7,19 @@ forcé (requests ne décode que gzip/deflate par défaut).
 """
 from __future__ import annotations
 
+import random
 import time
 import urllib.robotparser
 from urllib.parse import urljoin
 
 import requests
+
+# Jitter anti-ban : chaque attente = délai de base × (1 + [0..JITTER_RATIO]).
+# Jamais plus rapide que le débit configuré, mais variable au-dessus → cadence
+# moins « robotique ». + pause longue occasionnelle (mime une lecture humaine).
+_JITTER_RATIO = 0.8
+_LONG_PAUSE_PROB = 0.04          # ~1 requête sur 25
+_LONG_PAUSE_RANGE = (4.0, 9.0)   # secondes
 
 _BROWSER_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
@@ -67,7 +75,11 @@ class Fetcher:
             return True
         return self._robots.can_fetch(self.user_agent, url)
 
-    def _throttle(self, delay: float):
+    def _throttle(self, base_delay: float, allow_long_pause: bool = False):
+        # délai cible randomisé (jitter), jamais sous le débit configuré
+        delay = base_delay * (1.0 + random.random() * _JITTER_RATIO)
+        if allow_long_pause and random.random() < _LONG_PAUSE_PROB:
+            delay += random.uniform(*_LONG_PAUSE_RANGE)
         elapsed = time.time() - self._last_request
         if elapsed < delay:
             time.sleep(delay - elapsed)
@@ -77,7 +89,7 @@ class Fetcher:
         if self.respect_robots and not self.allowed(url):
             print(f"  robots.txt interdit : {url}")
             return None
-        self._throttle(self.rate_limit)
+        self._throttle(self.rate_limit, allow_long_pause=True)
         headers = {"Referer": referer, "Sec-Fetch-Site": "same-origin"} if referer else {}
         try:
             r = self._session.get(url, headers=headers, timeout=self.timeout)
