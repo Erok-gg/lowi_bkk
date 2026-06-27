@@ -264,6 +264,10 @@ export default function YieldsMap({ listings }: { listings: YListing[] }) {
         <div className="mt-1.5 flex items-center gap-1.5 text-text-muted">
           <span className="inline-block h-3 w-3 rounded" style={{ background: NO_DATA }} /> no data
         </div>
+        <div className="mt-2 max-w-[15rem] border-t border-violet-soft pt-1.5 text-[10px] leading-snug text-text-faint">
+          = rent/m² × 12 ÷ sale price/m² × 100, per district.
+          Each side = average of the 3 median listings (filtered by the controls above). Gross, indicative.
+        </div>
       </div>
     </div>
   );

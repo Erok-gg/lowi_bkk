@@ -21,6 +21,7 @@ type Mode = "discounts" | "yields";
 export default function DealsView({ rows }: { rows: DealRow[] }) {
   const [mode, setMode] = useState<Mode>("discounts");
   const [cat, setCat] = useState<BedCat>("1");
+  const [showHow, setShowHow] = useState(false);
 
   const top = useMemo(
     () => (mode === "discounts" ? bestDiscounts(rows, cat) : bestYields(rows, cat)),
@@ -50,23 +51,53 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
           <Tab m="discounts" label="Best discounts" />
           <Tab m="yields" label="Best yields" />
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-text-muted">Beds</span>
-          <div className="flex overflow-hidden rounded-md border border-violet-soft">
-            {BED_CATS.map((c) => (
-              <button
-                key={c}
-                onClick={() => setCat(c)}
-                className={`px-2.5 py-1.5 text-xs transition ${
-                  cat === c ? "bg-violet/30 text-gold" : "text-text-muted hover:text-text"
-                }`}
-              >
-                {c}
-              </button>
-            ))}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowHow((v) => !v)}
+            className="rounded-md border border-violet-soft px-2.5 py-1 text-xs text-text-muted transition hover:border-violet-fluo hover:text-text"
+          >
+            ⓘ How it&apos;s computed
+          </button>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-text-muted">Beds</span>
+            <div className="flex overflow-hidden rounded-md border border-violet-soft">
+              {BED_CATS.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setCat(c)}
+                  className={`px-2.5 py-1.5 text-xs transition ${
+                    cat === c ? "bg-violet/30 text-gold" : "text-text-muted hover:text-text"
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Méthodologie / formules — visibles pour pouvoir critiquer la méthode */}
+      {showHow && (
+        <div className="shrink-0 border-b border-violet-soft bg-surface/40 px-4 py-3 text-xs leading-relaxed text-text-muted">
+          <p className="mb-1">
+            <span className="text-text">Comparable</span> = same district + bedroom count (1/2/3/4+).{" "}
+            <span className="text-text">Baseline</span> = average of the 10 median listings of the comparable group.
+            Sale prices bounded 800k–100M THB; figures are gross (before charges, taxes, vacancy).
+          </p>
+          {mode === "discounts" ? (
+            <ul className="list-inside list-disc space-y-0.5">
+              <li><span className="text-gold">Market discount</span> = (baseline sale price/m² − listing price/m²) ÷ baseline × 100</li>
+              <li><span className="text-gold">Δ since listed</span> = (first recorded price − current price) ÷ first price × 100 <span className="text-text-faint">(from price history; mostly 0 until prices move over successive scrapes)</span></li>
+            </ul>
+          ) : (
+            <ul className="list-inside list-disc space-y-0.5">
+              <li><span className="text-gold">Est. yield</span> = (baseline rent/m² × 12) ÷ listing sale price/m² × 100</li>
+              <li className="text-text-faint">Estimated: uses the comparable-group median rent, not this exact unit&apos;s lease.</li>
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* Corps : tableau + minimap */}
       <div className="flex min-h-0 flex-1">
