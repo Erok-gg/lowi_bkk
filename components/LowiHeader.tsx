@@ -16,6 +16,7 @@ const LINKS: { href: string; label: string; match?: string[] }[] = [
   { href: "/to-rent", label: "To rent" },
   // Yields ouvre la CARTE en premier ; la table reste accessible via "Table view".
   { href: "/yields-map", label: "Yields", match: ["/yields-map", "/rendements"] },
+  { href: "/tension", label: "Tension", match: ["/tension", "/tension-table"] },
   { href: "/deals", label: "Deals" },
 ];
 

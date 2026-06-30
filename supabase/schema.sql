@@ -125,12 +125,17 @@ join listings b
  and (a.area_sqm is null or b.area_sqm is null
       or abs(a.area_sqm - b.area_sqm) <= greatest(a.area_sqm, b.area_sqm) * 0.15);
 
--- Snapshots par quartier (séries temporelles, comparaison par date)
+-- Snapshots par quartier (séries temporelles, comparaison par date).
+-- deal_type sépare vente/location pour la carte de TENSION (lib/tension.ts).
 create table if not exists khet_snapshots (
   id                   bigserial primary key,
   taken_at             timestamptz not null default now(),
   khet                 text not null,
+  deal_type            text check (deal_type in ('sale','rent')),
   active_count         integer,
   avg_price_per_sqm    numeric,
   median_price_per_sqm numeric
 );
+-- Migration (bases déjà créées avant l'ajout de deal_type) :
+--   alter table khet_snapshots add column if not exists deal_type text;
+create index if not exists idx_khet_snapshots_khet on khet_snapshots (khet, deal_type);

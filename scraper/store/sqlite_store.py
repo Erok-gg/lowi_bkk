@@ -24,7 +24,7 @@ create table if not exists listings (
 );
 create table if not exists khet_snapshots (
   id integer primary key autoincrement, taken_at text not null, khet text not null,
-  active_count integer, avg_price_per_sqm real, median_price_per_sqm real
+  deal_type text, active_count integer, avg_price_per_sqm real, median_price_per_sqm real
 );
 create table if not exists listing_images (
   id integer primary key autoincrement, listing_id text not null,
@@ -58,7 +58,14 @@ class SqliteStore(BaseStore):
         self.db = sqlite3.connect(db_path)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(_SCHEMA)
+        self._migrate()
         self.db.commit()
+
+    def _migrate(self) -> None:
+        """Migrations légères pour les bases créées avant un ajout de colonne."""
+        cols = {r["name"] for r in self.db.execute("pragma table_info(khet_snapshots)")}
+        if "deal_type" not in cols:
+            self.db.execute("alter table khet_snapshots add column deal_type text")
 
     def get_listing(self, listing_id: str) -> dict | None:
         row = self.db.execute("select * from listings where id=?", (listing_id,)).fetchone()
@@ -198,13 +205,19 @@ class SqliteStore(BaseStore):
         return [dict(r) for r in rows]
 
     def record_khet_snapshots(self) -> int:
+        """Un snapshot par (quartier, deal_type) → tension vente/location séparée."""
         now = _now()
-        rows = self.khet_stats()
+        rows = self.db.execute(
+            "select khet, deal_type, count(*) as active_count, "
+            "round(avg(price_per_sqm)) as avg_price_per_sqm "
+            "from listings where status='active' and khet is not null and deal_type is not null "
+            "group by khet, deal_type"
+        ).fetchall()
         for r in rows:
             self.db.execute(
-                "insert into khet_snapshots (taken_at,khet,active_count,avg_price_per_sqm,"
-                "median_price_per_sqm) values (?,?,?,?,?)",
-                (now, r["khet"], r["active_count"], r["avg_price_per_sqm"], None),
+                "insert into khet_snapshots (taken_at,khet,deal_type,active_count,"
+                "avg_price_per_sqm,median_price_per_sqm) values (?,?,?,?,?,?)",
+                (now, r["khet"], r["deal_type"], r["active_count"], r["avg_price_per_sqm"], None),
             )
         self.db.commit()
         return len(rows)

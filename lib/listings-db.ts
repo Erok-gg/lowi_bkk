@@ -6,9 +6,14 @@
  */
 import "server-only";
 import type { Listing } from "@/lib/types";
+import type { TensionInput, KhetSnapshot } from "@/lib/tension";
 
 const num = (v: unknown): number | null =>
   v == null || v === "" ? null : Number(v);
+
+// timestamptz (pg → Date) ou texte ISO (SQLite) → chaîne ISO uniforme.
+const iso = (v: unknown): string =>
+  v == null ? "" : v instanceof Date ? v.toISOString() : String(v);
 
 function rowToListing(r: Record<string, unknown>, images: Listing["images"]): Listing {
   return {
@@ -34,8 +39,8 @@ function rowToListing(r: Record<string, unknown>, images: Listing["images"]): Li
     lat: num(r.lat),
     lng: num(r.lng),
     status: r.status as Listing["status"],
-    firstSeen: "",
-    lastSeen: "",
+    firstSeen: iso(r.first_seen),
+    lastSeen: iso(r.last_seen),
     images,
   };
 }
@@ -60,7 +65,7 @@ async function fromSupabase(): Promise<Listing[]> {
   const { rows } = await db.query(
     `select id, source, source_url, title, deal_type, quota, tenure, price, currency,
             area_sqm, price_per_sqm, bedrooms, bathrooms, condo_name,
-            address_raw, khet, khwaeng, street, lat, lng, status
+            address_raw, khet, khwaeng, street, lat, lng, status, first_seen, last_seen
      from listings where status = 'active'`
   );
   const imgs = await db.query(
@@ -93,7 +98,7 @@ async function fromSqlite(): Promise<Listing[]> {
       .prepare(
         `select id, source, source_url, title, deal_type, quota, tenure, price, currency,
                 area_sqm, price_per_sqm, bedrooms, bathrooms, condo_name,
-                address_raw, khet, khwaeng, street, lat, lng, status
+                address_raw, khet, khwaeng, street, lat, lng, status, first_seen, last_seen
          from listings where status = 'active'`
       )
       .all() as Record<string, unknown>[];
@@ -147,4 +152,98 @@ export async function getOriginalPrices(): Promise<Map<string, number>> {
     db.close();
   }
   return out;
+}
+
+/* ───────────────────────── Tension (séries temporelles) ───────────────────────── */
+
+const dealOf = (v: unknown): TensionInput["dealType"] =>
+  (v as TensionInput["dealType"]) ?? "sale";
+
+/**
+ * Annonces réduites à leur dimension temporelle — ACTIVES + DISPARUES
+ * (inactive/sold), pour calculer âge et time-on-market. Payload léger.
+ */
+export async function getTensionInputs(): Promise<TensionInput[]> {
+  if (process.env.SUPABASE_DB_URL) {
+    const db = await getPool();
+    const { rows } = await db.query(
+      `select khet, street, deal_type, status, first_seen, delisted_at
+       from listings where khet is not null`
+    );
+    return rows.map((r) => ({
+      khet: (r.khet as string) ?? null,
+      street: (r.street as string) ?? null,
+      dealType: dealOf(r.deal_type),
+      status: r.status as TensionInput["status"],
+      firstSeen: r.first_seen ? iso(r.first_seen) : null,
+      delistedAt: r.delisted_at ? iso(r.delisted_at) : null,
+    }));
+  }
+  const { DatabaseSync } = await import("node:sqlite");
+  const { join } = await import("node:path");
+  const { existsSync } = await import("node:fs");
+  const dbPath = join(process.cwd(), "scraper", "output", "bangkok.db");
+  if (!existsSync(dbPath)) return [];
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const rows = db
+      .prepare(
+        `select khet, street, deal_type, status, first_seen, delisted_at
+         from listings where khet is not null`
+      )
+      .all() as Record<string, unknown>[];
+    return rows.map((r) => ({
+      khet: (r.khet as string) ?? null,
+      street: (r.street as string) ?? null,
+      dealType: dealOf(r.deal_type),
+      status: r.status as TensionInput["status"],
+      firstSeen: r.first_seen ? iso(r.first_seen) : null,
+      delistedAt: r.delisted_at ? iso(r.delisted_at) : null,
+    }));
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Séries temporelles par quartier × deal_type (khet_snapshots) pour les pentes.
+ * Résilient : tant que la colonne `deal_type` n'est pas migrée (ou la table vide),
+ * on retourne [] → la tension dégrade gracieusement (composantes de tendance nulles).
+ */
+export async function getKhetSnapshots(): Promise<KhetSnapshot[]> {
+  const mapRow = (r: Record<string, unknown>): KhetSnapshot => ({
+    takenAt: iso(r.taken_at),
+    khet: r.khet as string,
+    dealType: (r.deal_type as KhetSnapshot["dealType"]) ?? null,
+    activeCount: num(r.active_count),
+    avgPricePerSqm: num(r.avg_price_per_sqm),
+  });
+  const SQL =
+    "select taken_at, khet, deal_type, active_count, avg_price_per_sqm from khet_snapshots order by taken_at";
+
+  if (process.env.SUPABASE_DB_URL) {
+    try {
+      const db = await getPool();
+      const { rows } = await db.query(SQL);
+      return rows.map(mapRow);
+    } catch {
+      return [];
+    }
+  }
+  try {
+    const { DatabaseSync } = await import("node:sqlite");
+    const { join } = await import("node:path");
+    const { existsSync } = await import("node:fs");
+    const dbPath = join(process.cwd(), "scraper", "output", "bangkok.db");
+    if (!existsSync(dbPath)) return [];
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const rows = db.prepare(SQL).all() as Record<string, unknown>[];
+      return rows.map(mapRow);
+    } finally {
+      db.close();
+    }
+  } catch {
+    return [];
+  }
 }

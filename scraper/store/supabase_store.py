@@ -28,6 +28,16 @@ class SupabaseStore(BaseStore):
     def __init__(self, dsn: str):
         self.dsn = dsn
         self.db = psycopg.connect(dsn, connect_timeout=20, autocommit=True)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Migrations légères idempotentes (colonnes ajoutées après coup)."""
+        try:
+            self._execute(
+                "alter table khet_snapshots add column if not exists deal_type text"
+            )
+        except Exception:
+            pass
 
     def _reconnect(self) -> None:
         try:
@@ -171,19 +181,22 @@ class SupabaseStore(BaseStore):
         return [{"khet": r[0], "active_count": r[1], "avg_price_per_sqm": r[2]} for r in rows]
 
     def record_khet_snapshots(self) -> int:
+        """Un snapshot par (quartier, deal_type) → tension vente/location séparée."""
         now = _now()
         rows = self._execute(
-            "select khet, count(*) filter (where status='active') as ac, "
+            "select khet, deal_type, "
+            "count(*) filter (where status='active') as ac, "
             "round(avg(price_per_sqm) filter (where status='active')) as avg, "
             "percentile_cont(0.5) within group (order by price_per_sqm) "
             "  filter (where status='active') as med "
-            "from listings where khet is not null group by khet"
+            "from listings where khet is not null and deal_type is not null "
+            "group by khet, deal_type"
         ).fetchall()
-        for khet, ac, avg, med in rows:
+        for khet, deal_type, ac, avg, med in rows:
             self._execute(
-                "insert into khet_snapshots (taken_at,khet,active_count,avg_price_per_sqm,"
-                "median_price_per_sqm) values (%s,%s,%s,%s,%s)",
-                (now, khet, ac, avg, med),
+                "insert into khet_snapshots (taken_at,khet,deal_type,active_count,"
+                "avg_price_per_sqm,median_price_per_sqm) values (%s,%s,%s,%s,%s,%s)",
+                (now, khet, deal_type, ac, avg, med),
             )
         return len(rows)
 
