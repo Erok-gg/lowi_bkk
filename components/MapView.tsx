@@ -15,7 +15,8 @@ import { addPoiLayers, setCategoryVisibility } from "@/components/map/pois";
 import { POI_CATEGORIES } from "@/config/poi-config";
 import Legend from "@/components/Legend";
 import PropertyCard from "@/components/PropertyCard";
-import { computeProximity } from "@/lib/proximity";
+import MapFilterBand from "@/components/MapFilterBand";
+import { computeProximity, computeNearestMetroSchool } from "@/lib/proximity";
 import { applyUrlFilters } from "@/lib/filters";
 import { searchListings } from "@/lib/search";
 import { useSearch, type Suggestion, type DealFilter } from "@/components/SearchProvider";
@@ -34,8 +35,14 @@ export default function MapView() {
   const hoveredId = useRef<string | number | null>(null);
   const listingsById = useRef<Map<string, Listing>>(new Map());
   const geoRef = useRef<Listing[]>([]); // biens géolocalisés (base de la recherche)
+  const metroByIdRef = useRef<Map<string, number>>(new Map()); // distance métro (m) par bien
   const search = useSearch();
   const setController = search?.setController;
+  const deal = search?.deal ?? "all";
+  const query = search?.query ?? "";
+  const mapFilters = search?.mapFilters;
+  const [pinsReady, setPinsReady] = useState(false);
+  const [metroReady, setMetroReady] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [card, setCard] = useState<{ listing: Listing; x: number; y: number } | null>(null);
   // catégories POI masquées (cochées par défaut sauf defaultVisible:false)
@@ -231,6 +238,7 @@ export default function MapView() {
       {
         const geoListings = listings.filter((l) => l.lat != null && l.lng != null);
         geoRef.current = geoListings; // base de la recherche (déjà filtrée par l'URL)
+
         if (geoListings.length) {
           listingsById.current = new Map(geoListings.map((l) => [l.id, l]));
           map.addSource("listings", {
@@ -272,6 +280,7 @@ export default function MapView() {
           map.on("mouseleave", "listings-pins", () => {
             map.getCanvas().style.cursor = "";
           });
+          setPinsReady(true); // active le filtrage live (deal / recherche / bandeau)
         }
       }
 
@@ -317,30 +326,69 @@ export default function MapView() {
     if (mapRef.current) setCategoryVisibility(mapRef.current, categoryId, visible);
   };
 
-  // Enregistre le "controller" de recherche pour le header (barre dans la nav).
+  // Distances au métro : calculées PARESSEUSEMENT (seulement si l'utilisateur
+  // active le filtre "Metro ≤ (m)"), une seule fois, puis mises en cache.
+  useEffect(() => {
+    if (metroReady || mapFilters?.metroMax == null) return;
+    let cancelled = false;
+    (async () => {
+      const list = geoRef.current;
+      const dists = await computeNearestMetroSchool(
+        list.map((l) => ({ lat: l.lat!, lng: l.lng! }))
+      );
+      if (cancelled) return;
+      const m = new Map<string, number>();
+      list.forEach((l, i) => {
+        if (dists[i]?.metroM != null) m.set(l.id, dists[i].metroM!);
+      });
+      metroByIdRef.current = m;
+      setMetroReady(true);
+    })().catch(() => !cancelled && setMetroReady(true));
+    return () => { cancelled = true; };
+  }, [mapFilters, metroReady]);
+
+  // Recalcule les pins affichés à chaque changement de deal / recherche / filtres
+  // du bandeau (état partagé via SearchProvider). Une seule logique de filtrage.
+  useEffect(() => {
+    if (!pinsReady) return;
+    const map = mapRef.current;
+    const src = map?.getSource("listings") as maplibregl.GeoJSONSource | undefined;
+    if (!map || !src) return;
+
+    // les filtres numériques du bandeau ne s'appliquent qu'en mode Buy/Rent.
+    const f = deal === "all" ? {} : mapFilters ?? {};
+    let base = deal === "all" ? geoRef.current : geoRef.current.filter((l) => l.dealType === deal);
+    base = base.filter((l) => {
+      if (f.priceMin != null && (l.price ?? 0) < f.priceMin) return false;
+      if (f.priceMax != null && (l.price ?? Number.POSITIVE_INFINITY) > f.priceMax) return false;
+      if (f.beds != null && (l.bedrooms ?? -1) !== f.beds) return false;
+      if (f.metroMax != null) {
+        const d = metroByIdRef.current.get(l.id);
+        if (d == null || d > f.metroMax) return false;
+      }
+      return true;
+    });
+    const matched = query.trim() ? searchListings(base, query) : base;
+    src.setData({
+      type: "FeatureCollection",
+      features: matched.map((l) => ({
+        type: "Feature",
+        properties: { id: l.id },
+        geometry: { type: "Point", coordinates: [l.lng!, l.lat!] },
+      })),
+    });
+    if (query.trim() && matched.length) {
+      const b = new maplibregl.LngLatBounds();
+      matched.forEach((l) => b.extend([l.lng!, l.lat!]));
+      map.fitBounds(b, { padding: 90, maxZoom: 15.5, duration: 800 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deal, query, mapFilters, pinsReady, metroReady]);
+
+  // Enregistre le "controller" de recherche pour le header (suggestions d'autocomplétion).
   // setController (setter useState) est stable → enregistrement unique.
   useEffect(() => {
     if (!setController) return;
-    const run = (value: string, deal: DealFilter) => {
-      const map = mapRef.current;
-      const src = map?.getSource("listings") as maplibregl.GeoJSONSource | undefined;
-      if (!map || !src) return;
-      const base = deal === "all" ? geoRef.current : geoRef.current.filter((l) => l.dealType === deal);
-      const matched = value.trim() ? searchListings(base, value) : base;
-      src.setData({
-        type: "FeatureCollection",
-        features: matched.map((l) => ({
-          type: "Feature",
-          properties: { id: l.id },
-          geometry: { type: "Point", coordinates: [l.lng!, l.lat!] },
-        })),
-      });
-      if (value.trim() && matched.length) {
-        const b = new maplibregl.LngLatBounds();
-        matched.forEach((l) => b.extend([l.lng!, l.lat!]));
-        map.fitBounds(b, { padding: 90, maxZoom: 15.5, duration: 800 });
-      }
-    };
     const suggest = (value: string, deal: DealFilter): Suggestion[] => {
       const v = value.trim().toLowerCase();
       if (!v) return [];
@@ -361,13 +409,16 @@ export default function MapView() {
       }
       return out;
     };
-    setController({ run, suggest });
+    setController({ suggest });
     return () => setController(null);
   }, [setController]);
 
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
+
+      {/* Bandeau de filtres sous la nav (Buy/Rent uniquement) */}
+      <MapFilterBand />
 
       <Legend hidden={hidden} onToggle={toggleCategory} />
 

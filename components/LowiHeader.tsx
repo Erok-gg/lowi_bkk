@@ -29,17 +29,15 @@ const DEALS: { value: DealFilter; label: string }[] = [
 function MapSearch() {
   const search = useSearch();
   const controller = search?.controller ?? null;
-  const [q, setQ] = useState("");
-  const [deal, setDeal] = useState<DealFilter>("all");
+  const q = search?.query ?? "";
+  const deal = search?.deal ?? "all";
   const [open, setOpen] = useState(false);
 
-  const apply = (v: string, d: DealFilter = deal) => {
-    setQ(v);
-    controller?.run(v, d);
-  };
+  const apply = (v: string) => search?.setQuery(v);
+  // changer de deal réinitialise les filtres du bandeau (prix vente ≠ prix loyer).
   const pickDeal = (d: DealFilter) => {
-    setDeal(d);
-    controller?.run(q, d);
+    search?.setDeal(d);
+    search?.setMapFilters({});
   };
   const suggestions = controller && q.trim() ? controller.suggest(q, deal) : [];
 
