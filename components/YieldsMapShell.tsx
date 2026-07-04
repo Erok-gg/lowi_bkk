@@ -4,10 +4,12 @@ import dynamic from "next/dynamic";
 import type { DealType } from "@/lib/types";
 
 export interface YListing {
+  id: string;
   khet: string | null;
   dealType: DealType;
   pricePerSqm: number | null;
   bedrooms: number | null;
+  condoName: string | null; // requis par la double médiane par condo
   lat: number | null;
   lng: number | null;
 }

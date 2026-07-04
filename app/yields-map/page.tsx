@@ -9,11 +9,14 @@ export const dynamic = "force-dynamic";
 export default async function YieldsMapPage() {
   if (!(await isAuthed())) redirect("/login?next=/yields-map");
   // payload léger : seuls les champs utiles à la choroplèthe + filtres
+  // (id + condoName requis par la double médiane par condo, lib/yields.ts)
   const listings: YListing[] = (await getListings()).map((l) => ({
+    id: l.id,
     khet: l.khet,
     dealType: l.dealType,
     pricePerSqm: l.pricePerSqm,
     bedrooms: l.bedrooms,
+    condoName: l.condoName,
     lat: l.lat,
     lng: l.lng,
   }));

@@ -6,14 +6,20 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { BASE_STYLE_URL, INITIAL_VIEW, MAX_BOUNDS, applyThemeToBaseStyle } from "@/config/map-config";
 import { getMapColors } from "@/config/theme";
-import { computeYieldsByKhet, type YieldRow } from "@/lib/yields";
+import {
+  BED_STRATA,
+  computeYieldsByKhet,
+  type BedStratum,
+  type YieldRow,
+} from "@/lib/yields";
 import { computeNearestMetroSchool } from "@/lib/proximity";
 import type { Listing } from "@/lib/types";
 import type { YListing } from "@/components/YieldsMapShell";
 
 /**
- * YieldsMap — choroplèthe des rendements bruts par quartier (moyenne des 3 biens
- * médians, lib/yields.ts), avec filtres : chambres, distance métro, distance
+ * YieldsMap — choroplèthe des rendements bruts par quartier (double médiane par
+ * condo + rendement within-condo, lib/yields.ts), avec filtres : segment de
+ * chambres (0–1BR par défaut = panier constant), distance métro, distance
  * école. À chaque filtre, on recalcule les rendements sur le sous-ensemble et on
  * recolore la carte.
  */
@@ -24,9 +30,10 @@ const STOPS: [number, string][] = [
 const NO_DATA = "#2a2a38";
 
 type Enriched = YListing & { metroM: number | null; schoolM: number | null };
-type Beds = "all" | "1" | "2" | "3" | "4+";
 
-const BEDS: Beds[] = ["all", "1", "2", "3", "4+"];
+const STRATUM_LABEL: Record<BedStratum, string> = {
+  "0-1": "0–1BR", "2": "2BR", "3+": "3BR+", all: "All",
+};
 const METRO: { v: number; label: string }[] = [
   { v: 0, label: "Any" }, { v: 500, label: "≤500m" }, { v: 1000, label: "≤1km" },
 ];
@@ -69,25 +76,22 @@ export default function YieldsMap({ listings }: { listings: YListing[] }) {
   const enrichedRef = useRef<Enriched[]>([]);
   const rowsRef = useRef<Map<string, YieldRow>>(new Map());
 
-  const [beds, setBeds] = useState<Beds>("all");
+  const [beds, setBeds] = useState<BedStratum>("0-1");
   const [metroMax, setMetroMax] = useState(0);
   const [schoolMax, setSchoolMax] = useState(0);
   const [ready, setReady] = useState(false);
 
   // (re)calcule les rendements sur le sous-ensemble filtré + recolore la carte.
-  const recompute = (b: Beds, mMax: number, sMax: number) => {
+  const recompute = (b: BedStratum, mMax: number, sMax: number) => {
     const map = mapRef.current;
     const data = dataRef.current;
     if (!map || !data) return;
-    const matchBeds = (n: number | null) =>
-      b === "all" ? true : b === "4+" ? (n ?? 0) >= 4 : (n ?? -1) === Number(b);
     const sub = enrichedRef.current.filter(
       (l) =>
-        matchBeds(l.bedrooms) &&
         (mMax === 0 || (l.metroM != null && l.metroM <= mMax)) &&
         (sMax === 0 || (l.schoolM != null && l.schoolM <= sMax))
     );
-    const rows = computeYieldsByKhet(sub as unknown as Listing[]);
+    const rows = computeYieldsByKhet(sub as unknown as Listing[], b);
     rowsRef.current = new Map(rows.map((r) => [r.khet, r]));
     data.features.forEach((f) => {
       const name = (f.properties?.name as string) || "";
@@ -124,8 +128,8 @@ export default function YieldsMap({ listings }: { listings: YListing[] }) {
       } catch { /* géré */ }
       if (!data) return;
 
-      // rendements initiaux (sans filtre)
-      const rows0 = computeYieldsByKhet(listings as unknown as Listing[]);
+      // rendements initiaux (segment par défaut 0–1BR, sans filtre distance)
+      const rows0 = computeYieldsByKhet(listings as unknown as Listing[], "0-1");
       const byName0 = new Map(rows0.map((r) => [r.khet, r]));
       rowsRef.current = byName0;
       data.features.forEach((f, i) => {
@@ -190,14 +194,20 @@ export default function YieldsMap({ listings }: { listings: YListing[] }) {
         map.getCanvas().style.cursor = "pointer";
         const name = (f.properties?.name as string) || "";
         const r = rowsRef.current.get(name);
-        const y = r?.grossYieldPct != null ? `${r.grossYieldPct} %` : "—";
+        const y = r?.grossYieldPct != null
+          ? `${r.grossYieldPct} %${r.yieldMethod === "ratio" ? " †" : ""}`
+          : "—";
+        const method = r?.yieldMethod === "within-condo"
+          ? `median of ${r.nPairedCondos} within-condo yields`
+          : r?.yieldMethod === "ratio" ? "ratio of medians (few paired bldgs)" : "";
         popup.setLngLat(e.lngLat).setHTML(
           `<div style="font:12px sans-serif;color:#1a1a1a">
-             <strong>${name.replace(" District", "")}</strong><br/>
+             <strong>${name.replace(" District", "")}</strong>${r?.lowSample ? " <span style='color:#9a5a12'>· low sample</span>" : ""}<br/>
              Gross yield: <b>${y}</b><br/>
+             ${method ? `<span style="color:#666">${method}</span><br/>` : ""}
              Sale/m²: ${r?.saleMedianPsqm ? Math.round(r.saleMedianPsqm).toLocaleString("en-US") : "—"}<br/>
              Rent/m²: ${r?.rentMedianPsqm ? Math.round(r.rentMedianPsqm).toLocaleString("en-US") : "—"}<br/>
-             ${r ? `${r.nSale} sale · ${r.nRent} rent` : "no data"}
+             ${r ? `${r.nSaleCondos} sale bldgs · ${r.nRentCondos} rent bldgs (${r.nSale}/${r.nRent} listings)` : "no data"}
            </div>`
         ).addTo(map);
       });
@@ -246,7 +256,7 @@ export default function YieldsMap({ listings }: { listings: YListing[] }) {
       {/* Filtres */}
       <div className="absolute left-4 top-14 z-10 flex flex-col gap-2 rounded-md border border-violet-soft bg-surface/95 p-3">
         <Seg label="Beds" value={beds} onChange={(v) => setBeds(v)}
-          options={BEDS.map((b) => ({ v: b, label: b === "all" ? "All" : b }))} />
+          options={BED_STRATA.map((b) => ({ v: b, label: STRATUM_LABEL[b] }))} />
         <Seg label="Metro" value={metroMax} onChange={(v) => setMetroMax(v)} options={METRO} />
         <Seg label="School" value={schoolMax} onChange={(v) => setSchoolMax(v)} options={SCHOOL} />
         {!ready && (metroMax > 0 || schoolMax > 0) && (
@@ -265,8 +275,11 @@ export default function YieldsMap({ listings }: { listings: YListing[] }) {
           <span className="inline-block h-3 w-3 rounded" style={{ background: NO_DATA }} /> no data
         </div>
         <div className="mt-2 max-w-[15rem] border-t border-violet-soft pt-1.5 text-[10px] leading-snug text-text-faint">
-          = rent/m² × 12 ÷ sale price/m² × 100, per district.
-          Each side = average of the 3 median listings (filtered by the controls above). Gross, indicative.
+          Median of <b>within-condo</b> yields: for each building listed on both sides,
+          rent/m² × 12 ÷ sale/m² of the <i>same</i> building — age, view and standing cancel out.
+          Prices/m² = double median (per condo, then across condos; 1 building = 1 vote),
+          winsorized p5–p95. † = ratio of medians (too few paired buildings). Asking prices — a
+          relative ranking, not an appraisal.
         </div>
       </div>
     </div>
