@@ -9,8 +9,8 @@ import { POI_ZOOM } from "./map-config";
 
 const c = theme.colors;
 
-export type PoiGeometry = "point" | "line";
-export type PoiGroup = "overview" | "local";
+export type PoiGeometry = "point" | "line" | "polygon";
+export type PoiGroup = "overview" | "local" | "corridors";
 
 export interface PoiCategory {
   id: string; // = valeur de la propriété `category` dans le GeoJSON
@@ -21,6 +21,7 @@ export interface PoiCategory {
   minzoom: number; // seuil d'apparition de la couche
   labelMinzoom?: number; // seuil d'apparition du texte (sinon pas de label)
   radius?: number; // rayon du cercle (point)
+  dash?: number[]; // pointillés (line/polygon outline) — ex. futur ≠ existant
   defaultVisible?: boolean; // décoché par défaut dans la légende si false
 }
 
@@ -95,6 +96,30 @@ export const POI_CATEGORIES: PoiCategory[] = [
     defaultVisible: false,
   },
   {
+    // Lignes de transport EN CONSTRUCTION (Orange, Purple Sud, Red ext., HSR) —
+    // couleur officielle portée par la feature ; pointillés = pas encore ouvert.
+    id: "future_line",
+    label: "Future lines (2028-2032)",
+    color: c.gold,
+    geometry: "line",
+    group: "corridors",
+    minzoom: POI_ZOOM.overview,
+    labelMinzoom: 11.5,
+    dash: [2, 1.6],
+  },
+  {
+    // Zones de développement majeures (Makkasan, Khlong Toei port, Bang Sue,
+    // Rama IV) — polygones approximatifs, statut acté/pending/livré (couleur).
+    id: "dev_zone",
+    label: "Development zones",
+    color: c.gold,
+    geometry: "polygon",
+    group: "corridors",
+    minzoom: POI_ZOOM.overview,
+    labelMinzoom: 11,
+    dash: [3, 2],
+  },
+  {
     id: "mall",
     label: "Commerces (malls)",
     color: "#f472b6",
@@ -121,4 +146,5 @@ export const POI_CATEGORIES: PoiCategory[] = [
 export const POI_SOURCES: Record<PoiGroup, { id: string; url: string }> = {
   overview: { id: "pois", url: "/data/pois.geojson" },
   local: { id: "pois-local", url: "/data/pois-local.geojson" },
+  corridors: { id: "corridors", url: "/data/corridors.geojson" },
 };

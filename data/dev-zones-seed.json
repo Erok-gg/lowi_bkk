@@ -1,0 +1,41 @@
+{
+  "_comment": "Zones de développement majeures (polygones APPROXIMATIFS, dessinés à la main — ordre lng,lat). status: acted = financé/en chantier ; pending = décidé sur le papier, pas irréversible ; delivered = livré. horizon = échéance annoncée. Pour ajuster une zone : éditer ici puis `npm run geo:corridors`.",
+  "zones": [
+    {
+      "name": "Bang Sue — Krung Thep Aphiwat (SRT land, ph.2 2026-2029)",
+      "status": "acted",
+      "horizon": "2029",
+      "note": "Central terminal + 18 SRT plots under development. Watch: current condo oversupply in the area.",
+      "polygon": [
+        [100.535, 13.795], [100.552, 13.795], [100.552, 13.813], [100.535, 13.813]
+      ]
+    },
+    {
+      "name": "Makkasan — HSR 3 airports TOD (pending, ≥2032)",
+      "status": "pending",
+      "horizon": "2032+",
+      "note": "140-rai depot slated for HSR terminal + mixed-use. Contract amendment stalled (caretaker gov.) — a long option, not a commitment.",
+      "polygon": [
+        [100.558, 13.7485], [100.5735, 13.7485], [100.5735, 13.758], [100.558, 13.758]
+      ]
+    },
+    {
+      "name": "Khlong Toei Port redevelopment (pending, →2035)",
+      "status": "pending",
+      "horizon": "2035",
+      "note": "2,353 rai, ~100bn THB mixed-use waterfront; zoning upgrade to Por 5 rides on the 2027 city plan.",
+      "polygon": [
+        [100.565, 13.712], [100.5935, 13.712], [100.5935, 13.6955], [100.5765, 13.692], [100.565, 13.700]
+      ]
+    },
+    {
+      "name": "Rama IV corridor — One Bangkok / Dusit Central Park (delivered)",
+      "status": "delivered",
+      "horizon": "2026",
+      "note": "Luxury cluster delivered/near-complete: mostly priced in. Rent-side play rather than capital-gain play.",
+      "polygon": [
+        [100.528, 13.7215], [100.553, 13.7215], [100.553, 13.7325], [100.528, 13.7325]
+      ]
+    }
+  ]
+}

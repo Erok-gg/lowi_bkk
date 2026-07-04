@@ -51,8 +51,84 @@ export async function addPoiLayers(map: MapLibreMap) {
           "line-color": ["coalesce", ["get", "color"], cat.color],
           "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2, 15, 4],
           "line-opacity": 0.95,
+          // pointillés (ex. lignes futures ≠ réseau existant)
+          ...(cat.dash ? { "line-dasharray": cat.dash } : {}),
         },
       });
+      if (cat.labelMinzoom != null) {
+        map.addLayer({
+          id: labelLayerId(cat.id),
+          type: "symbol",
+          source: src.id,
+          filter: ["==", ["get", "category"], cat.id],
+          minzoom: cat.labelMinzoom,
+          layout: {
+            visibility: visible,
+            "symbol-placement": "line",
+            "text-field": ["get", "name"],
+            "text-size": 10,
+            "text-font": ["Noto Sans Regular"],
+            "text-optional": true,
+          },
+          paint: {
+            "text-color": ["coalesce", ["get", "color"], cat.color],
+            "text-halo-color": colors.labelHalo,
+            "text-halo-width": 1.4,
+          },
+        });
+      }
+      continue;
+    }
+
+    if (cat.geometry === "polygon") {
+      // remplissage discret + contour pointillé + label au centre
+      map.addLayer({
+        id: circleLayerId(cat.id),
+        type: "fill",
+        source: src.id,
+        filter: ["==", ["get", "category"], cat.id],
+        minzoom: cat.minzoom,
+        layout: { visibility: visible },
+        paint: {
+          "fill-color": ["coalesce", ["get", "color"], cat.color],
+          "fill-opacity": 0.13,
+        },
+      });
+      map.addLayer({
+        id: `poi-${cat.id}-outline`,
+        type: "line",
+        source: src.id,
+        filter: ["==", ["get", "category"], cat.id],
+        minzoom: cat.minzoom,
+        layout: { visibility: visible, "line-join": "round" },
+        paint: {
+          "line-color": ["coalesce", ["get", "color"], cat.color],
+          "line-width": 1.6,
+          "line-opacity": 0.9,
+          ...(cat.dash ? { "line-dasharray": cat.dash } : {}),
+        },
+      });
+      if (cat.labelMinzoom != null) {
+        map.addLayer({
+          id: labelLayerId(cat.id),
+          type: "symbol",
+          source: src.id,
+          filter: ["==", ["get", "category"], cat.id],
+          minzoom: cat.labelMinzoom,
+          layout: {
+            visibility: visible,
+            "text-field": ["get", "name"],
+            "text-size": 10.5,
+            "text-font": ["Noto Sans Regular"],
+            "text-optional": true,
+          },
+          paint: {
+            "text-color": ["coalesce", ["get", "color"], cat.color],
+            "text-halo-color": colors.labelHalo,
+            "text-halo-width": 1.4,
+          },
+        });
+      }
       continue;
     }
 
@@ -108,7 +184,11 @@ export function setCategoryVisibility(
   visible: boolean
 ) {
   const v = visible ? "visible" : "none";
-  for (const id of [circleLayerId(categoryId), labelLayerId(categoryId)]) {
+  for (const id of [
+    circleLayerId(categoryId),
+    labelLayerId(categoryId),
+    `poi-${categoryId}-outline`,
+  ]) {
     if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", v);
   }
 }
@@ -147,5 +227,26 @@ function attachPoiPopups(map: MapLibreMap) {
       map.getCanvas().style.cursor = "";
       popup.remove();
     });
+  }
+
+  // Zones (polygones) : popup au survol avec statut + note (suivi du curseur)
+  for (const cat of POI_CATEGORIES.filter((c) => c.geometry === "polygon")) {
+    const layerId = circleLayerId(cat.id);
+    if (!map.getLayer(layerId)) continue;
+    map.on("mousemove", layerId, (e) => {
+      const f = e.features?.[0] as MapGeoJSONFeature | undefined;
+      if (!f) return;
+      const name = (f.properties?.name as string) || "—";
+      const note = (f.properties?.note as string) || "";
+      popup
+        .setLngLat(e.lngLat)
+        .setHTML(
+          `<div style="padding:6px 10px;max-width:240px"><div style="font-weight:600">${name}</div>` +
+            (note ? `<div style="font-size:11px;opacity:.75;margin-top:2px">${note}</div>` : "") +
+            `<div style="font-size:10px;opacity:.55;margin-top:2px">approximate area</div></div>`
+        )
+        .addTo(map);
+    });
+    map.on("mouseleave", layerId, () => popup.remove());
   }
 }

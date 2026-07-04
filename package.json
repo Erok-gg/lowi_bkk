@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "geo:khet": "tsx scripts/fetch-khet-geojson.ts",
-    "geo:pois": "tsx scripts/fetch-pois.ts"
+    "geo:pois": "tsx scripts/fetch-pois.ts",
+    "geo:corridors": "tsx scripts/fetch-corridors.ts"
   },
   "dependencies": {
     "@turf/boolean-point-in-polygon": "^7.1.0",
