@@ -1,0 +1,43 @@
+{
+  "_comment": "Scrap CIBLÉ (temporaire) — khet sous-couverts des couloirs montants : rive ouest (Orange Ouest 2030 + Purple Sud 2029 + antenne Siriraj) et couloir Orange Est (2028). Focus LOCATION partout ; VENTE seulement là où le stock vente est aussi maigre. À lancer avec : run.py --source fazwaz --config config/targets/fazwaz-corridors.json --store supabase. Jamais avec --full (scan partiel → délistage interdit).",
+  "source": "fazwaz",
+  "base_url": "https://www.fazwaz.com",
+  "user_agent": "Mozilla/5.0 (compatible; bkk-perso/0.1; personal research)",
+  "rate_limit_seconds": 2.5,
+  "image_rate_limit_seconds": 0.4,
+  "timeout_seconds": 30,
+  "max_pages": 6,
+  "order_by": "user_updated_at|desc",
+  "respect_robots": true,
+  "searches": [
+    { "path": "/condo-for-rent/thailand/bangkok/bang-kapi",      "deal_type": "rent" },
+    { "path": "/condo-for-rent/thailand/bangkok/bueng-kum",      "deal_type": "rent" },
+    { "path": "/condo-for-rent/thailand/bangkok/saphan-sung",    "deal_type": "rent" },
+    { "path": "/condo-for-rent/thailand/bangkok/min-buri",       "deal_type": "rent" },
+    { "path": "/condo-for-rent/thailand/bangkok/wang-thonglang", "deal_type": "rent" },
+    { "path": "/condo-for-rent/thailand/bangkok/bangkok-noi",    "deal_type": "rent" },
+    { "path": "/condo-for-rent/thailand/bangkok/bangkok-yai",    "deal_type": "rent" },
+    { "path": "/condo-for-rent/thailand/bangkok/thon-buri",      "deal_type": "rent" },
+    { "path": "/condo-for-rent/thailand/bangkok/phasi-charoen",  "deal_type": "rent" },
+    { "path": "/condo-for-rent/thailand/bangkok/bang-phlat",     "deal_type": "rent" },
+    { "path": "/condo-for-rent/thailand/bangkok/taling-chan",    "deal_type": "rent" },
+    { "path": "/condo-for-rent/thailand/bangkok/rat-burana",     "deal_type": "rent" },
+    { "path": "/condo-for-rent/thailand/bangkok/chom-thong",     "deal_type": "rent" },
+    { "path": "/condo-for-sale/thailand/bangkok/min-buri",       "deal_type": "sale" },
+    { "path": "/condo-for-sale/thailand/bangkok/saphan-sung",    "deal_type": "sale" },
+    { "path": "/condo-for-sale/thailand/bangkok/bueng-kum",      "deal_type": "sale" },
+    { "path": "/condo-for-sale/thailand/bangkok/wang-thonglang", "deal_type": "sale" },
+    { "path": "/condo-for-sale/thailand/bangkok/taling-chan",    "deal_type": "sale" },
+    { "path": "/condo-for-sale/thailand/bangkok/rat-burana",     "deal_type": "sale" },
+    { "path": "/condo-for-sale/thailand/bangkok/chom-thong",     "deal_type": "sale" }
+  ],
+  "page_param": "page",
+  "fetch_detail": true,
+  "image": {
+    "width": 1024,
+    "height": 768,
+    "format": "webp",
+    "quality": 80,
+    "max_per_listing": 1
+  }
+}

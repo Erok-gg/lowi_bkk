@@ -64,11 +64,18 @@ def load_env() -> None:
         os.environ.setdefault(k.strip(), v.strip())
 
 
-def load_config(source: str) -> dict:
-    path = CONFIG_DIR / f"{source}.json"
+def load_config(source: str, override: str | None = None) -> dict:
+    """Config du site. `override` = chemin d'un JSON alternatif (scrap ciblé :
+    mêmes clés, souvent des `searches` restreintes à des districts)."""
+    path = Path(override) if override else CONFIG_DIR / f"{source}.json"
+    if not path.is_absolute() and not path.exists():
+        path = ROOT / path  # chemin relatif au dossier scraper/
     if not path.exists():
         sys.exit(f"Config introuvable : {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    if override and cfg.get("source") != source:
+        sys.exit(f"--config {path} : source '{cfg.get('source')}' ≠ --source {source}")
+    return cfg
 
 
 def load_excludes() -> list[str]:
@@ -113,11 +120,13 @@ def main() -> None:
                     help="ne scraper qu'une catégorie (vente ou location)")
     ap.add_argument("--geocode", action="store_true",
                     help="complète street/coords manquants via Nominatim (1 req/s, caché)")
+    ap.add_argument("--config", default=None,
+                    help="config JSON alternative (scrap ciblé, ex. config/targets/…)")
     args = ap.parse_args()
 
     prevent_sleep()  # pas de veille système pendant le scrap (écran libre)
 
-    cfg = load_config(args.source)
+    cfg = load_config(args.source, args.config)
     if args.fetch_detail:
         cfg["fetch_detail"] = True
     # filtre les recherches selon le deal_type (jour vente / jour location)

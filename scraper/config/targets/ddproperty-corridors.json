@@ -1,0 +1,35 @@
+{
+  "_comment": "Scrap CIBLÉ (temporaire) — LOCATION uniquement sur les khet sous-couverts des couloirs montants (le PIP lat/lng redresse les résultats hors district du freetext). À lancer avec : run.py --source ddproperty --config config/targets/ddproperty-corridors.json --store supabase. Jamais avec --full.",
+  "source": "ddproperty",
+  "base_url": "https://www.ddproperty.com",
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  "rate_limit_seconds": 3.0,
+  "image_rate_limit_seconds": 0.4,
+  "timeout_seconds": 30,
+  "max_pages": 4,
+  "page_param": "page",
+  "respect_robots": true,
+  "fetch_detail": true,
+  "searches": [
+    { "path": "/en/property-for-rent?freetext=Bang+Kapi&property_type_code%5B%5D=CONDO&listing_type=rent",      "deal_type": "rent" },
+    { "path": "/en/property-for-rent?freetext=Bueng+Kum&property_type_code%5B%5D=CONDO&listing_type=rent",      "deal_type": "rent" },
+    { "path": "/en/property-for-rent?freetext=Saphan+Sung&property_type_code%5B%5D=CONDO&listing_type=rent",    "deal_type": "rent" },
+    { "path": "/en/property-for-rent?freetext=Min+Buri&property_type_code%5B%5D=CONDO&listing_type=rent",       "deal_type": "rent" },
+    { "path": "/en/property-for-rent?freetext=Wang+Thonglang&property_type_code%5B%5D=CONDO&listing_type=rent", "deal_type": "rent" },
+    { "path": "/en/property-for-rent?freetext=Bangkok+Noi&property_type_code%5B%5D=CONDO&listing_type=rent",    "deal_type": "rent" },
+    { "path": "/en/property-for-rent?freetext=Bangkok+Yai&property_type_code%5B%5D=CONDO&listing_type=rent",    "deal_type": "rent" },
+    { "path": "/en/property-for-rent?freetext=Thon+Buri&property_type_code%5B%5D=CONDO&listing_type=rent",      "deal_type": "rent" },
+    { "path": "/en/property-for-rent?freetext=Phasi+Charoen&property_type_code%5B%5D=CONDO&listing_type=rent",  "deal_type": "rent" },
+    { "path": "/en/property-for-rent?freetext=Bang+Phlat&property_type_code%5B%5D=CONDO&listing_type=rent",     "deal_type": "rent" },
+    { "path": "/en/property-for-rent?freetext=Taling+Chan&property_type_code%5B%5D=CONDO&listing_type=rent",    "deal_type": "rent" },
+    { "path": "/en/property-for-rent?freetext=Rat+Burana&property_type_code%5B%5D=CONDO&listing_type=rent",     "deal_type": "rent" },
+    { "path": "/en/property-for-rent?freetext=Chom+Thong&property_type_code%5B%5D=CONDO&listing_type=rent",     "deal_type": "rent" }
+  ],
+  "image": {
+    "width": 1024,
+    "height": 768,
+    "format": "webp",
+    "quality": 80,
+    "max_per_listing": 1
+  }
+}
