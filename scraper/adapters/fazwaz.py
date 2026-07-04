@@ -14,7 +14,7 @@ import json
 import re
 from html import unescape
 from typing import Iterator
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 from bs4 import BeautifulSoup
 
@@ -39,14 +39,20 @@ class FazwazAdapter(BaseAdapter):
         base = self.config["base_url"]
         page_param = self.config.get("page_param", "page")
         max_pages = self.config.get("max_pages", 1)
+        order_by = self.config.get("order_by")  # ex. "user_updated_at|desc" — annonces les + fraîches d'abord
         yielded = 0
 
         for search in self.config["searches"]:
             path = search["path"]
             for page in range(1, max_pages + 1):
                 url = urljoin(base + "/", path.lstrip("/"))
+                params = []
                 if page > 1:
-                    url = f"{url}?{page_param}={page}"
+                    params.append(f"{page_param}={page}")
+                if order_by:
+                    params.append(f"order_by={quote(order_by, safe='')}")
+                if params:
+                    url = f"{url}?{'&'.join(params)}"
                 html = fetcher.get_text(url)
                 if not html:
                     break

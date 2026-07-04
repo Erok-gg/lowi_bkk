@@ -7,6 +7,8 @@
   "image_rate_limit_seconds": 0.4,
   "timeout_seconds": 30,
   "max_pages": 150,
+  "order_by": "user_updated_at|desc",
+  "_order_by_comment": "Tri par fraîcheur (annonces les + récemment mises à jour d'abord). Sans ça, le tri 'ranking' par défaut de FazWaz favorise les annonces sponsorisées et le catalogue (34k+ annonces vente) dépasse largement les 150 pages couvertes → la majorité du stock (dont les annonces récentes mal classées) n'est jamais vue. Testé : répartition par quartier quasi identique au tri par défaut (pas de biais géo supplémentaire), et les 150 pages couvrent ~2 mois de fraîcheur.",
   "respect_robots": true,
   "searches": [
     {
