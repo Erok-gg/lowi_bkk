@@ -1,11 +1,15 @@
 /**
- * fetch-corridors.ts — Couloirs de développement : lignes de transport EN
- * CONSTRUCTION (Overpass, `railway=construction`) + zones de développement
- * majeures (seed manuel `data/dev-zones-seed.json`, polygones approximatifs).
+ * fetch-corridors.ts — Masques de contexte de la carte :
+ *   - lignes de transport EN CONSTRUCTION (Overpass, `railway=construction`)
+ *   - zones de développement majeures (seed manuel `data/dev-zones-seed.json`)
+ *   - centres d'activité expat (seed manuel `data/expat-zones-seed.json`)
+ *   - zones industrielles (Overpass `landuse=industrial`, filtrées par surface)
  *
- * Produit public/data/corridors.geojson avec deux catégories :
- *   - future_line : LineString, propriétés { name, color, opening }
- *   - dev_zone    : Polygon,   propriétés { name, color, status, note }
+ * Produit public/data/corridors.geojson avec quatre catégories :
+ *   - future_line     : LineString { name, color, opening }
+ *   - dev_zone        : Polygon    { name, color, status, note }
+ *   - expat_zone      : Polygon    { name, color, note }
+ *   - industrial_zone : Polygon    { name, color }
  *
  * BBox volontairement plus large que Bangkok : la Purple Sud finit à Rat Burana
  * mais la Red Rangsit→Thammasat sort en Pathum Thani.
@@ -18,14 +22,20 @@ import { resolve } from "node:path";
 const OVERPASS = "https://overpass-api.de/api/interpreter";
 const OUT = resolve(process.cwd(), "public", "data", "corridors.geojson");
 const SEED = resolve(process.cwd(), "data", "dev-zones-seed.json");
+const EXPAT_SEED = resolve(process.cwd(), "data", "expat-zones-seed.json");
 
 // sud, ouest, nord, est
 const BBOX = "13.45,100.30,14.12,100.98";
+
+// Surface minimale (km²) d'une zone industrielle pour être affichée : écarte
+// les petits ateliers, ne garde que les vrais estates (Lat Krabang, Bang Chan…).
+const INDUSTRIAL_MIN_KM2 = 0.25;
 
 const query = `
 [out:json][timeout:300];
 (
   way["railway"="construction"](${BBOX});
+  way["landuse"="industrial"](${BBOX});
 );
 out body geom;
 `;
@@ -56,6 +66,22 @@ const ZONE_COLORS: Record<string, string> = {
   delivered: "#8f9bb3", // livré (déjà pricé)
 };
 
+const EXPAT_COLOR = "#4c9be8";
+const INDUSTRIAL_COLOR = "#8a7355";
+
+/** Surface approximative (km²) d'un anneau lng/lat (shoelace + m/deg à 13.7°N). */
+function ringAreaKm2(ring: [number, number][]): number {
+  const kmPerDegLat = 110.57;
+  const kmPerDegLng = 111.32 * Math.cos((13.7 * Math.PI) / 180);
+  let sum = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const [x1, y1] = ring[i];
+    const [x2, y2] = ring[(i + 1) % ring.length];
+    sum += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(sum / 2) * kmPerDegLat * kmPerDegLng;
+}
+
 async function main() {
   console.log("→ Overpass : lignes en construction…");
   const res = await fetch(OVERPASS, {
@@ -73,9 +99,29 @@ async function main() {
   const features: GeoJSON.Feature[] = [];
   const counts = new Map<string, number>();
 
+  let nIndustrial = 0;
   for (const el of data.elements) {
     if (el.type !== "way" || !el.geometry || el.geometry.length < 2) continue;
     const t = el.tags ?? {};
+
+    // ── zones industrielles (polygones fermés, filtrés par surface) ──
+    if (t.landuse === "industrial") {
+      const ring = el.geometry.map((g) => [g.lon, g.lat] as [number, number]);
+      if (ring.length < 4) continue;
+      if (ringAreaKm2(ring) < INDUSTRIAL_MIN_KM2) continue;
+      features.push({
+        type: "Feature",
+        geometry: { type: "Polygon", coordinates: [[...ring, ring[0]]] },
+        properties: {
+          category: "industrial_zone",
+          name: t["name:en"] || t.name || "Industrial area",
+          color: INDUSTRIAL_COLOR,
+        },
+      });
+      nIndustrial++;
+      continue;
+    }
+
     const sub = t.construction ?? "";
     if (!KEEP_CONSTRUCTION.has(sub)) continue;
 
@@ -123,11 +169,30 @@ async function main() {
     });
   }
 
+  console.log("→ Centres d'activité expat (seed manuel)…");
+  const expat = JSON.parse(readFileSync(EXPAT_SEED, "utf-8")) as {
+    zones: { name: string; note: string; polygon: [number, number][] }[];
+  };
+  for (const z of expat.zones) {
+    features.push({
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [[...z.polygon, z.polygon[0]]] },
+      properties: {
+        category: "expat_zone",
+        name: z.name,
+        color: EXPAT_COLOR,
+        note: z.note,
+      },
+    });
+  }
+
   mkdirSync(resolve(process.cwd(), "public", "data"), { recursive: true });
   writeFileSync(OUT, JSON.stringify({ type: "FeatureCollection", features }));
 
   console.log(`✓ ${OUT}`);
-  console.log(`  ${features.length} features (${seed.zones.length} zones) :`);
+  console.log(
+    `  ${features.length} features — dev:${seed.zones.length} · expat:${expat.zones.length} · industriel:${nIndustrial} :`
+  );
   for (const [name, n] of [...counts.entries()].sort((a, b) => b[1] - a[1])) {
     console.log(`  - ${name} : ${n} segments`);
   }

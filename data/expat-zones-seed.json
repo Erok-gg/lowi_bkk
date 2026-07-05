@@ -1,0 +1,61 @@
+{
+  "_comment": "Centres d'activité EXPAT (polygones APPROXIMATIFS, ordre lng,lat). Zones où les expats vivent/travaillent/sortent — utile pour lire la demande locative solvable. Pour ajuster/ajouter : éditer ici puis `npm run geo:corridors`.",
+  "zones": [
+    {
+      "name": "Sukhumvit core (Asok–Phrom Phong–Thong Lo–Ekkamai)",
+      "note": "Main Western & Japanese expat belt: offices, nightlife, intl. supermarkets. Deepest rental demand in town.",
+      "polygon": [
+        [100.552, 13.734], [100.590, 13.708], [100.600, 13.720], [100.562, 13.746]
+      ]
+    },
+    {
+      "name": "Silom–Sathon–Lumpini (CBD & embassies)",
+      "note": "Historic CBD: banks, law firms, embassies, French/European community. Strong corporate-lease demand.",
+      "polygon": [
+        [100.514, 13.713], [100.545, 13.713], [100.545, 13.732], [100.514, 13.732]
+      ]
+    },
+    {
+      "name": "Riverside (Charoen Krung–Khlong San)",
+      "note": "Hotels, Icon Siam, creative district. Lifestyle/retiree expats; premium river-view rentals.",
+      "polygon": [
+        [100.502, 13.712], [100.518, 13.712], [100.518, 13.733], [100.502, 13.733]
+      ]
+    },
+    {
+      "name": "Ari",
+      "note": "Hip cafés/co-working pocket; young professionals and nomads. Small but tight rental market.",
+      "polygon": [
+        [100.535, 13.774], [100.550, 13.774], [100.550, 13.790], [100.535, 13.790]
+      ]
+    },
+    {
+      "name": "On Nut–Phra Khanong (budget expat / nomads)",
+      "note": "Value end of the Sukhumvit line: digital nomads, teachers. High turnover, price-sensitive demand.",
+      "polygon": [
+        [100.590, 13.698], [100.612, 13.698], [100.612, 13.718], [100.590, 13.718]
+      ]
+    },
+    {
+      "name": "Rama 9–Ratchada (new CBD, Chinese community)",
+      "note": "G Tower/Unilever offices, Chinese & Korean communities, embassy of China. Growing white-collar rentals.",
+      "polygon": [
+        [100.560, 13.745], [100.580, 13.745], [100.580, 13.770], [100.560, 13.770]
+      ]
+    },
+    {
+      "name": "Nichada Thani / ISB (family compounds, Pak Kret)",
+      "note": "Gated family-expat enclave around International School Bangkok. Houses more than condos — rent-side reference.",
+      "polygon": [
+        [100.498, 13.890], [100.520, 13.890], [100.520, 13.912], [100.498, 13.912]
+      ]
+    },
+    {
+      "name": "Bang Na–Trat corridor (intl schools, Mega Bangna)",
+      "note": "Berkeley/Bangkok Patana side of town + Mega Bangna. Family demand tied to school run distances.",
+      "polygon": [
+        [100.600, 13.652], [100.662, 13.652], [100.662, 13.680], [100.600, 13.680]
+      ]
+    }
+  ]
+}

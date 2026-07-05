@@ -120,6 +120,31 @@ export const POI_CATEGORIES: PoiCategory[] = [
     dash: [3, 2],
   },
   {
+    // Centres d'activité expat (seed manuel data/expat-zones-seed.json) —
+    // lecture de la demande locative solvable. Polygones approximatifs.
+    id: "expat_zone",
+    label: "Expat hubs",
+    color: "#4c9be8",
+    geometry: "polygon",
+    group: "corridors",
+    minzoom: POI_ZOOM.overview,
+    labelMinzoom: 11,
+    dash: [1.2, 1.6],
+    defaultVisible: false,
+  },
+  {
+    // Zones industrielles (OSM landuse=industrial, ≥0.25 km²) — répulsif
+    // résidentiel / lecture des loyers ouvriers en périphérie.
+    id: "industrial_zone",
+    label: "Industrial zones",
+    color: "#8a7355",
+    geometry: "polygon",
+    group: "corridors",
+    minzoom: POI_ZOOM.overview,
+    labelMinzoom: 12.5,
+    defaultVisible: false,
+  },
+  {
     id: "mall",
     label: "Commerces (malls)",
     color: "#f472b6",
