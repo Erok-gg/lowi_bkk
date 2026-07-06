@@ -1,0 +1,76 @@
+{
+  "_comment": "PARAMÈTRES FIGÉS de l'étude de marché récurrente. Ne changer une valeur qu'en connaissance de cause : tout changement casse la comparabilité avec les snapshots antérieurs (le rapport signale la version de config utilisée). Usage : scraper/.venv/Scripts/python.exe study/run_study.py (après le cycle hebdo de scraps --full).",
+  "config_version": 1,
+
+  "stats": {
+    "strata_headline": "0-1BR",
+    "sale_min_thb": 800000,
+    "sale_max_thb": 100000000,
+    "rent_max_thb_month": 200000,
+    "winsor_pct": [5, 95],
+    "winsor_min_n": 20,
+    "min_paired_condos": 5,
+    "low_sample_condos": 20
+  },
+
+  "expat_khets": [
+    "Vadhana District", "Khlong Toei District", "Sathon District", "Bang Rak District",
+    "Pathum Wan District", "Ratchathewi District", "Phaya Thai District",
+    "Huai Khwang District", "Phra Khanong District", "Khlong San District", "Bang Na District"
+  ],
+
+  "car_dependent_khets": [
+    "Nong Chok District", "Khlong Sam Wa District", "Lat Krabang District", "Min Buri District",
+    "Saphan Sung District", "Khan Na Yao District", "Sai Mai District", "Bang Khun Thian District",
+    "Bang Bon District", "Thung Khru District", "Taling Chan District", "Nong Khaem District",
+    "Thawi Watthana District", "Don Mueang District", "Lak Si District"
+  ],
+
+  "key_khets_evolution": [
+    "Vadhana District", "Khlong Toei District", "Pathum Wan District", "Sathon District",
+    "Bang Rak District", "Huai Khwang District", "Phra Khanong District", "Bang Na District",
+    "Chatuchak District", "Bang Sue District", "Wang Thonglang District", "Bang Kapi District",
+    "Bueng Kum District", "Phasi Charoen District", "Thon Buri District", "Bangkok Noi District",
+    "Rat Burana District", "Bang Phlat District"
+  ],
+
+  "opportunities": {
+    "top_n_per_khet": 10,
+    "one_per_condo": true,
+    "min_sales_in_condo_for_discount": 3,
+    "min_rents_in_condo_for_yield": 3,
+    "yield_floor_pct": 5.5,
+    "score_yield_baseline_pct": 4.5,
+    "score_yield_cap_pct": 9.0,
+    "score_discount_cap_pct": 45.0,
+    "suspect_discount_pct": 45.0,
+    "suspect_yield_pct": 10.0,
+    "flag_discount_pct": 40.0,
+    "flag_yield_pct": 9.5
+  },
+
+  "proximity": {
+    "school_max_m": 5000,
+    "metro_max_m": 500,
+    "future_line_max_m": 500,
+    "top_n_report": 30,
+    "top_n_export": 60,
+    "min_rents_in_condo": 2,
+    "sort_yield_cap_pct": 8.5
+  },
+
+  "tension": {
+    "delisted_window_days": 3,
+    "min_delisted_per_khet": 8,
+    "price_bands_thb": [3000000, 6000000, 12000000],
+    "beds_buckets": ["studio/1BR", "2BR", "3BR+"]
+  },
+
+  "paths": {
+    "pois_geojson": "public/data/pois.geojson",
+    "corridors_geojson": "public/data/corridors.geojson",
+    "context_md": "study/context.md",
+    "snapshots_dir": "study/snapshots",
+    "reports_dir": "docs/etudes"
+  }
+}
