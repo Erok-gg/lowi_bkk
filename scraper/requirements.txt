@@ -4,3 +4,4 @@ beautifulsoup4>=4.12
 Pillow>=10.2
 # partie online (Supabase via Postgres direct) :
 psycopg[binary]>=3.1
+openpyxl>=3.1  # exports xlsx de l'etude (study/run_study.py)

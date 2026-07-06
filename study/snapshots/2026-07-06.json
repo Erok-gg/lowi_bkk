@@ -8,113 +8,389 @@
   "condos": 2469
  },
  "khet_stats_01": {
-  "Bueng Kum District": {
-   "sale_psqm": 53722,
-   "rent_psqm": 277.2,
-   "yield_wc": 5.98,
-   "paired": 19
-  },
-  "Sathon District": {
-   "sale_psqm": 135625,
-   "rent_psqm": 523.3,
-   "yield_wc": 5.06,
-   "paired": 26
-  },
-  "Huai Khwang District": {
-   "sale_psqm": 92995,
-   "rent_psqm": 490.0,
-   "yield_wc": 5.38,
-   "paired": 50
-  },
-  "Pathum Wan District": {
-   "sale_psqm": 179259,
-   "rent_psqm": 804.4,
-   "yield_wc": 4.66,
-   "paired": 30
-  },
-  "Bang Sue District": {
-   "sale_psqm": 81362,
-   "rent_psqm": 384.3,
-   "yield_wc": 5.51,
-   "paired": 16
-  },
-  "Bang Rak District": {
-   "sale_psqm": 167093,
-   "rent_psqm": 621.1,
-   "yield_wc": 4.46,
-   "paired": 30
-  },
-  "Vadhana District": {
-   "sale_psqm": 139220,
-   "rent_psqm": 586.7,
-   "yield_wc": 5.24,
-   "paired": 134
-  },
-  "Bang Kapi District": {
-   "sale_psqm": 71821,
-   "rent_psqm": 428.6,
-   "yield_wc": 5.66,
-   "paired": 25
-  },
-  "Thon Buri District": {
-   "sale_psqm": 86038,
-   "rent_psqm": 395.2,
-   "yield_wc": 5.55,
-   "paired": 22
-  },
-  "Phasi Charoen District": {
-   "sale_psqm": 67046,
-   "rent_psqm": 342.9,
-   "yield_wc": 5.81,
-   "paired": 17
-  },
-  "Bang Phlat District": {
-   "sale_psqm": 81373,
-   "rent_psqm": 409.2,
-   "yield_wc": 5.35,
-   "paired": 17
-  },
-  "Phra Khanong District": {
-   "sale_psqm": 90000,
-   "rent_psqm": 485.4,
-   "yield_wc": 5.55,
-   "paired": 34
-  },
-  "Wang Thonglang District": {
-   "sale_psqm": 52778,
-   "rent_psqm": 344.8,
-   "yield_wc": 6.42,
-   "paired": 18
-  },
-  "Chatuchak District": {
-   "sale_psqm": 94502,
-   "rent_psqm": 512.1,
-   "yield_wc": 5.23,
-   "paired": 44
-  },
-  "Rat Burana District": {
-   "sale_psqm": 64039,
-   "rent_psqm": 285.7,
-   "yield_wc": 5.78,
-   "paired": 9
+  "Pom Prap Sattru Phai District": {
+   "sale_psqm": 106667,
+   "rent_psqm": 400.0,
+   "yield_wc": null,
+   "paired": 1,
+   "sale_condos": 1,
+   "rent_condos": 1
   },
   "Bang Na District": {
    "sale_psqm": 82115,
    "rent_psqm": 399.2,
    "yield_wc": 5.73,
-   "paired": 24
+   "paired": 24,
+   "sale_condos": 42,
+   "rent_condos": 31
   },
-  "Khlong Toei District": {
-   "sale_psqm": 141625,
-   "rent_psqm": 614.6,
-   "yield_wc": 5.15,
-   "paired": 85
+  "Lat Phrao District": {
+   "sale_psqm": 86199,
+   "rent_psqm": 451.6,
+   "yield_wc": null,
+   "paired": 3,
+   "sale_condos": 11,
+   "rent_condos": 6
+  },
+  "Saphan Sung District": {
+   "sale_psqm": 64200,
+   "rent_psqm": null,
+   "yield_wc": null,
+   "paired": 0,
+   "sale_condos": 2,
+   "rent_condos": 0
+  },
+  "Khlong San District": {
+   "sale_psqm": 106522,
+   "rent_psqm": 459.5,
+   "yield_wc": 4.96,
+   "paired": 26,
+   "sale_condos": 43,
+   "rent_condos": 35
+  },
+  "Vadhana District": {
+   "sale_psqm": 139220,
+   "rent_psqm": 586.7,
+   "yield_wc": 5.24,
+   "paired": 134,
+   "sale_condos": 169,
+   "rent_condos": 181
+  },
+  "Bang Khae District": {
+   "sale_psqm": 63289,
+   "rent_psqm": 339.2,
+   "yield_wc": null,
+   "paired": 4,
+   "sale_condos": 8,
+   "rent_condos": 8
+  },
+  "Phaya Thai District": {
+   "sale_psqm": 119048,
+   "rent_psqm": 505.1,
+   "yield_wc": 4.86,
+   "paired": 23,
+   "sale_condos": 41,
+   "rent_condos": 38
+  },
+  "Wang Thonglang District": {
+   "sale_psqm": 52778,
+   "rent_psqm": 344.8,
+   "yield_wc": 6.42,
+   "paired": 18,
+   "sale_condos": 28,
+   "rent_condos": 29
   },
   "Bangkok Noi District": {
    "sale_psqm": 80731,
    "rent_psqm": 406.8,
    "yield_wc": 5.61,
-   "paired": 20
+   "paired": 20,
+   "sale_condos": 25,
+   "rent_condos": 33
+  },
+  "Phasi Charoen District": {
+   "sale_psqm": 67046,
+   "rent_psqm": 342.9,
+   "yield_wc": 5.81,
+   "paired": 17,
+   "sale_condos": 22,
+   "rent_condos": 32
+  },
+  "Bang Rak District": {
+   "sale_psqm": 167093,
+   "rent_psqm": 621.1,
+   "yield_wc": 4.46,
+   "paired": 30,
+   "sale_condos": 44,
+   "rent_condos": 39
+  },
+  "Phra Nakhon District": {
+   "sale_psqm": 86486,
+   "rent_psqm": 370.6,
+   "yield_wc": null,
+   "paired": 1,
+   "sale_condos": 1,
+   "rent_condos": 1
+  },
+  "Chatuchak District": {
+   "sale_psqm": 94502,
+   "rent_psqm": 512.1,
+   "yield_wc": 5.23,
+   "paired": 44,
+   "sale_condos": 101,
+   "rent_condos": 64
+  },
+  "Phra Khanong District": {
+   "sale_psqm": 90000,
+   "rent_psqm": 485.4,
+   "yield_wc": 5.55,
+   "paired": 34,
+   "sale_condos": 55,
+   "rent_condos": 44
+  },
+  "Suan Luang District": {
+   "sale_psqm": 66071,
+   "rent_psqm": 415.6,
+   "yield_wc": 5.84,
+   "paired": 16,
+   "sale_condos": 35,
+   "rent_condos": 31
+  },
+  "Ratchathewi District": {
+   "sale_psqm": 155556,
+   "rent_psqm": 602.7,
+   "yield_wc": 4.72,
+   "paired": 41,
+   "sale_condos": 55,
+   "rent_condos": 51
+  },
+  "Pathum Wan District": {
+   "sale_psqm": 179259,
+   "rent_psqm": 804.4,
+   "yield_wc": 4.66,
+   "paired": 30,
+   "sale_condos": 41,
+   "rent_condos": 50
+  },
+  "Bang Khen District": {
+   "sale_psqm": 75600,
+   "rent_psqm": 460.3,
+   "yield_wc": null,
+   "paired": 2,
+   "sale_condos": 15,
+   "rent_condos": 6
+  },
+  "Bang Phlat District": {
+   "sale_psqm": 81373,
+   "rent_psqm": 409.2,
+   "yield_wc": 5.35,
+   "paired": 17,
+   "sale_condos": 22,
+   "rent_condos": 32
+  },
+  "Pak Kret": {
+   "sale_psqm": 66465,
+   "rent_psqm": null,
+   "yield_wc": null,
+   "paired": 0,
+   "sale_condos": 1,
+   "rent_condos": 0
+  },
+  "Don Mueang District": {
+   "sale_psqm": 75000,
+   "rent_psqm": 293.2,
+   "yield_wc": null,
+   "paired": 1,
+   "sale_condos": 3,
+   "rent_condos": 2
+  },
+  "Min Buri District": {
+   "sale_psqm": 73478,
+   "rent_psqm": 305.8,
+   "yield_wc": 5.57,
+   "paired": 6,
+   "sale_condos": 7,
+   "rent_condos": 10
+  },
+  "Bang Kapi District": {
+   "sale_psqm": 71821,
+   "rent_psqm": 428.6,
+   "yield_wc": 5.66,
+   "paired": 25,
+   "sale_condos": 37,
+   "rent_condos": 37
+  },
+  "Lat Krabang District": {
+   "sale_psqm": 53745,
+   "rent_psqm": 313.6,
+   "yield_wc": null,
+   "paired": 1,
+   "sale_condos": 6,
+   "rent_condos": 1
+  },
+  "Bang Na": {
+   "sale_psqm": 89141,
+   "rent_psqm": 492.6,
+   "yield_wc": null,
+   "paired": 2,
+   "sale_condos": 3,
+   "rent_condos": 2
+  },
+  "Rat Burana District": {
+   "sale_psqm": 64039,
+   "rent_psqm": 285.7,
+   "yield_wc": 5.78,
+   "paired": 9,
+   "sale_condos": 10,
+   "rent_condos": 13
+  },
+  "Sai Mai District": {
+   "sale_psqm": 70153,
+   "rent_psqm": 245.5,
+   "yield_wc": null,
+   "paired": 0,
+   "sale_condos": 5,
+   "rent_condos": 2
+  },
+  "Bang Khun Thian District": {
+   "sale_psqm": 63043,
+   "rent_psqm": null,
+   "yield_wc": null,
+   "paired": 0,
+   "sale_condos": 3,
+   "rent_condos": 0
+  },
+  "Bueng Kum District": {
+   "sale_psqm": 53722,
+   "rent_psqm": 277.2,
+   "yield_wc": 5.98,
+   "paired": 19,
+   "sale_condos": 20,
+   "rent_condos": 22
+  },
+  "Lak Si District": {
+   "sale_psqm": 64337,
+   "rent_psqm": null,
+   "yield_wc": null,
+   "paired": 0,
+   "sale_condos": 5,
+   "rent_condos": 0
+  },
+  "Prawet District": {
+   "sale_psqm": 62625,
+   "rent_psqm": 368.9,
+   "yield_wc": null,
+   "paired": 3,
+   "sale_condos": 12,
+   "rent_condos": 4
+  },
+  "Dusit District": {
+   "sale_psqm": 136364,
+   "rent_psqm": 468.1,
+   "yield_wc": null,
+   "paired": 1,
+   "sale_condos": 3,
+   "rent_condos": 2
+  },
+  "Bang Sue District": {
+   "sale_psqm": 81362,
+   "rent_psqm": 384.3,
+   "yield_wc": 5.51,
+   "paired": 16,
+   "sale_condos": 30,
+   "rent_condos": 18
+  },
+  "Taling Chan District": {
+   "sale_psqm": 47450,
+   "rent_psqm": 260.4,
+   "yield_wc": null,
+   "paired": 1,
+   "sale_condos": 2,
+   "rent_condos": 2
+  },
+  "Din Daeng District": {
+   "sale_psqm": 101260,
+   "rent_psqm": 472.2,
+   "yield_wc": 4.99,
+   "paired": 17,
+   "sale_condos": 34,
+   "rent_condos": 21
+  },
+  "Khan Na Yao District": {
+   "sale_psqm": 71154,
+   "rent_psqm": 314.3,
+   "yield_wc": null,
+   "paired": 4,
+   "sale_condos": 7,
+   "rent_condos": 5
+  },
+  "Bang Bon District": {
+   "sale_psqm": 39286,
+   "rent_psqm": null,
+   "yield_wc": null,
+   "paired": 0,
+   "sale_condos": 1,
+   "rent_condos": 0
+  },
+  "Bangkok Yai District": {
+   "sale_psqm": 84273,
+   "rent_psqm": 386.1,
+   "yield_wc": 5.38,
+   "paired": 11,
+   "sale_condos": 15,
+   "rent_condos": 13
+  },
+  "Thon Buri District": {
+   "sale_psqm": 86038,
+   "rent_psqm": 395.2,
+   "yield_wc": 5.55,
+   "paired": 22,
+   "sale_condos": 25,
+   "rent_condos": 39
+  },
+  "Khlong Toei District": {
+   "sale_psqm": 141625,
+   "rent_psqm": 614.6,
+   "yield_wc": 5.15,
+   "paired": 85,
+   "sale_condos": 111,
+   "rent_condos": 113
+  },
+  "Huai Khwang District": {
+   "sale_psqm": 92995,
+   "rent_psqm": 490.0,
+   "yield_wc": 5.38,
+   "paired": 50,
+   "sale_condos": 84,
+   "rent_condos": 63
+  },
+  "Thung Khru District": {
+   "sale_psqm": 66458,
+   "rent_psqm": 403.2,
+   "yield_wc": null,
+   "paired": 1,
+   "sale_condos": 2,
+   "rent_condos": 2
+  },
+  "Bearing": {
+   "sale_psqm": null,
+   "rent_psqm": 551.7,
+   "yield_wc": null,
+   "paired": 0,
+   "sale_condos": 0,
+   "rent_condos": 1
+  },
+  "Bang Kho Laem District": {
+   "sale_psqm": 111246,
+   "rent_psqm": 499.6,
+   "yield_wc": 5.14,
+   "paired": 12,
+   "sale_condos": 18,
+   "rent_condos": 14
+  },
+  "Sathon District": {
+   "sale_psqm": 135625,
+   "rent_psqm": 523.3,
+   "yield_wc": 5.06,
+   "paired": 26,
+   "sale_condos": 36,
+   "rent_condos": 40
+  },
+  "Yan Nawa District": {
+   "sale_psqm": 83944,
+   "rent_psqm": 365.2,
+   "yield_wc": 5.46,
+   "paired": 17,
+   "sale_condos": 34,
+   "rent_condos": 28
+  },
+  "Chom Thong District": {
+   "sale_psqm": 71816,
+   "rent_psqm": 319.0,
+   "yield_wc": 5.65,
+   "paired": 16,
+   "sale_condos": 18,
+   "rent_condos": 23
   }
  },
  "tension_by_khet": {

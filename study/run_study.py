@@ -350,8 +350,11 @@ def write_snapshot(actives, D01, tens):
             "rents": sum(1 for r in actives if r["deal_type"] == "rent"),
             "condos": len({norm_condo(r["condo_name"]) for r in actives}),
         },
-        "khet_stats_01": {k: {kk: v[kk] for kk in ("sale_psqm", "rent_psqm", "yield_wc", "paired")}
-                          for k, v in D01.items() if k in CFG["key_khets_evolution"]},
+        # tous les khets (les tables d'évolution du rapport filtrent sur key_khets_evolution,
+        # les exports CSV/xlsx gardent tout)
+        "khet_stats_01": {k: {kk: v[kk] for kk in ("sale_psqm", "rent_psqm", "yield_wc",
+                                                   "paired", "sale_condos", "rent_condos")}
+                          for k, v in D01.items()},
         "tension_by_khet": {r["khet"]: {"rate": r["delist_rate_pct"], "n": r["n_delisted"]}
                             for r in tens["by_khet"] if r["n_delisted"] >= CFG["tension"]["min_delisted_per_khet"]},
     }
@@ -415,6 +418,129 @@ def evolution_md(snaps):
         out.append(f"| {khet.replace(' District', '')} | "
                    + " | ".join(f"{v:.1f}" if v is not None else "—" for v in vals) + f" | {delta} |")
     return "\n".join(out) + "\n"
+
+# ───────────────────────── exports tableaux/graphiques ─────────────────────────
+def _write_csv(path, header, rows, excel_fr=False):
+    """CSV. excel_fr=True → séparateur ';' + décimale ',' (double-clic Excel FR)."""
+    sep = ";" if excel_fr else ","
+    def fmt(v):
+        if v is None:
+            return ""
+        if isinstance(v, float):
+            s = f"{v:.2f}".rstrip("0").rstrip(".")
+            return s.replace(".", ",") if excel_fr else s
+        return str(v)
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        f.write(sep.join(header) + "\n")
+        for r in rows:
+            f.write(sep.join(fmt(v) for v in r) + "\n")
+
+def export_tables(D01, tens, snaps):
+    """Tables par quartier prêtes à grapher : CSV (std + Excel FR) + xlsx avec graphiques."""
+    ddir = os.path.join(ROOT, CFG["paths"]["reports_dir"], "data")
+    os.makedirs(ddir, exist_ok=True)
+    tens_by_khet = {r["khet"]: r for r in tens["by_khet"]}
+
+    # 1) édition courante : 1 ligne par quartier, toutes métriques
+    header = ["quartier", "vente_psqm_01", "loyer_psqm_01", "rendement_wc_01",
+              "immeubles_vente", "immeubles_loc", "apparies", "low_sample",
+              "delistees_3j", "taux_delistage_pct"]
+    cur_rows = []
+    for khet, v in sorted(D01.items(), key=lambda kv: -(kv[1]["sale_psqm"] or 0)):
+        t = tens_by_khet.get(khet, {})
+        cur_rows.append([khet.replace(" District", ""), v["sale_psqm"], v["rent_psqm"],
+                         v["yield_wc"], v["sale_condos"], v["rent_condos"], v["paired"],
+                         1 if v["low_sample"] else 0, t.get("n_delisted"), t.get("delist_rate_pct")])
+    _write_csv(os.path.join(ddir, f"khet-{TODAY}.csv"), header, cur_rows)
+    _write_csv(os.path.join(ddir, f"khet-{TODAY}-excel-fr.csv"), header, cur_rows, excel_fr=True)
+
+    # 2) séries longues (toutes éditions × tous quartiers) — format tidy pour pivots/graphiques
+    sheader = ["date", "quartier", "vente_psqm_01", "loyer_psqm_01", "rendement_wc_01",
+               "apparies", "taux_delistage_pct", "config_version"]
+    srows = []
+    for s in snaps:
+        tk = s.get("tension_by_khet", {})
+        for khet, v in sorted(s.get("khet_stats_01", {}).items()):
+            srows.append([s["date"], khet.replace(" District", ""), v.get("sale_psqm"),
+                          v.get("rent_psqm"), v.get("yield_wc"), v.get("paired"),
+                          tk.get(khet, {}).get("rate"), s["config_version"]])
+    _write_csv(os.path.join(ddir, "series-khet.csv"), sheader, srows)
+    _write_csv(os.path.join(ddir, "series-khet-excel-fr.csv"), sheader, srows, excel_fr=True)
+
+    # 3) xlsx avec graphiques natifs
+    try:
+        from openpyxl import Workbook
+        from openpyxl.chart import BarChart, LineChart, Reference
+    except ImportError:
+        print("  (openpyxl absent → xlsx sauté ; pip install openpyxl)")
+        return ddir
+    wb = Workbook()
+
+    ws = wb.active
+    ws.title = "Quartiers"
+    ws.append(header)
+    for r in cur_rows:
+        ws.append(r)
+    ws.freeze_panes = "A2"
+    ws.column_dimensions["A"].width = 18
+
+    ws2 = wb.create_sheet("Séries")
+    ws2.append(sheader)
+    for r in srows:
+        ws2.append(r)
+    ws2.freeze_panes = "A2"
+    ws2.column_dimensions["B"].width = 18
+
+    # feuilles larges (date en ligne, quartiers-clés en colonnes) pour les courbes
+    keys = [k.replace(" District", "") for k in CFG["key_khets_evolution"]]
+    def wide_sheet(name, metric):
+        w = wb.create_sheet(name)
+        w.append(["date"] + keys)
+        for s in snaps:
+            row = [s["date"]]
+            for k in CFG["key_khets_evolution"]:
+                row.append(s.get("khet_stats_01", {}).get(k, {}).get(metric))
+            w.append(row)
+        w.sheet_state = "hidden"
+        return w
+    wprix = wide_sheet("_prix", "sale_psqm")
+    wyld = wide_sheet("_yield", "yield_wc")
+
+    wg = wb.create_sheet("Graphiques")
+    n = len(cur_rows)
+
+    bar1 = BarChart(); bar1.type = "col"; bar1.title = "Prix de vente /m² (0–1BR, double médiane)"
+    bar1.height, bar1.width = 10, 30
+    bar1.add_data(Reference(ws, min_col=2, min_row=1, max_row=n + 1), titles_from_data=True)
+    bar1.set_categories(Reference(ws, min_col=1, min_row=2, max_row=n + 1))
+    bar1.legend = None
+    wg.add_chart(bar1, "A1")
+
+    bar2 = BarChart(); bar2.type = "col"; bar2.title = "Rendement within-condo % (0–1BR)"
+    bar2.height, bar2.width = 10, 30
+    bar2.add_data(Reference(ws, min_col=4, min_row=1, max_row=n + 1), titles_from_data=True)
+    bar2.set_categories(Reference(ws, min_col=1, min_row=2, max_row=n + 1))
+    bar2.legend = None
+    wg.add_chart(bar2, "A22")
+
+    n_ed = len(snaps)
+    line1 = LineChart(); line1.title = "Évolution prix /m² — quartiers clés"
+    line1.height, line1.width = 10, 30
+    line1.add_data(Reference(wprix, min_col=2, max_col=len(keys) + 1, min_row=1, max_row=n_ed + 1),
+                   titles_from_data=True)
+    line1.set_categories(Reference(wprix, min_col=1, min_row=2, max_row=n_ed + 1))
+    wg.add_chart(line1, "A43")
+
+    line2 = LineChart(); line2.title = "Évolution rendement WC % — quartiers clés"
+    line2.height, line2.width = 10, 30
+    line2.add_data(Reference(wyld, min_col=2, max_col=len(keys) + 1, min_row=1, max_row=n_ed + 1),
+                   titles_from_data=True)
+    line2.set_categories(Reference(wyld, min_col=1, min_row=2, max_row=n_ed + 1))
+    wg.add_chart(line2, "A64")
+
+    xpath = os.path.join(ddir, f"etude-{TODAY}.xlsx")
+    wb.save(xpath)
+    return ddir
 
 # ───────────────────────── rendu ─────────────────────────
 def render(actives, D01, A, B, tens, snaps, db_start):
@@ -524,6 +650,9 @@ def main():
     snap_path = write_snapshot(actives, D01, tens)
     print(f"  snapshot : {snap_path}")
     snaps = load_snapshots()
+
+    ddir = export_tables(D01, tens, snaps)
+    print(f"  tables/graphiques : {ddir} (khet-{TODAY}.csv ×2, series-khet.csv ×2, etude-{TODAY}.xlsx)")
 
     rdir = os.path.join(ROOT, CFG["paths"]["reports_dir"])
     os.makedirs(rdir, exist_ok=True)
