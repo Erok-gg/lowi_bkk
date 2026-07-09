@@ -1,0 +1,20 @@
+{
+  "_comment": "Codes districts DOPA (geocode TIS-1099, stables) → noms de khet tels qu'utilisés dans NOTRE base (OSM name:en, ex. 'Vadhana District'). Source de vérité du croisement démographique.",
+  "1001": "Phra Nakhon District", "1002": "Dusit District", "1003": "Nong Chok District",
+  "1004": "Bang Rak District", "1005": "Bang Khen District", "1006": "Bang Kapi District",
+  "1007": "Pathum Wan District", "1008": "Pom Prap Sattru Phai District", "1009": "Phra Khanong District",
+  "1010": "Min Buri District", "1011": "Lat Krabang District", "1012": "Yan Nawa District",
+  "1013": "Samphanthawong District", "1014": "Phaya Thai District", "1015": "Thon Buri District",
+  "1016": "Bangkok Yai District", "1017": "Huai Khwang District", "1018": "Khlong San District",
+  "1019": "Taling Chan District", "1020": "Bangkok Noi District", "1021": "Bang Khun Thian District",
+  "1022": "Phasi Charoen District", "1023": "Nong Khaem District", "1024": "Rat Burana District",
+  "1025": "Bang Phlat District", "1026": "Din Daeng District", "1027": "Bueng Kum District",
+  "1028": "Sathon District", "1029": "Bang Sue District", "1030": "Chatuchak District",
+  "1031": "Bang Kho Laem District", "1032": "Prawet District", "1033": "Khlong Toei District",
+  "1034": "Suan Luang District", "1035": "Chom Thong District", "1036": "Don Mueang District",
+  "1037": "Ratchathewi District", "1038": "Lat Phrao District", "1039": "Vadhana District",
+  "1040": "Bang Khae District", "1041": "Lak Si District", "1042": "Sai Mai District",
+  "1043": "Khan Na Yao District", "1044": "Saphan Sung District", "1045": "Wang Thonglang District",
+  "1046": "Khlong Sam Wa District", "1047": "Bang Na District", "1048": "Thawi Watthana District",
+  "1049": "Thung Khru District", "1050": "Bang Bon District"
+}

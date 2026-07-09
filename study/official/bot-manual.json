@@ -1,0 +1,6 @@
+{
+  "_comment": "Indice prix condos Bank of Thailand / REIC — saisie MANUELLE trimestrielle en attendant une clé API BOT (portal.api.bot.or.th, gratuit). Ajouter une entrée par publication ; le rapport trace nos médianes contre cette série. base : indice REIC nouveaux condos Bangkok.",
+  "series": [
+    { "period": "2025-Q1", "condo_index_bkk": 163.3, "yoy_pct": 3.6, "source": "REIC/Bangkok Post 2025-05" }
+  ]
+}

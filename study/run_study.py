@@ -340,8 +340,43 @@ def tension(actives, delisted):
     return {"delisted_total": len(delisted), "sources": sorted(sources),
             "by_khet": khet_rows, "by_typology": typo_rows}
 
+# ───────────────────────── données officielles (DOPA, BOT…) ─────────────────────────
+def load_official():
+    """Rafraîchit puis charge les données officielles (best effort — l'étude tourne sans)."""
+    try:
+        import fetch_official
+        out = fetch_official.main()
+        if out:
+            return out
+    except Exception as e:
+        print(f"  (fetch officiel échoué : {str(e)[:80]})")
+    try:
+        return json.load(open(os.path.join(ROOT, "study", "official", "official-latest.json"),
+                              encoding="utf-8"))
+    except Exception:
+        return None
+
+def per_1000(actives, official):
+    """Par khet : population DOPA + annonces actives (toutes strates) pour 1000 habitants."""
+    if not official or "dopa" not in official:
+        return {}
+    pops = official["dopa"]["population_by_khet"]
+    counts = defaultdict(lambda: {"sale": 0, "rent": 0})
+    for r in actives:
+        if r["khet"] and r["deal_type"] in ("sale", "rent"):
+            counts[r["khet"]][r["deal_type"]] += 1
+    out = {}
+    for khet, pop in pops.items():
+        c = counts.get(khet, {"sale": 0, "rent": 0})
+        out[khet] = {
+            "population": pop,
+            "sale_per_1000": round(c["sale"] / pop * 1000, 2) if pop else None,
+            "rent_per_1000": round(c["rent"] / pop * 1000, 2) if pop else None,
+        }
+    return out
+
 # ───────────────────────── snapshot & évolution ─────────────────────────
-def write_snapshot(actives, D01, tens):
+def write_snapshot(actives, D01, tens, demo=None, official=None):
     snap = {
         "date": TODAY, "config_version": CFG["config_version"],
         "totals": {
@@ -357,6 +392,8 @@ def write_snapshot(actives, D01, tens):
                           for k, v in D01.items()},
         "tension_by_khet": {r["khet"]: {"rate": r["delist_rate_pct"], "n": r["n_delisted"]}
                             for r in tens["by_khet"] if r["n_delisted"] >= CFG["tension"]["min_delisted_per_khet"]},
+        "demographics": demo or {},
+        "dopa_yymm": (official or {}).get("dopa", {}).get("yymm_buddhist"),
     }
     sdir = os.path.join(ROOT, CFG["paths"]["snapshots_dir"])
     os.makedirs(sdir, exist_ok=True)
@@ -435,22 +472,26 @@ def _write_csv(path, header, rows, excel_fr=False):
         for r in rows:
             f.write(sep.join(fmt(v) for v in r) + "\n")
 
-def export_tables(D01, tens, snaps):
+def export_tables(D01, tens, snaps, demo=None):
     """Tables par quartier prêtes à grapher : CSV (std + Excel FR) + xlsx avec graphiques."""
     ddir = os.path.join(ROOT, CFG["paths"]["reports_dir"], "data")
     os.makedirs(ddir, exist_ok=True)
     tens_by_khet = {r["khet"]: r for r in tens["by_khet"]}
+    demo = demo or {}
 
     # 1) édition courante : 1 ligne par quartier, toutes métriques
     header = ["quartier", "vente_psqm_01", "loyer_psqm_01", "rendement_wc_01",
               "immeubles_vente", "immeubles_loc", "apparies", "low_sample",
-              "delistees_3j", "taux_delistage_pct"]
+              "delistees_3j", "taux_delistage_pct",
+              "population_dopa", "ventes_pour_1000_hab", "locs_pour_1000_hab"]
     cur_rows = []
     for khet, v in sorted(D01.items(), key=lambda kv: -(kv[1]["sale_psqm"] or 0)):
         t = tens_by_khet.get(khet, {})
+        d = demo.get(khet, {})
         cur_rows.append([khet.replace(" District", ""), v["sale_psqm"], v["rent_psqm"],
                          v["yield_wc"], v["sale_condos"], v["rent_condos"], v["paired"],
-                         1 if v["low_sample"] else 0, t.get("n_delisted"), t.get("delist_rate_pct")])
+                         1 if v["low_sample"] else 0, t.get("n_delisted"), t.get("delist_rate_pct"),
+                         d.get("population"), d.get("sale_per_1000"), d.get("rent_per_1000")])
     _write_csv(os.path.join(ddir, f"khet-{TODAY}.csv"), header, cur_rows)
     _write_csv(os.path.join(ddir, f"khet-{TODAY}-excel-fr.csv"), header, cur_rows, excel_fr=True)
 
@@ -543,7 +584,8 @@ def export_tables(D01, tens, snaps):
     return ddir
 
 # ───────────────────────── rendu ─────────────────────────
-def render(actives, D01, A, B, tens, snaps, db_start):
+def render(actives, D01, A, B, tens, snaps, db_start, demo=None, official=None):
+    demo = demo or {}
     o, p, t = CFG["opportunities"], CFG["proximity"], CFG["tension"]
     n_sales = sum(1 for r in actives if r["deal_type"] == "sale")
     n_rents = sum(1 for r in actives if r["deal_type"] == "rent")
@@ -568,15 +610,37 @@ def render(actives, D01, A, B, tens, snaps, db_start):
              f">{o['flag_yield_pct']} %. Limites : prix affichés ; délistage ≠ vente ; "
              "comparaisons entre quartiers valides, niveaux absolus indicatifs.\n")
 
-    L.append("## 2. État du marché (0–1BR, double médiane par condo)\n")
-    L.append("| Quartier | Vente /m² | Loyer /m²/mois | Rendement WC | Immeubles S/R |")
-    L.append("|---|---|---|---|---|")
+    dopa_note = ""
+    if official and "dopa" in official:
+        dopa_note = (f" Population = registre DOPA (mois bouddhiste "
+                     f"{official['dopa']['yymm_buddhist']}) ; annonces/1000 hab toutes strates. "
+                     "⚠ le registre sous-compte les résidents NON enregistrés (expats, locataires) — "
+                     "dans les quartiers expat, lire les /1000 comme un indice de densité d'offre, "
+                     "pas un taux réel ; c'est l'ÉVOLUTION de la population qui portera le signal.")
+    L.append(f"## 2. État du marché (0–1BR, double médiane par condo){' ' if dopa_note else ''}\n")
+    if dopa_note:
+        L.append(f"*{dopa_note.strip()}*\n")
+    L.append("| Quartier | Vente /m² | Loyer /m²/mois | Rendement WC | Immeubles S/R | Pop. (DOPA) | Ventes/1000 | Locs/1000 |")
+    L.append("|---|---|---|---|---|---|---|---|")
     for khet, v in sorted(D01.items(), key=lambda kv: -(kv[1]["sale_psqm"] or 0)):
         if (v["sale_condos"] + v["rent_condos"]) < 10:
             continue
         ls = " *(low sample)*" if v["low_sample"] else ""
+        d = demo.get(khet, {})
         L.append(f"| {khet.replace(' District', '')}{ls} | {thb(v['sale_psqm'])} | "
-                 f"{v['rent_psqm'] or '—'} | {v['yield_wc'] or '—'} % | {v['sale_condos']}/{v['rent_condos']} |")
+                 f"{v['rent_psqm'] or '—'} | {v['yield_wc'] or '—'} % | {v['sale_condos']}/{v['rent_condos']} | "
+                 f"{thb(d.get('population'))} | {d.get('sale_per_1000') or '—'} | {d.get('rent_per_1000') or '—'} |")
+
+    if official and official.get("bot", {}).get("series"):
+        L.append("\n### Calibrage vs indice officiel (BOT/REIC)\n")
+        L.append("| Période | Indice condo BKK | y/y |")
+        L.append("|---|---|---|")
+        for s in official["bot"]["series"]:
+            L.append(f"| {s['period']} | {s['condo_index_bkk']} | {s.get('yoy_pct', '—')} % |")
+        L.append("\n*Nos médianes = prix affichés ; l'indice = transactions financées (hédonique). "
+                 "L'écart de trajectoire entre les deux mesure l'évolution de la marge de négociation. "
+                 "Série à compléter à chaque publication (study/official/bot-manual.json), "
+                 "automatisable avec une clé API BOT gratuite.*")
 
     L.append("\n## 3. Évolution entre éditions\n")
     L.append(evolution_md(snaps))
@@ -647,17 +711,23 @@ def main():
     B = school_metro(actives, condo_sales, condo_rents, schools, metros, future)
     tens = tension(actives, delisted)
 
-    snap_path = write_snapshot(actives, D01, tens)
+    official = load_official()
+    demo = per_1000(actives, official)
+    if demo:
+        print(f"  démographie DOPA : {len(demo)} khets croisés")
+
+    snap_path = write_snapshot(actives, D01, tens, demo, official)
     print(f"  snapshot : {snap_path}")
     snaps = load_snapshots()
 
-    ddir = export_tables(D01, tens, snaps)
+    ddir = export_tables(D01, tens, snaps, demo)
     print(f"  tables/graphiques : {ddir} (khet-{TODAY}.csv ×2, series-khet.csv ×2, etude-{TODAY}.xlsx)")
 
     rdir = os.path.join(ROOT, CFG["paths"]["reports_dir"])
     os.makedirs(rdir, exist_ok=True)
     rpath = os.path.join(rdir, f"etude-{TODAY}.md")
-    open(rpath, "w", encoding="utf-8").write(render(actives, D01, A, B, tens, snaps, db_start))
+    open(rpath, "w", encoding="utf-8").write(
+        render(actives, D01, A, B, tens, snaps, db_start, demo, official))
     print(f"✓ rapport : {rpath}")
     print(f"  ({len(snaps)} snapshot(s) → évolution {'active' if len(snaps) >= 2 else 'dès la 2e édition'})")
 
