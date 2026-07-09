@@ -36,3 +36,7 @@ scraper/output/
 .vercel
 
 .vercel
+
+# archive locale Supabase (volumineuse, hors repo)
+archive/
+ops/logs/
