@@ -75,7 +75,16 @@ class FazwazAdapter(BaseAdapter):
                 data = json.loads(tag.string or "")
             except (json.JSONDecodeError, TypeError):
                 continue
-            for item in data if isinstance(data, list) else [data]:
+            # depuis ~juil. 2026 : FazWaz regroupe tous les schémas d'une page
+            # (Organization, RealEstateAgent, annonces) dans UN seul tag via "@graph"
+            # au lieu d'un tag par annonce. On aplatit dans les deux cas.
+            if isinstance(data, dict) and isinstance(data.get("@graph"), list):
+                items = data["@graph"]
+            elif isinstance(data, list):
+                items = data
+            else:
+                items = [data]
+            for item in items:
                 if not isinstance(item, dict) or item.get("@type") != "SingleFamilyResidence":
                     continue
                 url = item.get("url")
