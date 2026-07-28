@@ -41,3 +41,5 @@ scraper/output/
 archive/
 ops/logs/
 lib/tension.compiled.mjs
+
+tsconfig.tsbuildinfo
