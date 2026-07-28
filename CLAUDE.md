@@ -1,6 +1,11 @@
 # CLAUDE.md — Bangkok Real Estate Map
 
 > Doc de référence du projet. À lire avant toute modif. Tient l'état d'avancement à jour.
+>
+> **Décisions, méthodes et défauts corrigés : voir [docs/journal-technique.md](docs/journal-technique.md)**
+> (registre append-only — le *pourquoi* des choix, ce qui a été mesuré, ce qui
+> restait faux au moment de la décision, et la traçabilité de provenance).
+> Toute décision structurante ou tout défaut découvert s'y consigne, daté.
 
 ## Objectif
 Outil **perso, non public** : carte interactive de Bangkok découpée par quartiers, cliquable (zoom au clic), thème dark violet/anthracite, alimentée par des annonces immobilières scrapées (condos **vente + location**, **foreigner & thai quota**), avec fiches biens et statistiques agrégées (ville / quartier / rue).

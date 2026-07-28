@@ -20,7 +20,11 @@ create table if not exists listings (
   area_sqm real, price_per_sqm real, bedrooms integer, bathrooms integer,
   condo_name text, address_raw text, khet text, khwaeng text, street text,
   lat real, lng real, status text not null default 'active',
-  first_seen text not null, last_seen text not null, delisted_at text, raw_data text
+  first_seen text not null, last_seen text not null, delisted_at text, raw_data text,
+  -- Délai de grâce avant délistage : une annonce doit manquer à N scans
+  -- CONSÉCUTIFS. Sans ça, la troncature du scan à max_pages délistait à tort
+  -- toute la queue de liste (cf. supabase/migrations/delisting_grace.sql).
+  missed_count integer not null default 0, first_missed_at text
 );
 create table if not exists khet_snapshots (
   id integer primary key autoincrement, taken_at text not null, khet text not null,
@@ -66,6 +70,12 @@ class SqliteStore(BaseStore):
         cols = {r["name"] for r in self.db.execute("pragma table_info(khet_snapshots)")}
         if "deal_type" not in cols:
             self.db.execute("alter table khet_snapshots add column deal_type text")
+        # Délai de grâce avant délistage (cf. delisting_grace.sql)
+        lcols = {r["name"] for r in self.db.execute("pragma table_info(listings)")}
+        if "missed_count" not in lcols:
+            self.db.execute("alter table listings add column missed_count integer not null default 0")
+        if "first_missed_at" not in lcols:
+            self.db.execute("alter table listings add column first_missed_at text")
 
     def get_listing(self, listing_id: str) -> dict | None:
         row = self.db.execute("select * from listings where id=?", (listing_id,)).fetchone()
@@ -78,8 +88,10 @@ class SqliteStore(BaseStore):
         return row is not None
 
     def touch_listing(self, listing_id: str) -> None:
+        # Revue = série d'absences interrompue : on remet le compteur à zéro.
         self.db.execute(
-            "update listings set status='active', last_seen=? where id=?",
+            "update listings set status='active', last_seen=?,"
+            " missed_count=0, first_missed_at=null where id=?",
             (_now(), listing_id),
         )
         self.db.commit()
@@ -111,7 +123,8 @@ class SqliteStore(BaseStore):
         new_price = norm.get("price")
         self.db.execute(
             f"update listings set {','.join(c+'=?' for c in cols)},"
-            f"status='active',last_seen=?,raw_data=? where id=?",
+            f"status='active',last_seen=?,raw_data=?,"
+            f"missed_count=0,first_missed_at=null where id=?",
             (*[norm.get(c) for c in cols], now,
              json.dumps(norm.get("raw_data", {}), ensure_ascii=False), norm["id"]),
         )
@@ -157,7 +170,12 @@ class SqliteStore(BaseStore):
         return self.db.execute(q, params).fetchone()["c"]
 
     def mark_missing_inactive(self, source: str, seen_ids: set[str],
-                              deal_type: str | None = None) -> list[str]:
+                              deal_type: str | None = None,
+                              grace: int = 2) -> list[str]:
+        """Délistage avec délai de grâce (cf. supabase_store pour le détail) :
+        une annonce doit manquer à `grace` scans CONSÉCUTIFS avant d'être
+        marquée inactive, sinon la troncature du scan à max_pages déliste à
+        tort toute la queue de liste."""
         q = "select id from listings where source=? and status='active'"
         params: list = [source]
         if deal_type:
@@ -166,10 +184,30 @@ class SqliteStore(BaseStore):
         active = {r["id"] for r in self.db.execute(q, params).fetchall()}
         missing = list(active - seen_ids)
         now = _now()
+
         for lid in missing:
             self.db.execute(
-                "update listings set status='inactive', delisted_at=? where id=?", (now, lid)
+                "update listings set missed_count = coalesce(missed_count,0) + 1,"
+                " first_missed_at = coalesce(first_missed_at, ?) where id=?",
+                (now, lid),
             )
+
+        q2 = ("select id, first_missed_at from listings where source=? and status='active'"
+              " and coalesce(missed_count,0) >= ?")
+        p2: list = [source, grace]
+        if deal_type:
+            q2 += " and deal_type=?"
+            p2.append(deal_type)
+        rows = self.db.execute(q2, p2).fetchall()
+        missing = []
+        for r in rows:
+            # Daté de la PREMIÈRE absence, sinon la durée de vie serait
+            # surestimée d'un cycle de scan complet.
+            self.db.execute(
+                "update listings set status='inactive', delisted_at=? where id=?",
+                (r["first_missed_at"] or now, r["id"]),
+            )
+            missing.append(r["id"])
         self.db.commit()
         return missing
 

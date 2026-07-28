@@ -67,8 +67,10 @@ class SupabaseStore(BaseStore):
         ).fetchone() is not None
 
     def touch_listing(self, listing_id: str) -> None:
+        # Revue = série d'absences interrompue : on remet le compteur à zéro.
         self._execute(
-            "update listings set status='active', last_seen=%s where id=%s",
+            "update listings set status='active', last_seen=%s,"
+            " missed_count=0, first_missed_at=null where id=%s",
             (_now(), listing_id),
         )
 
@@ -94,7 +96,8 @@ class SupabaseStore(BaseStore):
         new_price = norm.get("price")
         set_clause = ",".join(f"{c}=%s" for c in _COLS)
         self._execute(
-            f"update listings set {set_clause},status='active',last_seen=%s,raw_data=%s where id=%s",
+            f"update listings set {set_clause},status='active',last_seen=%s,raw_data=%s,"
+            f"missed_count=0,first_missed_at=null where id=%s",
             (*vals, now, Json(norm.get("raw_data", {})), norm["id"]),
         )
         status = "unchanged"
@@ -138,7 +141,17 @@ class SupabaseStore(BaseStore):
         return self._execute(q, params).fetchone()[0]
 
     def mark_missing_inactive(self, source: str, seen_ids: set[str],
-                              deal_type: str | None = None) -> list[str]:
+                              deal_type: str | None = None,
+                              grace: int = 2) -> list[str]:
+        """Délistage avec délai de grâce : une annonce doit manquer à `grace`
+        scans CONSÉCUTIFS avant d'être marquée inactive.
+
+        Sans ce délai, la troncature du scan à max_pages délistait à tort toute
+        la queue de liste, puis la passe ciblée suivante la réactivait : la
+        durée de vie mesurée valait la cadence de scan (4,7 j médians pour
+        toutes les strates), ce qui rendait la tension locative et la liquidité
+        de revente non mesurables.
+        """
         q = "select id from listings where source=%s and status='active'"
         params: list = [source]
         if deal_type:
@@ -147,11 +160,26 @@ class SupabaseStore(BaseStore):
         active = {r[0] for r in self._execute(q, params).fetchall()}
         missing = list(active - seen_ids)
         now = _now()
+
+        # 1re absence : on note la date, on n'agit pas encore.
         for lid in missing:
             self._execute(
-                "update listings set status='inactive', delisted_at=%s where id=%s", (now, lid)
+                "update listings set missed_count = missed_count + 1,"
+                " first_missed_at = coalesce(first_missed_at, %s) where id=%s",
+                (now, lid),
             )
-        return missing
+
+        # Seuil atteint → délistage daté de la PREMIÈRE absence (sinon la durée
+        # de vie serait surestimée d'un cycle de scan complet).
+        rows = self._execute(
+            "update listings set status='inactive',"
+            " delisted_at = coalesce(first_missed_at, %s)"
+            " where source=%s and status='active' and missed_count >= %s"
+            + (" and deal_type=%s" if deal_type else "")
+            + " returning id",
+            ([now, source, grace] + ([deal_type] if deal_type else [])),
+        ).fetchall()
+        return [r[0] for r in rows]
 
     def get_image_paths(self, listing_id: str) -> list[str]:
         return [
