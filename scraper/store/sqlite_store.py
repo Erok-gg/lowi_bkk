@@ -56,6 +56,25 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _median(valeurs) -> float | None:
+    """Médiane, définie comme `percentile_cont(0.5)` de Postgres.
+
+    SQLite n'a pas d'agrégat de médiane : les instantanés locaux enregistraient
+    donc `avg(price)` dans une colonne nommée `median_price`. La même colonne
+    portait ainsi une MOYENNE en local et une MÉDIANE en ligne — et la moyenne
+    court 16 % au-dessus (mesuré sur 2 121 instantanés de quartier). Deux
+    backends, deux vérités dans la même série temporelle.
+
+    Pour un effectif pair, on prend la demi-somme des deux valeurs centrales,
+    ce que fait `percentile_cont(0.5)` : les deux stores sont alors alignés.
+    """
+    v = sorted(x for x in valeurs if x is not None)
+    if not v:
+        return None
+    m = len(v) // 2
+    return float(v[m]) if len(v) % 2 else (v[m - 1] + v[m]) / 2.0
+
+
 class SqliteStore(BaseStore):
     def __init__(self, db_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,22 +120,32 @@ class SqliteStore(BaseStore):
         Mesure la tension sans être trompée par les republications : un repost
         fait mourir une annonce et en fait naître une autre dans la MÊME
         cohorte, donc le stock ne bouge pas.
+
+        `median_price` est une VRAIE médiane, comme côté Supabase — calculée en
+        Python faute d'agrégat SQLite (cf. `_median`).
         """
         now = _now()
         rows = self.db.execute("""
             select unit_key, max(condo_name) condo_name, max(khet) khet,
                    max(deal_type) deal_type, max(bedrooms) bedrooms,
                    cast(round(avg(area_sqm)/5)*5 as int) area_bucket,
-                   count(*) n, avg(price) moy, min(price) mn, max(price) mx
+                   count(*) n, min(price) mn, max(price) mx
             from listings
             where status='active' and unit_key is not null
             group by unit_key""").fetchall()
+        prix = {}
+        for uk, p in self.db.execute(
+            "select unit_key, price from listings"
+            " where status='active' and unit_key is not null and price is not null"
+        ):
+            prix.setdefault(uk, []).append(p)
         self.db.executemany(
             "insert into cohort_snapshots (taken_at, unit_key, condo_name, khet,"
             " deal_type, bedrooms, area_bucket, active_count, median_price,"
             " min_price, max_price) values (?,?,?,?,?,?,?,?,?,?,?)",
             [(now, r["unit_key"], r["condo_name"], r["khet"], r["deal_type"],
-              r["bedrooms"], r["area_bucket"], r["n"], r["moy"], r["mn"], r["mx"])
+              r["bedrooms"], r["area_bucket"], r["n"],
+              _median(prix.get(r["unit_key"], [])), r["mn"], r["mx"])
              for r in rows],
         )
         self.db.commit()
@@ -290,7 +319,13 @@ class SqliteStore(BaseStore):
         return [dict(r) for r in rows]
 
     def record_khet_snapshots(self) -> int:
-        """Un snapshot par (quartier, deal_type) → tension vente/location séparée."""
+        """Un snapshot par (quartier, deal_type) → tension vente/location séparée.
+
+        `median_price_per_sqm` était laissé à NULL en local, alors que c'est LUI
+        que le momentum prix de lib/tension.ts consomme : la série locale était
+        donc muette sur sa composante la plus utile. Calculé en Python, comme
+        `record_cohort_snapshots`.
+        """
         now = _now()
         rows = self.db.execute(
             "select khet, deal_type, count(*) as active_count, "
@@ -298,11 +333,19 @@ class SqliteStore(BaseStore):
             "from listings where status='active' and khet is not null and deal_type is not null "
             "group by khet, deal_type"
         ).fetchall()
+        psqm: dict[tuple, list] = {}
+        for k, d, v in self.db.execute(
+            "select khet, deal_type, price_per_sqm from listings"
+            " where status='active' and khet is not null and deal_type is not null"
+            " and price_per_sqm is not null"
+        ):
+            psqm.setdefault((k, d), []).append(v)
         for r in rows:
             self.db.execute(
                 "insert into khet_snapshots (taken_at,khet,deal_type,active_count,"
                 "avg_price_per_sqm,median_price_per_sqm) values (?,?,?,?,?,?)",
-                (now, r["khet"], r["deal_type"], r["active_count"], r["avg_price_per_sqm"], None),
+                (now, r["khet"], r["deal_type"], r["active_count"],
+                 r["avg_price_per_sqm"], _median(psqm.get((r["khet"], r["deal_type"]), []))),
             )
         self.db.commit()
         return len(rows)

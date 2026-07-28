@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 
 
@@ -16,6 +17,26 @@ def _num(v):
 #: Tranche de surface (m²) pour regrouper les annonces d'un même type de lot.
 #: Absorbe les écarts de saisie entre agents (44 / 45 / 45,5 m² = même lot type).
 AREA_BUCKET = 5
+
+
+def _tranche(area: float | None) -> int:
+    """Tranche de surface, arrondie EXACTEMENT comme le fait SQL.
+
+    `round()` de Python applique l'arrondi bancaire (au pair le plus proche) :
+    `round(8.5) == 8`. `round()` de Postgres et de SQLite arrondissent au plus
+    loin de zéro : `round(8.5) == 9`. Une surface de 42,5 m² recevait donc la
+    tranche 40 si l'unit_key venait du scrape, et 45 s'il venait du backfill SQL
+    (`supabase/migrations/backfill_unit_key.sql`) — deux cohortes pour un même
+    lot, et la republication qu'on cherche justement à rattraper passait au
+    travers. Relevé sur l'archive : 263 annonces pile sur une frontière de
+    tranche, dont 124 réellement divergentes.
+
+    On adopte la convention SQL (`floor(x + 0.5)`), parce que c'est elle qui a
+    produit les 34 183 unit_key déjà en base.
+    """
+    if not area or area <= 0:
+        return 0
+    return int(math.floor(area / AREA_BUCKET + 0.5) * AREA_BUCKET)
 
 
 def _norm_condo(name: str | None) -> str:
@@ -45,8 +66,7 @@ def unit_key(rec: dict) -> str | None:
     condo = _norm_condo(rec.get("condo_name"))
     if not condo:
         return None
-    area = _num(rec.get("area_sqm"))
-    bucket = int(round(area / AREA_BUCKET) * AREA_BUCKET) if area else 0
+    bucket = _tranche(_num(rec.get("area_sqm")))
     beds = rec.get("bedrooms")
     beds = int(beds) if isinstance(beds, (int, float)) else -1
     return f"{condo}|{beds}|{bucket}|{rec.get('deal_type') or '?'}"

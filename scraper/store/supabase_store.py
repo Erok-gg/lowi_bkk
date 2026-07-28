@@ -218,20 +218,24 @@ class SupabaseStore(BaseStore):
         cohorte, donc le stock ne bouge pas. C'est cette série qui remplace la
         durée de vie des annonces, structurellement faussée par les reposts.
         """
-        self._execute("""
-            insert into cohort_snapshots (unit_key, condo_name, khet, deal_type,
-                bedrooms, area_bucket, active_count, median_price, min_price, max_price)
-            select unit_key, max(condo_name), max(khet), max(deal_type), max(bedrooms),
-                   (round(avg(area_sqm) / 5) * 5)::int,
-                   count(*),
-                   percentile_cont(0.5) within group (order by price),
-                   min(price), max(price)
-            from listings
-            where status = 'active' and unit_key is not null
-            group by unit_key""")
-        return self._execute(
-            "select count(*) from cohort_snapshots where taken_at > now() - interval '1 minute'"
-        ).fetchone()[0]
+        # Le compte vient du RETURNING, pas d'une fenêtre temporelle : compter
+        # les lignes « de la dernière minute » ramassait celles du run précédent
+        # s'il venait de tourner, et en ratait si l'insertion dépassait la minute.
+        return self._execute("""
+            with insere as (
+              insert into cohort_snapshots (unit_key, condo_name, khet, deal_type,
+                  bedrooms, area_bucket, active_count, median_price, min_price, max_price)
+              select unit_key, max(condo_name), max(khet), max(deal_type), max(bedrooms),
+                     (round(avg(area_sqm) / 5) * 5)::int,
+                     count(*),
+                     percentile_cont(0.5) within group (order by price),
+                     min(price), max(price)
+              from listings
+              where status = 'active' and unit_key is not null
+              group by unit_key
+              returning 1
+            )
+            select count(*) from insere""").fetchone()[0]
 
     def record_khet_snapshots(self) -> int:
         """Un snapshot par (quartier, deal_type) → tension vente/location séparée."""
