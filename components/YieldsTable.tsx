@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Fragment, useMemo, useState } from "react";
-import type { BedStratum, YieldRow } from "@/lib/yields";
+import type { BedStratum, YieldRow, YieldInput } from "@/lib/yields";
 import {
   BED_STRATA,
   LOW_SAMPLE_CONDOS,
@@ -10,7 +10,7 @@ import {
   computeYieldsByKhet,
   computeYieldsByStreet,
 } from "@/lib/yields";
-import type { Listing } from "@/lib/types";
+
 
 type Key = keyof YieldRow;
 const fmt = (v: number | null) => (v == null ? "—" : Math.round(v).toLocaleString("en-US"));
@@ -22,7 +22,7 @@ const STRATUM_LABEL: Record<BedStratum, string> = {
   all: "All (mixed)",
 };
 
-export default function YieldsTable({ listings }: { listings: Listing[] }) {
+export default function YieldsTable({ listings }: { listings: YieldInput[] }) {
   const [sort, setSort] = useState<{ key: Key; dir: 1 | -1 }>({ key: "grossYieldPct", dir: -1 });
   const [open, setOpen] = useState<string | null>(null);
   const [stratum, setStratum] = useState<BedStratum>("0-1");

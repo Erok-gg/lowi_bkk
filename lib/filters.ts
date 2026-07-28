@@ -20,7 +20,16 @@ export interface Filters {
 const inRange = (v: number | null | undefined, lo?: number, hi?: number) =>
   v == null ? true : (lo == null || v >= lo) && (hi == null || v <= hi);
 
-export function applyFilters(listings: Listing[], f: Filters): Listing[] {
+/** Ce dont les filtres ont réellement besoin. Générique pour accepter aussi bien
+ *  un `Listing` complet (la carte) que la projection `ListingRow` (les tableaux),
+ *  sans dupliquer la logique de filtrage — elle doit rester unique. */
+export type Filterable = Pick<
+  Listing,
+  "price" | "areaSqm" | "pricePerSqm" | "bedrooms" | "bathrooms"
+  | "quota" | "dealType" | "source" | "khet"
+>;
+
+export function applyFilters<T extends Filterable>(listings: T[], f: Filters): T[] {
   return listings.filter((l) => {
     if (!inRange(l.price, f.priceMin, f.priceMax)) return false;
     if (!inRange(l.areaSqm, f.areaMin, f.areaMax)) return false;
@@ -66,6 +75,6 @@ export function filtersFromParams(p: URLSearchParams): Filters {
   };
 }
 
-export function applyUrlFilters(listings: Listing[], p: URLSearchParams): Listing[] {
+export function applyUrlFilters<T extends Filterable>(listings: T[], p: URLSearchParams): T[] {
   return applyFilters(listings, filtersFromParams(p));
 }

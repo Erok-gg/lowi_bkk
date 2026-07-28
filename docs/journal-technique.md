@@ -513,3 +513,103 @@ score de tension se lit comme un indice relatif grossier, pas comme une mesure.*
   `median`, `winsorize`, `norm_condo` et le rendement within-condo déjà présents
   dans `lib/yields.ts`. Deux implémentations, deux vérités possibles, et rien qui
   signale la divergence.
+
+---
+
+## 2026-07-28 (nuit) · Le doublon qui n'en était pas, et le poids des pages
+
+### Ce que j'avais annoncé comme un défaut, et qui n'en est pas un
+
+L'entrée précédente listait en tête des sujets ouverts : « 1 399 annonces actives
+en doublon exact (8,7 % du stock), 1 326 intra-source, pire groupe 28 fois le
+même lot ». Avant d'écrire la déduplication, inspection des groupes :
+
+```
+The Line Vibe, 1BR 37 m² à 22 000 THB   28 annonces, 28 identifiants DDproperty
+Hampton Residence Thonglor, 1BR 32 m²   14 annonces, identifiants FazWaz
+                                        CONSÉCUTIFS (u6548791 … u6548800)
+```
+
+Des identifiants d'unité **consécutifs** chez la source, ce sont des **lots
+distincts** versés en lot par une agence : un immeuble neuf dont tous les 32 m²
+se louent au même prix. Les fusionner aurait effacé de l'offre réelle —
+c'est-à-dire exactement ce que la pression vendeuse doit compter. **La dédup
+aurait détruit du signal.**
+
+Second point que j'avais manqué : ces annonces sont **simultanément actives**. Ce
+n'est donc pas le phénomène de republication séquentielle que les cohortes
+traitent. J'avais confondu deux choses différentes sous le mot « doublon ».
+
+**Leçon de méthode** : un compte agrégé ne dit pas ce qu'il compte. « 1 399
+doublons exacts » était une requête SQL correcte et une conclusion fausse. Ce qui
+l'a démasquée, c'est d'avoir regardé dix lignes.
+
+### Ce qui rend la question décidable : l'agent
+
+Deux annonces identiques du **même agent** sont un doublon. Les mêmes venant
+d'agences concurrentes sont deux mises en marché, voire deux lots. Ce champ était
+**déjà dans le blob `__NEXT_DATA__`** que l'adaptateur DDproperty parse — il
+était simplement ignoré. Sonde sur une page réelle : `agent_id`, `agency_id`,
+`posted_at` et `is_auto_repost` remplis **22/22**, 11 agences distinctes, et déjà
+un doublon même-agent sur la page.
+
+Vue `doublons_agent` fournie, **volontairement pas branchée** sur les
+statistiques : vide tant qu'`agent_id` n'est pas collecté. Mieux vaut ne rien
+fusionner que fusionner à tort.
+
+### Le vrai gain était ailleurs : `posted_at`
+
+DDproperty expose `postedOn.unix` — la **date de mise en ligne réelle**.
+`first_seen` ne dit que le moment où *notre* scan a croisé l'annonce : tout
+time-on-market qui en découle est borné par la cadence de scan. C'est le défaut
+de fond derrière le délai de grâce, l'option `reliableDelistingSince` et la
+contamination de l'absorption — **trois contournements d'un même problème**.
+`posted_at` attaque la cause. Et le site signale lui-même ses republications
+automatiques (`isAutoRepost`), vu à `true` dès le premier résultat testé.
+
+### Poids des pages : mesuré, puis réduit de 80 %
+
+Relevé sur le serveur de production local, authentifié :
+
+| Page | Avant | Après | 1er appel | Après cache |
+|---|---|---|---|---|
+| `/for-sale` | 19,6 Mo | **3,9 Mo** | 3,7 s | **0,51 s** |
+| `/to-rent` | 19,7 Mo | **4,0 Mo** | 0,60 s | 0,38 s |
+| `/rendements` | 13,4 Mo | **3,2 Mo** | 0,38 s | 0,55 s |
+
+Trois causes distinctes, trois correctifs :
+
+1. **Requêtes rejouées à chaque chargement.** Les pages sont en `force-dynamic`
+   — obligatoire, l'accès dépend d'un cookie — donc chaque navigation refaisait
+   la requête de 16 000 lignes vers ap-southeast-1. Mémoïsation à durée de vie
+   (`lib/cache.ts`, 1 h). **Pas `unstable_cache`** : il écrit dans le Data Cache,
+   plafonné à 2 Mo par entrée sur Vercel ; nos lectures dépassent, l'entrée
+   serait silencieusement rejetée. Un cache qui ne cache pas est pire que pas de
+   cache, parce qu'on croit le problème réglé.
+
+2. **L'appariement vente↔location tournait côté client.** Il a besoin des deux
+   catégories, ce qui obligeait la page à expédier `allListings` — les 16 000
+   actives — pour n'en tirer que deux nombres par ligne. Déporté sur le serveur
+   (`buildUnitMatchesLite`), qui n'envoie que ces deux nombres.
+
+3. **Les annonces partaient entières.** Le tableau affiche neuf colonnes ;
+   images, amenities, `rawData`, proximité et adresse brute traversaient le
+   réseau sans être lus. Projections `ListingRow` et `YieldInput` ; `applyFilters`
+   et les fonctions de `yields.ts` rendues génériques sur un sous-ensemble
+   structurel, **pour ne pas dupliquer la logique** — c'est le défaut qu'on
+   vient de corriger ailleurs.
+
+4. **8 000 lignes de tableau, soit 72 000 nœuds DOM.** Rendu par tranches de 200
+   avec un bouton « Show 200 more ». Le filtrage et le tri portent toujours sur
+   l'ensemble : seul l'affichage est borné.
+
+### Reste ouvert
+
+- **`/tension-table` : 8,6 Mo**, inchangé. Elle sérialise les 34 275 annonces
+  (actives et délistées) pour un calcul client. Même remède que ci-dessus, non
+  appliqué faute d'avoir été demandé.
+- La dédup **même-agent** deviendra applicable au prochain scrape.
+- **`posted_at` doit remplacer `first_seen`** dans le calcul du time-on-market
+  dès qu'il sera peuplé. C'est la vraie sortie du problème d'absorption.
+- Les trois autres adaptateurs n'exposent pas d'agent aussi clairement.
+  PropertyScout mérite une sonde équivalente.

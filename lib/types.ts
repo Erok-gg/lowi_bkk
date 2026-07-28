@@ -63,3 +63,48 @@ export interface AreaStats {
   medianPricePerSqm: number | null;
   typeDistribution: Record<string, number>;
 }
+
+/**
+ * Projection d'une annonce pour le TABLEAU — ce que la page envoie réellement
+ * au navigateur.
+ *
+ * Le tableau affiche neuf colonnes, mais recevait des `Listing` complets :
+ * images, amenities, `rawData`, proximité, adresse brute… tout traversait le
+ * réseau pour n'être jamais lu. Sur 8 000 lignes de vente PLUS les 16 000
+ * actives passées en second argument, /for-sale pesait 19,6 Mo par chargement.
+ * Cette forme ne porte que les champs affichés ou filtrés.
+ */
+export interface ListingRow {
+  id: string;
+  source: string;
+  sourceUrl: string;
+  title: string;
+  condoName: string | null;
+  dealType: DealType;
+  quota: Quota;
+  price: number;
+  areaSqm: number | null;
+  pricePerSqm: number | null;
+  bedrooms: number | null;
+  bathrooms: number | null;
+  khet: string | null;
+}
+
+/** Réduit une annonce complète à sa projection de tableau. */
+export function toListingRow(l: Listing): ListingRow {
+  return {
+    id: l.id,
+    source: l.source,
+    sourceUrl: l.sourceUrl,
+    title: l.title,
+    condoName: l.condoName,
+    dealType: l.dealType,
+    quota: l.quota,
+    price: l.price,
+    areaSqm: l.areaSqm,
+    pricePerSqm: l.pricePerSqm,
+    bedrooms: l.bedrooms,
+    bathrooms: l.bathrooms,
+    khet: l.khet,
+  };
+}

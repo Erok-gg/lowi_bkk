@@ -15,6 +15,14 @@ export interface UnitMatch {
   annualYieldPct: number; // loyer mensuel × 12 / prix de vente × 100
 }
 
+/** Ce que le tableau affiche réellement de la contrepartie : son prix et le
+ *  rendement. Suffisant côté client, et évite d'expédier au navigateur les
+ *  16 000 annonces dont seuls ces deux nombres étaient tirés. */
+export interface UnitMatchLite {
+  counterpartPrice: number;
+  annualYieldPct: number;
+}
+
 const AREA_TOL = 0.07;
 
 const unitKey = (l: Listing) => `${normCondo(l.condoName)}|${l.khet ?? ""}|${l.bedrooms ?? "?"}`;
@@ -71,6 +79,31 @@ export function buildUnitMatches(listings: Listing[]): Map<string, UnitMatch> {
         annualYieldPct: Math.round(((monthlyRent * 12) / salePrice) * 1000) / 10,
       });
     }
+  }
+  return out;
+}
+
+/**
+ * Version allégée, destinée à être calculée SUR LE SERVEUR puis sérialisée.
+ *
+ * Le tableau ne tire de la contrepartie que son prix et le rendement, mais
+ * `buildUnitMatches` a besoin de l'ensemble vente + location pour l'apparier.
+ * Faire tourner l'appariement côté client obligeait donc à expédier au
+ * navigateur les 16 000 annonces actives — l'essentiel des 19,6 Mo que pesait
+ * /for-sale. On apparie côté serveur et on n'envoie que ces deux nombres.
+ */
+export function buildUnitMatchesLite(
+  listings: Listing[],
+  pourIds?: Set<string>
+): Record<string, UnitMatchLite> {
+  const out: Record<string, UnitMatchLite> = {};
+  for (const [id, m] of buildUnitMatches(listings)) {
+    if (pourIds && !pourIds.has(id)) continue; // seulement les lignes affichées
+    if (!m.counterpart.price) continue;
+    out[id] = {
+      counterpartPrice: m.counterpart.price,
+      annualYieldPct: m.annualYieldPct,
+    };
   }
   return out;
 }

@@ -31,6 +31,18 @@ const WINSOR_MIN_N = 20;
 
 export type YieldMethod = "within-condo" | "ratio";
 
+/**
+ * Ce dont le calcul a réellement besoin d'une annonce. Générique, pour que les
+ * pages puissent n'envoyer au navigateur que ces champs plutôt que des `Listing`
+ * complets — images, amenities et `rawData` traversaient le réseau sans être
+ * jamais lus (/rendements pesait 13,4 Mo). `street` est facultatif : la carte des
+ * rendements ne descend pas au niveau de la rue.
+ */
+export type YieldInput = Pick<
+  Listing,
+  "id" | "khet" | "dealType" | "pricePerSqm" | "bedrooms" | "condoName"
+> & { street?: string | null };
+
 export interface YieldRow {
   khet: string;
   nSale: number; // annonces vente
@@ -97,7 +109,7 @@ function winsorize(vals: number[]): number[] {
 
 /** Médiane de prix/m² par condo. Une annonce sans nom de condo compte comme son
  *  propre "immeuble" (1 voix), plutôt que d'être jetée. */
-function condoMedians(listings: Listing[]): Map<string, number> {
+function condoMedians(listings: YieldInput[]): Map<string, number> {
   const vals = listings.map((l) => l.pricePerSqm!).filter((v) => v > 0);
   const clamped = winsorize(vals);
   const byCondo = new Map<string, number[]>();
@@ -117,7 +129,7 @@ function condoMedians(listings: Listing[]): Map<string, number> {
 }
 
 /** Agrège un groupe d'annonces (un quartier, une rue) selon la méthode v2. */
-function aggregate(arr: Listing[]): Omit<YieldRow, "khet"> {
+function aggregate(arr: YieldInput[]): Omit<YieldRow, "khet"> {
   const sale = arr.filter((l) => l.dealType === "sale" && (l.pricePerSqm ?? 0) > 0);
   const rent = arr.filter((l) => l.dealType === "rent" && (l.pricePerSqm ?? 0) > 0);
 
@@ -161,10 +173,10 @@ function aggregate(arr: Listing[]): Omit<YieldRow, "khet"> {
 }
 
 export function computeYieldsByKhet(
-  listings: Listing[],
+  listings: YieldInput[],
   stratum: BedStratum = "all"
 ): YieldRow[] {
-  const byKhet = new Map<string, Listing[]>();
+  const byKhet = new Map<string, YieldInput[]>();
   for (const l of listings) {
     if (!l.khet || !matchBedStratum(l.bedrooms, stratum)) continue;
     (byKhet.get(l.khet) ?? byKhet.set(l.khet, []).get(l.khet)!).push(l);
@@ -176,11 +188,11 @@ export function computeYieldsByKhet(
 
 /** Rendement par rue répertoriée pour un quartier donné (rues non nulles). */
 export function computeYieldsByStreet(
-  listings: Listing[],
+  listings: YieldInput[],
   khet: string,
   stratum: BedStratum = "all"
 ): StreetYieldRow[] {
-  const byStreet = new Map<string, Listing[]>();
+  const byStreet = new Map<string, YieldInput[]>();
   for (const l of listings) {
     if (l.khet !== khet || !l.street || !matchBedStratum(l.bedrooms, stratum)) continue;
     (byStreet.get(l.street) ?? byStreet.set(l.street, []).get(l.street)!).push(l);

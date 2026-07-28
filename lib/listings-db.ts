@@ -7,6 +7,7 @@
 import "server-only";
 import type { Listing } from "@/lib/types";
 import type { TensionInput, KhetSnapshot } from "@/lib/tension";
+import { memoTTL } from "@/lib/cache";
 
 const num = (v: unknown): number | null =>
   v == null || v === "" ? null : Number(v);
@@ -119,15 +120,22 @@ async function fromSqlite(): Promise<Listing[]> {
   }
 }
 
-export async function getListings(): Promise<Listing[]> {
-  return process.env.SUPABASE_DB_URL ? fromSupabase() : fromSqlite();
-}
+/**
+ * Toutes les annonces actives. Mémoïsé : les pages sont en `force-dynamic`
+ * (l'accès dépend d'un cookie) et rejouaient donc cette requête de 16 000 lignes
+ * à chaque navigation, alors que les données ne bougent qu'au rythme des scraps.
+ */
+export const getListings = memoTTL(
+  "listings",
+  async (): Promise<Listing[]> =>
+    process.env.SUPABASE_DB_URL ? fromSupabase() : fromSqlite()
+);
 
 /**
  * Prix d'origine (max historique) par listing_id, depuis price_history.
  * Sert à la décote temporelle (baisse de prix depuis le 1er relevé).
  */
-export async function getOriginalPrices(): Promise<Map<string, number>> {
+export const getOriginalPrices = memoTTL("original-prices", async (): Promise<Map<string, number>> => {
   const out = new Map<string, number>();
   if (process.env.SUPABASE_DB_URL) {
     const db = await getPool();
@@ -152,7 +160,7 @@ export async function getOriginalPrices(): Promise<Map<string, number>> {
     db.close();
   }
   return out;
-}
+});
 
 /* ───────────────────────── Tension (séries temporelles) ───────────────────────── */
 
@@ -163,7 +171,7 @@ const dealOf = (v: unknown): TensionInput["dealType"] =>
  * Annonces réduites à leur dimension temporelle — ACTIVES + DISPARUES
  * (inactive/sold), pour calculer âge et time-on-market. Payload léger.
  */
-export async function getTensionInputs(): Promise<TensionInput[]> {
+export const getTensionInputs = memoTTL("tension-inputs", async (): Promise<TensionInput[]> => {
   if (process.env.SUPABASE_DB_URL) {
     const db = await getPool();
     const { rows } = await db.query(
@@ -207,15 +215,15 @@ export async function getTensionInputs(): Promise<TensionInput[]> {
   } finally {
     db.close();
   }
-}
+});
 
 /**
  * Séries temporelles par quartier × deal_type (khet_snapshots) pour les pentes.
  * Résilient : tant que la colonne `deal_type` n'est pas migrée (ou la table vide),
  * on retourne [] → la tension dégrade gracieusement (composantes de tendance nulles).
  */
-export async function getKhetSnapshots(): Promise<KhetSnapshot[]> {
-  const mapRow = (r: Record<string, unknown>): KhetSnapshot => ({
+export const getKhetSnapshots = memoTTL("khet-snapshots", async (): Promise<KhetSnapshot[]> => {
+  const mapRow =(r: Record<string, unknown>): KhetSnapshot => ({
     takenAt: iso(r.taken_at),
     khet: r.khet as string,
     dealType: (r.deal_type as KhetSnapshot["dealType"]) ?? null,
@@ -254,4 +262,4 @@ export async function getKhetSnapshots(): Promise<KhetSnapshot[]> {
   } catch {
     return [];
   }
-}
+});

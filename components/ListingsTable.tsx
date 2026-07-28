@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Listing, DealType } from "@/lib/types";
+import type { ListingRow, DealType } from "@/lib/types";
 import { applyFilters, filtersToParams, filtersFromParams, type Filters } from "@/lib/filters";
-import { buildUnitMatches } from "@/lib/cross-match";
+import type { UnitMatchLite } from "@/lib/cross-match";
 
 /* ───────────────────────── Dual-range slider (toggleable) ───────────────── */
 function RangeSlider({
@@ -71,7 +71,7 @@ type SortKey =
   | "name" | "khet" | "price" | "pricePerSqm"
   | "bedrooms" | "bathrooms" | "areaSqm" | "cross" | "yield";
 const fmtInt = (v: number) => Math.round(v).toLocaleString("en-US");
-const name = (l: Listing) => l.condoName || l.title || "—";
+const name = (l: ListingRow) => l.condoName || l.title || "—";
 
 function bounds(vals: number[]): [number, number] {
   const f = vals.filter((v) => Number.isFinite(v));
@@ -80,19 +80,19 @@ function bounds(vals: number[]): [number, number] {
 
 /* ───────────────────────────── component ───────────────────────────── */
 export default function ListingsTable({
-  deal, listings, allListings,
+  deal, listings, matches,
 }: {
   deal: DealType;
-  listings: Listing[];
-  allListings: Listing[];
+  listings: ListingRow[];
+  /** Appariement même-unité, calculé SUR LE SERVEUR (lib/cross-match.ts).
+   *  Il l'était ici, ce qui obligeait la page à envoyer au navigateur les
+   *  16 000 annonces actives pour n'en tirer que deux nombres par ligne. */
+  matches: Record<string, UnitMatchLite>;
 }) {
   const isRent = deal === "rent";
   const priceLabel = isRent ? "Rent (monthly)" : "Price";
   const ppsqmLabel = isRent ? "Rent per sqm" : "Price per sqm";
   const crossLabel = isRent ? "Sale price" : "Monthly rent";
-
-  // Appariement même-unité (calculé sur l'ensemble vente+location).
-  const matches = useMemo(() => buildUnitMatches(allListings), [allListings]);
 
   const [pB0, pB1] = useMemo(() => bounds(listings.map((l) => l.price)), [listings]);
   const [aB0, aB1] = useMemo(() => bounds(listings.map((l) => l.areaSqm ?? NaN)), [listings]);
@@ -169,11 +169,11 @@ export default function ListingsTable({
       if (key === "name") { va = name(a).toLowerCase(); vb = name(b).toLowerCase(); }
       else if (key === "khet") { va = (a.khet || "").toLowerCase(); vb = (b.khet || "").toLowerCase(); }
       else if (key === "cross") {
-        va = matches.get(a.id)?.counterpart.price ?? -Infinity;
-        vb = matches.get(b.id)?.counterpart.price ?? -Infinity;
+        va = matches[a.id]?.counterpartPrice ?? -Infinity;
+        vb = matches[b.id]?.counterpartPrice ?? -Infinity;
       } else if (key === "yield") {
-        va = matches.get(a.id)?.annualYieldPct ?? -Infinity;
-        vb = matches.get(b.id)?.annualYieldPct ?? -Infinity;
+        va = matches[a.id]?.annualYieldPct ?? -Infinity;
+        vb = matches[b.id]?.annualYieldPct ?? -Infinity;
       } else { va = (a[key] ?? -Infinity) as number; vb = (b[key] ?? -Infinity) as number; }
       return va < vb ? -dir : va > vb ? dir : 0;
     });
@@ -184,6 +184,15 @@ export default function ListingsTable({
     setSort((s) => (s.key === key ? { key, dir: (s.dir * -1) as 1 | -1 } : { key, dir: 1 }));
 
   const arrow = (key: SortKey) => (sort.key === key ? (sort.dir === 1 ? " ▲" : " ▼") : "");
+
+  // Rendu par tranches. Le filtrage et le tri portent toujours sur l'ENSEMBLE
+  // des annonces — seul l'affichage est borné. Sans cela, 8 000 lignes × 9
+  // cellules faisaient 72 000 nœuds DOM, l'essentiel du poids de la page une
+  // fois le payload allégé.
+  const PAGE = 200;
+  const [shown, setShown] = useState(PAGE);
+  // Un changement de filtre ou de tri ramène en haut de liste.
+  useEffect(() => setShown(PAGE), [filters, sort]);
 
   const cols: { key: SortKey; label: string; align?: string }[] = [
     { key: "name", label: "Listing name" },
@@ -248,8 +257,8 @@ export default function ListingsTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((l) => {
-              const m = matches.get(l.id);
+            {rows.slice(0, shown).map((l) => {
+              const m = matches[l.id];
               return (
                 <tr key={l.id} className="border-b border-violet-soft/40 hover:bg-surface/40">
                   <td className="px-4 py-2.5">
@@ -264,7 +273,7 @@ export default function ListingsTable({
                   <td className="px-4 py-2.5 text-right">{l.bathrooms ?? "—"}</td>
                   <td className="px-4 py-2.5 text-right">{l.areaSqm ? `${fmtInt(l.areaSqm)} m²` : "—"}</td>
                   <td className="px-4 py-2.5 text-right text-text-muted">
-                    {m ? fmtInt(m.counterpart.price) : "—"}
+                    {m ? fmtInt(m.counterpartPrice) : "—"}
                   </td>
                   <td className={`px-4 py-2.5 text-right font-medium ${m ? "text-gold" : "text-text-faint"}`}>
                     {m ? `${m.annualYieldPct} %` : "—"}
@@ -272,6 +281,20 @@ export default function ListingsTable({
                 </tr>
               );
             })}
+            {rows.length > shown && (
+              <tr>
+                <td colSpan={cols.length} className="px-4 py-4 text-center">
+                  <button
+                    onClick={() => setShown((n) => n + PAGE)}
+                    className="rounded-md border border-violet-soft px-4 py-1.5 text-sm text-text-muted transition hover:border-violet-fluo hover:text-text">
+                    Show {Math.min(PAGE, rows.length - shown).toLocaleString("en-US")} more
+                    <span className="ml-2 text-text-faint">
+                      ({shown.toLocaleString("en-US")} of {rows.length.toLocaleString("en-US")})
+                    </span>
+                  </button>
+                </td>
+              </tr>
+            )}
             {rows.length === 0 && (
               <tr><td colSpan={cols.length} className="px-4 py-10 text-center text-text-faint">
                 No listing matches the filters.
