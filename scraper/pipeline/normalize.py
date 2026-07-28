@@ -122,6 +122,18 @@ def normalize(rec: dict) -> dict:
         # de photos diffère.
         "photo_count": rec.get("photo_count"),
         "photo_sizes": rec.get("photo_sizes"),
+        # QUI publie : deux annonces identiques du MÊME agent sont un doublon ;
+        # les mêmes venant d'agences concurrentes sont deux mises en marché d'un
+        # même lot, voire deux lots distincts. Sans ce champ, la question n'est
+        # pas décidable — cf. journal technique du 2026-07-28 (soir).
+        "agent_id": rec.get("agent_id"),
+        "agency_id": rec.get("agency_id"),
+        # QUAND l'annonce a été publiée, d'après la SOURCE. `first_seen` ne dit
+        # que la date de notre premier passage : le time-on-market qui en découle
+        # est borné par la cadence de scan.
+        "posted_at": rec.get("posted_at"),
+        # Republication signalée par le site lui-même.
+        "is_auto_repost": rec.get("is_auto_repost"),
     }
     rec_out["unit_key"] = unit_key(rec_out)
     return rec_out

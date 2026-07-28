@@ -19,6 +19,8 @@ _COLS = (
     "address_raw", "khet", "khwaeng", "street", "lat", "lng",
     # cohorte (robuste aux republications), âge du bâtiment, empreinte photo
     "unit_key", "year_built", "photo_count", "photo_sizes",
+    # provenance : qui publie, quand, et republication signalée par la source
+    "agent_id", "agency_id", "posted_at", "is_auto_repost",
 )
 
 

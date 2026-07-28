@@ -109,6 +109,23 @@ def _price_num(price) -> float | None:
     return None
 
 
+def _posted_at(posted) -> str | None:
+    """Date de publication annoncée par le site → ISO UTC.
+
+    `postedOn.unix` est un horodatage en secondes. C'est la seule date de mise en
+    ligne RÉELLE dont on dispose : `first_seen` ne dit que le moment où NOTRE
+    scan a croisé l'annonce, ce qui borne le time-on-market par la cadence de
+    scan et non par le marché.
+    """
+    if not isinstance(posted, dict):
+        return None
+    unix = posted.get("unix")
+    if not isinstance(unix, (int, float)) or unix <= 0:
+        return None
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(unix, timezone.utc).isoformat()
+
+
 def _parse_address(full: str) -> dict:
     parts = [p.strip() for p in (full or "").split(",") if p.strip()]
     out = {"street": None, "khwaeng": None, "khet": None, "province": None}
@@ -166,6 +183,13 @@ class DdpropertyAdapter(BaseAdapter):
             m = ID_RE.search(url)
             addr = _parse_address(full)
             prop = it.get("property") or {}
+            # Qui publie, et quand. Ces champs sont dans le MÊME blob que le
+            # reste — on les ignorait, alors qu'ils tranchent la question
+            # « plusieurs lots ou plusieurs annonces du même lot ? » : deux
+            # annonces identiques du même agent sont un doublon, deux annonces
+            # identiques d'agences concurrentes ne le sont pas.
+            agent = it.get("agent") or {}
+            produits = it.get("products") or {}
             stubs.append({
                 "source_url": url,
                 "source_id": m.group(1) if m else url,
@@ -175,6 +199,14 @@ class DdpropertyAdapter(BaseAdapter):
                 "bedrooms": _int(it.get("bedrooms")),
                 "bathrooms": _int(it.get("bathrooms")),
                 "full_address": full,
+                "agent_id": str(agent["id"]) if agent.get("id") is not None else None,
+                "agency_id": str(agent["agencyId"]) if agent.get("agencyId") is not None else None,
+                # Date de publication RÉELLE annoncée par le site. Mesure le
+                # time-on-market à la source, au lieu de le déduire de la date
+                # à laquelle NOUS avons vu l'annonce pour la première fois.
+                "posted_at": _posted_at(it.get("postedOn")),
+                # Le site signale lui-même ses republications automatiques.
+                "is_auto_repost": produits.get("isAutoRepost"),
                 **addr,
             })
         return stubs

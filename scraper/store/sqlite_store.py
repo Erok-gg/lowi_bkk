@@ -103,7 +103,10 @@ class SqliteStore(BaseStore):
         # Cohorte, âge du bâtiment, empreinte photo (cf. unit_key_photo_sig.sql)
         for col, typ in (("unit_key", "text"), ("year_built", "integer"),
                          ("photo_count", "integer"), ("photo_sizes", "text"),
-                         ("repost_of", "text"), ("repost_reason", "text")):
+                         ("repost_of", "text"), ("repost_reason", "text"),
+                         # provenance (cf. provenance_annonce.sql)
+                         ("agent_id", "text"), ("agency_id", "text"),
+                         ("posted_at", "text"), ("is_auto_repost", "integer")):
             if col not in lcols:
                 self.db.execute(f"alter table listings add column {col} {typ}")
         self.db.execute("create index if not exists idx_listings_unit on listings (unit_key)")
@@ -179,6 +182,8 @@ class SqliteStore(BaseStore):
             "address_raw", "khet", "khwaeng", "street", "lat", "lng",
             # cohorte (robuste aux republications), âge du bâtiment, empreinte photo
             "unit_key", "year_built", "photo_count", "photo_sizes",
+            # provenance : qui publie, quand, et republication signalée par la source
+            "agent_id", "agency_id", "posted_at", "is_auto_repost",
         )
 
         if existing is None:
