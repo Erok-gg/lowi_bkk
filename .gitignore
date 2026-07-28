@@ -43,3 +43,8 @@ ops/logs/
 lib/tension.compiled.mjs
 
 tsconfig.tsbuildinfo
+
+# Pitch decks et leurs visuels — documents commerciaux, gardés en LOCAL.
+# Le dépôt est public : les versionner ici les publierait, et git n'oublie pas.
+lowi_pitch_deck*.html
+pitch-assets/
