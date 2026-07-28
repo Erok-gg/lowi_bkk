@@ -8,6 +8,7 @@
  * on ne fait qu'associer une contrepartie probable.
  */
 import type { Listing } from "@/lib/types";
+import { normalizeCondoName as normCondo } from "@/lib/condo-name";
 
 export interface UnitMatch {
   counterpart: Listing; // l'annonce de l'autre deal_type
@@ -15,17 +16,6 @@ export interface UnitMatch {
 }
 
 const AREA_TOL = 0.07;
-
-/** Normalise un nom de condo : minuscules, retire le suffixe ", Bangkok", alphanum. */
-function normCondo(name: string | null): string {
-  if (!name) return "";
-  return name
-    .split(",")[0]
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 const unitKey = (l: Listing) => `${normCondo(l.condoName)}|${l.khet ?? ""}|${l.bedrooms ?? "?"}`;
 

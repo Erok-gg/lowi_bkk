@@ -19,10 +19,34 @@
  * simplement presque pas de condos (Taling Chan : 2 annonces sur 6 immeubles).
  * Le compte brut confondait TAILLE du marché et TENSION.
  *
- * Elle est remplacée par la PRESSION VENDEUSE = actives / nombre d'immeubles du
- * quartier, insensible à la taille du marché et interprétable : 9,6 annonces par
- * immeuble à Bangkok Yai, ce sont des vendeurs en concurrence, donc un marché
- * mou. Le dénominateur vient du référentiel `condos`.
+ * Elle est remplacée par la PRESSION VENDEUSE = annonces actives par immeuble
+ * MIS EN VENTE, insensible à la taille du marché et interprétable : 9 annonces
+ * simultanées par immeuble, ce sont des vendeurs en concurrence, donc un marché
+ * mou.
+ *
+ * ── CORRECTIF DU DESCRIPTIF, MÊME JOUR ───────────────────────────────────────
+ * La première rédaction annonçait un dénominateur « issu du référentiel
+ * `condos` ». C'était faux à deux titres, et le second invalidait la mesure :
+ *
+ *   1. Le code comptait en réalité les `condo_name` distincts des annonces, pas
+ *      la table `condos`.
+ *   2. Surtout, il les comptait sur TOUTES les annonces du quartier, délistées
+ *      comprises, alors que le numérateur ne compte que les actives. Périmètres
+ *      mélangés : un quartier à fort churn accumule des noms d'immeubles au
+ *      dénominateur, sa pression s'effondre et sa tension grimpe — exactement
+ *      Pathum Wan et ses 521 délistages, le cas qu'on voulait corriger.
+ *      Mesuré : Vadhana 6,92 sur périmètre actif contre 4,61 sur l'historique
+ *      (−33 %), Khlong Toei 5,52 contre 3,32 (−40 %). Le biais n'est pas
+ *      uniforme, il déforme donc le classement, pas seulement l'échelle.
+ *
+ * La table `condos` n'aurait rien réglé : elle est peuplée depuis toutes les
+ * annonces sans filtre de statut (754 immeubles à Vadhana contre 766 vus dans
+ * l'historique des annonces), elle porte donc le même biais.
+ *
+ * Le dénominateur retenu est donc : IMMEUBLES DISTINCTS PARMI LES ANNONCES
+ * ACTIVES du groupe, nom normalisé (lib/condo-name.ts). Il se lit « parmi les
+ * immeubles où quelqu'un vend, combien de vendeurs simultanés ? » — c'est bien
+ * la concurrence entre vendeurs, et le périmètre est le même en haut et en bas.
  *
  * Deux garde-fous ajoutés :
  *   - RÉTRÉCISSEMENT des petits échantillons vers la médiane du marché
@@ -30,17 +54,24 @@
  *   - SEUIL DE PUBLICATION : sous MIN_ACTIVE_TO_PUBLISH annonces, le score vaut
  *     null. Mieux vaut « données insuffisantes » qu'un chiffre dénué de sens.
  *
- * L'absorption reste calculée mais son historique est contaminé : jusqu'au
- * correctif du délistage (2026-07-28), une annonce était délistée dès la
- * première absence d'un scan, ce qui produisait un time-on-market égal à la
- * cadence de scan (6,9 j identiques sur des quartiers très différents).
- * Passer `reliableDelistingSince` pour n'utiliser que les disparitions
- * postérieures au correctif.
+ * ABSORPTION. Jusqu'au correctif du délistage (2026-07-28), une annonce était
+ * délistée dès la première absence d'un scan : le time-on-market valait la
+ * cadence de scan (6,9 j identiques à Vadhana, Khlong Toei et Sathon). Cet
+ * historique est donc écarté PAR DÉFAUT (`DELISTING_FIX_DATE`). Tant qu'aucune
+ * disparition postérieure au correctif n'est accumulée, l'absorption se replie
+ * sur l'âge des annonces actives — moins riche, mais pas faux. Le time-on-market
+ * revient tout seul dès que les scraps post-correctif s'accumulent.
+ *
+ * MOMENTUM PRIX. Calculé sur la MÉDIANE du prix/m² du quartier, pas sur la
+ * moyenne : mesuré sur 2 121 instantanés, la moyenne court 16 % au-dessus de la
+ * médiane (137 750 contre 118 826 THB/m²), tirée par les penthouses. On se replie
+ * sur la moyenne quand la médiane manque (instantanés SQLite hérités).
  *
  * Indépendant du backend (mêmes données, que la source soit Supabase ou SQLite).
  */
 import type { DealType, ListingStatus } from "@/lib/types";
 import { medianAvg } from "@/lib/yields";
+import { normalizeCondoName } from "@/lib/condo-name";
 
 /* ───────────────────────────── entrées (DB) ───────────────────────────── */
 
@@ -57,13 +88,19 @@ export interface TensionInput {
   condoName?: string | null;
 }
 
-/** Options de calcul (toutes facultatives — comportement inchangé si omises). */
+/**
+ * Date du correctif de délistage (délai de grâce, migration `delisting_grace`).
+ * Les disparitions ANTÉRIEURES ne mesurent pas le marché mais la cadence de scan :
+ * elles sont écartées du time-on-market par défaut.
+ */
+export const DELISTING_FIX_DATE = "2026-07-28";
+
+/** Options de calcul (toutes facultatives). */
 export interface TensionOptions {
   /** Ignore les disparitions antérieures à cette date ISO pour le time-on-market.
-   *  À régler sur la date du correctif de délistage : avant, une annonce était
-   *  délistée dès sa première absence d'un scan et le TOM valait la cadence de
-   *  scan, pas le marché. */
-  reliableDelistingSince?: string;
+   *  Vaut `DELISTING_FIX_DATE` par défaut ; passer `null` pour réintégrer
+   *  l'historique contaminé (utile seulement pour comparer avant/après). */
+  reliableDelistingSince?: string | null;
 }
 
 /** Une ligne de khet_snapshots (série temporelle par quartier × deal_type). */
@@ -73,6 +110,9 @@ export interface KhetSnapshot {
   dealType: DealType | null; // null = snapshots hérités (avant séparation vente/loc)
   activeCount: number | null;
   avgPricePerSqm: number | null;
+  /** Médiane du prix/m² — préférée à la moyenne pour le momentum (cf. en-tête).
+   *  Absente des instantanés SQLite hérités → repli sur la moyenne. */
+  medianPricePerSqm?: number | null;
 }
 
 /* ───────────────────────────── sorties ───────────────────────────── */
@@ -84,9 +124,11 @@ export interface TensionRow {
   dealType: DealType;
   nActive: number;
   nDelisted: number;
-  /** Immeubles distincts du quartier — dénominateur de la pression vendeuse. */
+  /** Immeubles distincts parmi les annonces ACTIVES — dénominateur de la
+   *  pression vendeuse, même périmètre que le numérateur. */
   nCondos: number;
-  /** Annonces actives par immeuble. Forte valeur = vendeurs en concurrence. */
+  /** Annonces actives par immeuble mis en vente. Forte valeur = vendeurs en
+   *  concurrence dans les mêmes immeubles = marché mou. */
   supplyPressure: number | null;
   medianAgeDays: number | null;
   medianTomDays: number | null; // time-on-market des disparues (si assez d'historique)
@@ -101,6 +143,9 @@ export interface TensionStreetRow {
   dealType: DealType;
   nActive: number;
   nDelisted: number;
+  /** Mêmes définitions qu'au niveau quartier, sur le périmètre de la rue. */
+  nCondos: number;
+  supplyPressure: number | null;
   medianAgeDays: number | null;
   medianTomDays: number | null;
   tensionScore: number | null;
@@ -221,14 +266,24 @@ function rawOf(
     .map((l) => (l.firstSeen ? days(l.firstSeen, nowMs) : null))
     .filter((v): v is number => v != null && v >= 0);
 
-  // Immeubles distincts du groupe — dénominateur de la pression vendeuse.
-  const condos = new Set(arr.map((l) => l.condoName).filter((c): c is string => !!c));
+  // Immeubles distincts parmi les ACTIVES uniquement : le dénominateur doit
+  // couvrir le même périmètre que le numérateur. Compter aussi les immeubles
+  // des annonces délistées gonflait le dénominateur des quartiers à fort churn
+  // et faisait donc monter leur tension (Vadhana : 6,92 → 4,61, soit −33 %).
+  // Nom normalisé, sinon « X » et « X, Bangkok » comptent pour deux immeubles.
+  const condos = new Set(
+    actives.map((l) => normalizeCondoName(l.condoName)).filter((c) => c !== "")
+  );
   const nCondos = condos.size;
   const supplyPressure = nCondos >= MIN_CONDOS ? actives.length / nCondos : null;
 
-  const sinceMs = opts.reliableDelistingSince
-    ? Date.parse(opts.reliableDelistingSince)
-    : null;
+  // Par défaut on écarte l'historique de délistage antérieur au correctif.
+  // `null` explicite = l'appelant veut réintégrer cet historique.
+  const since =
+    opts.reliableDelistingSince === undefined
+      ? DELISTING_FIX_DATE
+      : opts.reliableDelistingSince;
+  const sinceMs = since ? Date.parse(since) : null;
   const delisted = arr.filter(
     (l) =>
       l.status !== "active" &&
@@ -253,9 +308,13 @@ function rawOf(
   const stockPts = snaps
     .filter((s) => s.activeCount != null)
     .map((s) => ({ x: (Date.parse(s.takenAt) - t0) / DAY, y: s.activeCount as number }));
+  // Momentum sur la MÉDIANE du prix/m² : la moyenne court 16 % au-dessus d'elle
+  // (mesuré sur 2 121 instantanés) et sa pente suit les penthouses entrés ou
+  // sortis du stock, pas le marché. Repli sur la moyenne si la médiane manque.
+  const psqmOf = (s: KhetSnapshot) => s.medianPricePerSqm ?? s.avgPricePerSqm;
   const pricePts = snaps
-    .filter((s) => s.avgPricePerSqm != null)
-    .map((s) => ({ x: (Date.parse(s.takenAt) - t0) / DAY, y: s.avgPricePerSqm as number }));
+    .filter((s) => psqmOf(s) != null)
+    .map((s) => ({ x: (Date.parse(s.takenAt) - t0) / DAY, y: psqmOf(s) as number }));
 
   return {
     key,
@@ -385,7 +444,8 @@ export function computeTensionByKhet(
 
 /**
  * Tension par rue répertoriée d'un quartier (rues non nulles). Uniquement les
- * composantes per-listing (absorption + rareté) : pas de snapshots à l'échelle rue.
+ * composantes per-listing (absorption + pression vendeuse) : il n'existe pas
+ * d'instantané à l'échelle de la rue, donc ni tendance de stock ni momentum.
  * Normalisation au sein du quartier.
  */
 export function computeTensionByStreet(
@@ -437,6 +497,9 @@ export function computeTensionByStreet(
       dealType,
       nActive: r.nActive,
       nDelisted: r.nDelisted,
+      nCondos: r.nCondos,
+      supplyPressure:
+        r.supplyPressure == null ? null : Math.round(r.supplyPressure * 100) / 100,
       medianAgeDays: r.medianAgeDays == null ? null : Math.round(r.medianAgeDays),
       medianTomDays: r.medianTomDays == null ? null : Math.round(r.medianTomDays),
       tensionScore,

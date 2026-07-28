@@ -221,9 +221,13 @@ export async function getKhetSnapshots(): Promise<KhetSnapshot[]> {
     dealType: (r.deal_type as KhetSnapshot["dealType"]) ?? null,
     activeCount: num(r.active_count),
     avgPricePerSqm: num(r.avg_price_per_sqm),
+    // Le momentum prix se calcule sur la médiane (cf. lib/tension.ts) ; la
+    // moyenne reste lue pour le repli des instantanés qui n'ont pas de médiane.
+    medianPricePerSqm: num(r.median_price_per_sqm),
   });
   const SQL =
-    "select taken_at, khet, deal_type, active_count, avg_price_per_sqm from khet_snapshots order by taken_at";
+    "select taken_at, khet, deal_type, active_count, avg_price_per_sqm," +
+    " median_price_per_sqm from khet_snapshots order by taken_at";
 
   if (process.env.SUPABASE_DB_URL) {
     try {

@@ -256,8 +256,9 @@ export default function TensionMap({
           <span className="ml-2 opacity-40">▨</span> low confidence
         </div>
         <div className="mt-2 max-w-[16rem] border-t border-violet-soft pt-1.5 text-[10px] leading-snug text-text-faint">
-          Composite of absorption speed, scarcity, stock trend & rent momentum, per district.
-          Indicative — strengthens as more scrapes accumulate over time.
+          Composite of absorption speed, seller pressure (live listings per listed
+          building), stock trend & price momentum, per district. Districts under 10
+          live listings are not scored. Indicative — strengthens as scrapes accumulate.
         </div>
       </div>
     </div>

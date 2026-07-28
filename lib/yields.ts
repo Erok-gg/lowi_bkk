@@ -18,6 +18,9 @@
  * Limite assumée : prix AFFICHÉS (pas transactionnels) → classement relatif.
  */
 import type { Listing } from "@/lib/types";
+// Normalisation du nom d'immeuble : une seule implémentation pour la double
+// médiane, le recoupement vente/location et la pression vendeuse.
+import { normalizeCondoName as normCondo } from "@/lib/condo-name";
 
 /** Seuil de condos appariés (vente+location) pour le rendement within-condo. */
 export const MIN_PAIRED_CONDOS = 5;
@@ -90,17 +93,6 @@ function winsorize(vals: number[]): number[] {
   const lo = q(0.05);
   const hi = q(0.95);
   return vals.map((v) => Math.min(hi, Math.max(lo, v)));
-}
-
-/** Même normalisation de nom de condo que lib/cross-match.ts. */
-function normCondo(name: string | null): string {
-  if (!name) return "";
-  return name
-    .split(",")[0]
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 /** Médiane de prix/m² par condo. Une annonce sans nom de condo compte comme son

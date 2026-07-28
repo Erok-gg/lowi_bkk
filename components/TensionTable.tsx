@@ -59,6 +59,9 @@ export default function TensionTable({
     { key: "tensionScore", label: "Tension" },
     { key: "medianTomDays", label: "Time on market" },
     { key: "nActive", label: "#Active" },
+    // 25 % de l'indice : la doctrine de présentation interdit de classer sans
+    // exposer ce qui produit le classement.
+    { key: "supplyPressure", label: "Sellers/bldg" },
     { key: "nDelisted", label: "#Gone" },
     { key: "stockTrend", label: "Stock trend" },
     { key: "confidence", label: "Conf." },
@@ -100,9 +103,14 @@ export default function TensionTable({
           </div>
         </div>
         <p className="text-sm text-text-muted">
-          Composite 0–100 (higher = tenser): absorption speed, scarcity, stock trend & price momentum.
-          Time on market is from de-listed units; <code>*</code> = age of live listings (fallback while history
-          is thin). Indicative — strengthens as scrapes accumulate. Click a row for the per-street breakdown.
+          Composite 0–100 (higher = tenser): absorption speed (35), seller pressure (25),
+          stock trend (20) & price momentum (20). <strong>Seller pressure</strong> = live
+          listings per building that has at least one — many sellers competing inside the
+          same towers means a soft market, not a tense one. Time on market counts only
+          de-listings after the 2026-07-28 scan fix (earlier ones measured the scan cadence);
+          <code>*</code> = age of live listings, the fallback until that history builds up.
+          Districts under 10 live listings show no score. Small samples are pulled toward the
+          market median. Click a row for the per-street breakdown.
         </p>
       </div>
       <table className="w-full max-w-3xl border-collapse text-sm">
@@ -136,13 +144,16 @@ export default function TensionTable({
                   </td>
                   <td className="px-3 py-2 text-right text-text-muted">{tomCell(r)}</td>
                   <td className="px-3 py-2 text-right text-text-muted">{r.nActive}</td>
+                  <td className="px-3 py-2 text-right text-text-muted" title={`${r.nCondos} buildings with at least one live listing`}>
+                    {fmt(r.supplyPressure)}
+                  </td>
                   <td className="px-3 py-2 text-right text-text-muted">{r.nDelisted}</td>
                   <td className="px-3 py-2 text-right text-text-muted">{trendCell(r.stockTrend)}</td>
                   <td className={`px-3 py-2 text-right text-xs ${CONF_COLOR[r.confidence]}`}>{r.confidence}</td>
                 </tr>
                 {expanded && streets.length === 0 && (
                   <tr className="border-b border-violet-soft/20 bg-anthracite-deep/40">
-                    <td colSpan={7} className="px-3 py-2 pl-8 text-xs text-text-faint">
+                    <td colSpan={8} className="px-3 py-2 pl-8 text-xs text-text-faint">
                       No street-level address recorded for this district yet.
                     </td>
                   </tr>
@@ -155,6 +166,7 @@ export default function TensionTable({
                     </td>
                     <td className="px-3 py-1.5 text-right text-xs">{tomCell(s)}</td>
                     <td className="px-3 py-1.5 text-right text-xs">{s.nActive}</td>
+                    <td className="px-3 py-1.5 text-right text-xs">{fmt(s.supplyPressure)}</td>
                     <td className="px-3 py-1.5 text-right text-xs">{s.nDelisted}</td>
                     <td className="px-3 py-1.5 text-right text-xs">—</td>
                     <td className={`px-3 py-1.5 text-right text-xs ${CONF_COLOR[s.confidence]}`}>{s.confidence}</td>
