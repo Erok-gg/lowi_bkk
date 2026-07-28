@@ -2,6 +2,8 @@
 
 > Doc de référence du projet. À lire avant toute modif. Tient l'état d'avancement à jour.
 >
+> **Flow complet du système (scrap → parsing → stockage → heuristiques → calculs) : [docs/pipeline.md](docs/pipeline.md)**
+>
 > **Décisions, méthodes et défauts corrigés : voir [docs/journal-technique.md](docs/journal-technique.md)**
 > (registre append-only — le *pourquoi* des choix, ce qui a été mesuré, ce qui
 > restait faux au moment de la décision, et la traçabilité de provenance).
@@ -57,7 +59,31 @@ On doit pouvoir changer **variables de scraping** et **présentation des donnée
 - **price_history** : `id, listing_id, price, observed_at`
 - **scan_runs** : `id, started_at, source, new_count, removed_count, changed_count`
 - **pois** : `id, category, name_en, name_th, lat, lng, khet`
-- **Vues** : `khet_stats`, `street_stats` (nb annonces, prix moyen/médian/m², distribution par type, évolution).
+- **condos** : référentiel des IMMEUBLES (`name` PK, `khet`, `lat/lng`, `year_built`, agrégats). L'année de livraison est une propriété du bâtiment, pas de l'annonce.
+- **cohort_snapshots** : stock actif par COHORTE (`unit_key` = immeuble × chambres × tranche 5 m² × type) à chaque scan. C'est cette série qui mesure l'écoulement sans être trompée par les republications.
+- **social_leads** : annonces réseaux sociaux, **table séparée à dessein** (déclaratif non vérifié → ne doit pas contaminer les stats de marché).
+- **Vues** : `khet_stats`, `street_stats`, `listings_sane` (périmètre assaini), `listing_benchmarks` + `opportunites` (cascade de comparaison), `cohort_tension`, `condos_age`.
+
+### Volumétrie (relevée le 2026-07-28 — à réactualiser, elle pilote les décisions)
+| | |
+|---|---|
+| Annonces totales | 34 275 (48 Mo) |
+| **Actives** | **16 147** — vente 8 063 / location 8 084 |
+| Actives plausibles (`listings_sane`) | 15 875 |
+| Immeubles connus / avec annonce active | 4 514 / 2 897 |
+| `year_built` renseigné | **0** |
+| Quota étranger renseigné | **197** (1,2 %) |
+| Doublons exacts actifs | 1 399 (8,7 %), dont 1 326 intra-source |
+
+> ⚠ Le projet est passé de ~1 000 à 16 000 actives. Les choix « on charge tout »
+> (pages en `force-dynamic` sans cache, tableaux sans virtualisation) datent de
+> l'ordre de grandeur précédent — voir le journal technique du 2026-07-28 (soir).
+
+### Bornes de plausibilité — source unique
+`lib/market-bounds.ts` (TS) et la vue `listings_sane` (SQL) : vente 800 k–100 M,
+loyer 3 k–500 k, surface 15–500 m². **Les deux doivent rester alignés.** Toute
+statistique (médiane, décote, rendement, tension) se calcule sur ce périmètre —
+ne pas refiltrer à la main ailleurs.
 
 ## Comportement carte (cahier des charges)
 - **Dézoomé** : tout BKK, quartiers + métro (lignes), eau, rues, monuments, stations métro, hôpitaux, écoles, aéroports, train.
@@ -121,7 +147,7 @@ Usage perso non-commercial. Fréquence ~hebdo (pas de boucle serrée). Respect r
 - [x] **Phase UI v2 (2026-06-23)** — **Anglais only** (sélecteur de langue + hamburger retirés) ; nav `The map / For sale / To rent / Yields`. **Pages vente/location séparées** (`/for-sale` exclut <800k & >100M ; `/to-rent` relabel Rent/Rent per sqm). Colonne+filtre **Type retirés**. **Recoupement même-unité** `lib/cross-match.ts` → colonnes Monthly rent/Sale price + **Annual yield** réel. **Yields par rue** (clic quartier, `computeYieldsByStreet`). Tooltip carte → **haut-gauche**. PropertyCard/property-card.config en anglais.
 - [x] **Règles scraping freehold/quota** — **DDproperty** : `tenureCode='F'` → freehold gardé, leasehold écarté ; quota non exposé (None). **FazWaz** : freehold par défaut + quota best-effort via code `ownership` de l'unité (snapshot Livewire inconstant → souvent None). `tenure` ajouté au schéma (SQLite + `supabase/schema.sql`).
 - [x] **Phase 4** — Pinpoints biens sur carte (or Lowi + anneau blanc, `components/MapView.tsx`) ✓ ; **PropertyCard data-driven** (`components/PropertyCard.tsx` piloté par `config/property-card.config.ts`, photo via `/api/img`) au survol ✓ ; **proximité** client-side (`lib/proximity.ts` : école 1re/2e, métro 1er/2e, bus le + proche, distance CBD, via les POI de `/public`) ✓. Reste : amenities FazWaz enrichies, géoloc DDproperty (déjà précise via fiche).
-- [x] **Sources locatif + 2 nouveaux sites (2026-06-23)** : adaptateurs **PropertyScout** (`adapters/propertyscout.py`, Next.js `__NEXT_DATA__`, pagination `/page-N/`) et **Nestopa** (`adapters/nestopa.py`, ld+json `Product` du flux `/th-en/for-sale|for-rent`, filtre Bangkok par l'URL, champs depuis le slug/nom ; **pas de coords serveur** → khet par slug, coords via géocodage). **FazWaz rent réparé** (URL `/property-rent/`, id inclut le deal_type). Supabase **~1002 actives** (vente 563 / location 439) sur 4 sources. **Utiliser `.venv/Scripts/python.exe`** (psycopg).
+- [x] **Sources locatif + 2 nouveaux sites (2026-06-23)** : adaptateurs **PropertyScout** (`adapters/propertyscout.py`, Next.js `__NEXT_DATA__`, pagination `/page-N/`) et **Nestopa** (`adapters/nestopa.py`, ld+json `Product` du flux `/th-en/for-sale|for-rent`, filtre Bangkok par l'URL, champs depuis le slug/nom ; **pas de coords serveur** → khet par slug, coords via géocodage). **FazWaz rent réparé** (URL `/property-rent/`, id inclut le deal_type). **Utiliser `.venv/Scripts/python.exe`** (psycopg).
 - [x] **Géocodage condos Nominatim (2026-06-23)** : `scraper/pipeline/geocode.py` (1 req/s, cache `output/geocode-cache.json`, échecs cachés) ; flag `run.py --geocode` (complète street/coords manquants au scrape) ; backfill `scraper/backfill_geocode.py` (ne remplit que le manquant, ne crase pas les coords précises, redéduit le khet sur nouvelles coords). Taux de hit Nominatim ~35-40 % sur noms de condos thaï.
 - [x] **Stats v2 — double médiane par condo (2026-07-04)** : `lib/yields.ts` réécrit. Prix/m² = médiane des annonces PAR CONDO puis médiane des condos (1 immeuble = 1 voix ; neutralise vétusté/vue/étage sans date de construction). Rendement = médiane des rendements **within-condo** (loyer et prix du MÊME immeuble, ≥5 condos appariés, sinon repli ratio marqué †). Winsorisation p5-p95 par groupe (n≥20), badge `lowSample` (<20 condos d'un côté). **Strate 0–1BR par défaut** (panier constant) — toggle Studio–1BR / 2BR / 3BR+ / All sur `/rendements` (calcul client, `YieldsTable`) et `/yields-map`. Méthode expliquée dans l'UI ("How is this computed?" + légende carte). `YListing` porte désormais `id`+`condoName`. Constat data (2026-07-04) : 1 154 condos ont vente ET location actives = 81 % du stock actif → base du within-condo.
 - [x] **Scrap ciblé par district (2026-07-04)** : flag `run.py --config <json>` (config alternative, mêmes clés). Configs `scraper/config/targets/fazwaz-corridors.json` (rent 13 districts + sale 7, URLs `/condo-for-rent/thailand/bangkok/<slug>`) et `ddproperty-corridors.json` (rent, `freetext=<district>`). Cible : rive ouest (Bangkok Noi/Yai, Thon Buri, Phasi Charoen, Bang Phlat, Taling Chan, Chom Thong, Rat Burana) + couloir Orange Est (Bang Kapi, Bueng Kum, Saphan Sung, Wang Thonglang, Min Buri). ⚠ jamais `--full` avec une config ciblée (scan partiel → délistage interdit).
@@ -132,4 +158,12 @@ Usage perso non-commercial. Fréquence ~hebdo (pas de boucle serrée). Respect r
 - [x] **Rapport mensuel planifié (2026-07-09)** : tâche Claude `rapport-mensuel-lowi-bkk` (1er du mois 09:00, sidebar "Scheduled") — scraps full si données >5 j, `study/run_study.py`, note de conjoncture `docs/etudes/mensuel-YYYY-MM.md` (mouvements vs snapshots + veille web REIC/BOT/transit), `ops/sync --prune`, commit+push. Prompt autonome prévu pour tourner sur Opus.
 - [ ] **Phase 3** — Vues stats affinées (déjà : diff/price_history/stats khet en local) + street_stats
 - [ ] **Phase 6** — Autres adaptateurs (Hipflat…), cron hebdo, alertes email, stats affinées
+- [x] **Revue de code + assainissement (2026-07-28 soir)** — sept écarts entre descriptif et code, corrigés (détail et mesures : journal technique).
+  - **Bornes de plausibilité** unifiées : `lib/market-bounds.ts` + vue `listings_sane` ; `opportunites` reconstruite dessus (elle affichait en tête des locations mal classées en vente à −100 %). Appliquées à `/for-sale`, `/to-rent`, `/rendements`, `/yields-map`, `lib/deals.ts`. **Pas** appliquées à la carte : un pin reste de la donnée brute, une médiane non.
+  - **Tension** : pression vendeuse sur périmètre ACTIF (le dénominateur incluait les délistées → tension gonflée dans les quartiers à fort churn, −33 % à Vadhana) ; `reliableDelistingSince` = `DELISTING_FIX_DATE` **par défaut** ; momentum prix sur la **médiane** (la moyenne court 16 % au-dessus) ; colonne « Sellers/bldg » affichée ; descriptifs des 2 vues corrigés.
+  - **`lib/condo-name.ts`** : normalisation du nom d'immeuble, exemplaire unique (était en double dans `yields.ts`/`cross-match.ts`, absente de `tension.ts`). ⚠ diverge encore de `_norm_condo` (Python) — ne pas comparer un regroupement TS à un `unit_key`.
+  - **Médiane vs moyenne** : `median_price` contenait une moyenne en SQLite et une médiane en Postgres ; aligné. `median_price_per_sqm` désormais renseigné en local.
+  - **Arrondi de tranche** : Python (arrondi bancaire) divergeait de SQL (half-up) → cohortes scindées. Convention SQL adoptée.
+  - **`npm test`** (node:test + tsx) et `npm run typecheck` : le test précédent ne pouvait pas s'exécuter et ne sortait jamais en erreur.
+- [ ] **Suites identifiées (mesurées, non traitées)** : dédup des 1 399 doublons actifs via `unit_key` ; empreinte photo inerte (0 ligne, `est_doublon` sans appelant) ; mise en cache des lectures Supabase + virtualisation des tableaux ; `year_built` à backfiller **côté serveur** ; quota étranger par immeuble ; logique métier dupliquée `study/run_study.py` ↔ `lib/yields.ts`.
 - [ ] **Idées plus tard** : jitter/mouvements aléatoires anti-ban ; heatmaps loyers & prix sur la carte (couche MapLibre pondérée).

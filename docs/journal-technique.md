@@ -300,3 +300,216 @@ Règles de présentation qui en découlent :
 6. Afficher la date de dernière mise à jour des données sur chaque vue — le
    silence de 22 jours de juillet 2026 ne doit pas pouvoir se reproduire sans
    être visible.
+
+---
+
+## 2026-07-28 (soir) · Revue de code : ce que les descriptifs promettaient et ce que le code faisait
+
+Revue de l'ensemble des révisions récentes, avec vérification systématique des
+affirmations contre la base réelle plutôt que contre les commentaires. Sept
+écarts trouvés, tous corrigés le jour même. Le fil commun : **plusieurs
+descriptifs décrivaient l'intention, pas le code**, et une intention consignée
+dans un commentaire finit par être lue comme un fait.
+
+### 1. Le dénominateur de la pression vendeuse mélangeait deux périmètres
+
+L'entrée de cet après-midi annonce un dénominateur « issu du référentiel
+`condos` ». Vérification faite, c'était faux à deux titres, et le second
+invalidait la mesure :
+
+- le code comptait les `condo_name` distincts des **annonces**, pas la table ;
+- il les comptait sur **toutes** les annonces du quartier, délistées comprises,
+  alors que le numérateur ne compte que les actives.
+
+Périmètres mélangés : un quartier à fort churn accumule des noms d'immeubles au
+dénominateur, sa pression s'effondre, sa tension grimpe. C'est exactement Pathum
+Wan et ses 521 délistages — le cas que la révision voulait corriger.
+
+| Quartier | Pression, périmètre actif | Périmètre historique | Écart |
+|---|---|---|---|
+| Vadhana | 6,92 | 4,61 | −33 % |
+| Khlong Toei | 5,52 | 3,32 | −40 % |
+| Ratchathewi | 8,87 | 6,72 | −24 % |
+
+Le biais n'est pas uniforme : il déforme le **classement**, pas seulement
+l'échelle. Et la table `condos` n'aurait rien réglé — elle est peuplée depuis
+toutes les annonces sans filtre de statut (754 immeubles à Vadhana contre 766 vus
+dans l'historique des annonces), elle porte donc le même biais.
+
+**Retenu :** immeubles distincts parmi les annonces **actives**, nom normalisé.
+Se lit « parmi les immeubles où quelqu'un vend, combien de vendeurs
+simultanés ? ». Même périmètre en haut et en bas de la fraction.
+
+Corollaire : la normalisation du nom d'immeuble existait en double à l'identique
+(`yields.ts`, `cross-match.ts`) et pas du tout dans `tension.ts`, qui comparait
+donc des noms bruts et comptait deux immeubles pour « X » et « X, Bangkok ». Un
+seul exemplaire désormais : `lib/condo-name.ts`. **Divergence connue et assumée**
+avec `_norm_condo` de `normalize.py`, qui retire en plus les mots vides : les
+aligner déplacerait toutes les médianes déjà publiées et mérite sa propre
+décision datée.
+
+### 2. `reliableDelistingSince` n'était branché nulle part
+
+L'option avait été ajoutée et documentée, mais aucun appelant ne la passait :
+l'absorption — 35 % du poids — tournait toujours sur l'historique contaminé que
+l'entrée de l'après-midi décrit. Elle vaut désormais `DELISTING_FIX_DATE` **par
+défaut**, l'appelant devant passer `null` pour réintégrer explicitement
+l'historique douteux.
+
+Effet immédiat, assumé : zéro disparition postérieure au correctif (le dernier
+scan date du 24/07), donc le time-on-market est nul partout et l'absorption se
+replie sur l'âge des annonces actives. C'est moins riche, mais ce n'est pas faux
+— alors qu'un TOM de 6,9 jours identique à Vadhana, Khlong Toei et Sathon était,
+lui, purement et simplement la cadence de scan. Le TOM revient tout seul dès que
+les scraps post-correctif s'accumulent.
+
+### 3. Le momentum prix suivait la moyenne alors que la médiane était à côté
+
+`khet_snapshots` porte `avg_price_per_sqm` **et** `median_price_per_sqm`. Le
+momentum régressait sur la moyenne. Mesuré sur 2 121 instantanés de vente : la
+moyenne court **16 % au-dessus** de la médiane (137 750 contre 118 826 THB/m²),
+tirée par les penthouses. Sa pente suit donc les entrées et sorties de biens
+d'exception, pas le marché. Bascule sur la médiane, repli sur la moyenne quand
+elle manque.
+
+### 4. `median_price` contenait une moyenne en local, une médiane en ligne
+
+SQLite n'a pas d'agrégat de médiane : `record_cohort_snapshots` y écrivait
+`avg(price)` dans une colonne nommée `median_price`, quand Supabase y écrit
+`percentile_cont(0.5)`. **Même colonne, deux définitions selon le backend** — le
+genre d'écart qui fait douter d'une série temporelle un an plus tard sans qu'on
+sache pourquoi. Médiane calculée en Python désormais (demi-somme des deux valeurs
+centrales pour un effectif pair, exactement `percentile_cont`), vérifiée
+identique des deux côtés.
+
+Au passage : `median_price_per_sqm` était laissé à `NULL` dans les instantanés
+locaux, alors que c'est précisément la colonne que le momentum consomme. La série
+locale était muette sur sa composante la plus utile.
+
+### 5. L'arrondi de la tranche de surface divergeait entre Python et SQL
+
+`round()` de Python applique l'arrondi bancaire (`round(8.5) == 8`) ; ceux de
+Postgres et SQLite arrondissent au plus loin de zéro (`round(8.5) == 9`). Une
+surface de 42,5 m² recevait donc la tranche 40 si l'`unit_key` venait du scrape,
+et 45 s'il venait du backfill SQL. **Deux cohortes pour un même lot, et la
+republication qu'on cherche justement à rattraper passe au travers.** Relevé sur
+l'archive : 263 annonces pile sur une frontière de tranche, dont 124 réellement
+divergentes (0,4 % du stock).
+
+Convention SQL adoptée (`floor(x + 0.5)`), parce que c'est elle qui a produit les
+34 183 `unit_key` déjà en base. Aucun re-backfill nécessaire : aucun scrape n'a
+tourné depuis la migration, tous les `unit_key` viennent donc du SQL.
+
+### 6. Les « opportunités » étaient triées par la donnée la plus fausse
+
+La vue `opportunites` n'avait aucun garde-fou de plausibilité. Ses premiers
+résultats — ce qu'on regarde en premier — étaient des défauts de source :
+
+    NOBLE STATE 39        sale   35 m²     27 000 THB    -100 %
+    Ideo Q Sukhumvit 36   sale   46 m²     40 000 THB    -100 %
+    The Tempo Ruamrudee   rent   3 757 m² pour 1 BR       -99 %
+
+Les deux premières sont des **locations mal classées en vente** ; la troisième
+porte la surface du projet dans le champ du lot. Sur le stock actif : 28 annonces
+« vente » entre 5 k et 200 k THB, 60 surfaces > 500 m², 8 < 15 m². **Un écart de
+−100 % ne désigne jamais une affaire, il désigne une donnée fausse.**
+
+Aggravant : les bornes existaient déjà, en trois exemplaires qui ne se
+connaissaient pas (`deals.ts`, `for-sale/page.tsx`, et rien en SQL). Les 114
+annonces au-dessus de 100 M et les 68 en dessous de 800 k étaient donc exclues du
+tableau de vente mais comptaient toujours dans la carte, les rendements et la
+tension.
+
+**Retenu :** `lib/market-bounds.ts` côté TypeScript, vue `listings_sane` côté
+SQL, bornes commentées des deux côtés. On aurait pu ne les tenir qu'à un seul
+endroit en filtrant côté application, mais les vues SQL sont consommées
+directement (psql, exports, étude) : *une vue qui ne se protège pas elle-même
+finit toujours par être lue sans son filtre.*
+
+Résultat : 272 aberrations écartées (16 147 → 15 875 actives), le pire écart
+passe de −100 % à −74 %, et les 1 307 opportunités restantes sont toutes
+plausibles. Les extrêmes qui subsistent sont tous de niveau `rue` et de confiance
+`faible` — SV City Rama 3 à 35 000 THB/m² contre une médiane de rue à 116 000,
+ce sont deux classes d'immeubles différentes, pas une décote. La donnée est
+désormais correctement étiquetée plutôt que fausse ; **durcir le niveau `rue`
+reste une décision ouverte.**
+
+### 7. Le test de tension ne pouvait pas tourner
+
+Il importait `tension.compiled.mjs`, un artefact à produire à la main avec
+`esbuild` — absent du dépôt et absent des dépendances. Et il imprimait
+« OK / ÉCHEC » sans jamais sortir en code ≠ 0 : même réparé, il n'aurait rien
+gardé. Passé à `node:test` exécuté par `tsx` (déjà installé), avec `npm test`.
+Six cas, dont trois de non-régression sur les défauts ci-dessus : le
+dénominateur ignore les délistées, trois écritures d'un nom d'immeuble comptent
+pour un, le momentum ne bouge pas quand seule la moyenne monte.
+
+Application de la règle 4 de la doctrine de présentation au passage : la pression
+vendeuse pèse 25 % de l'indice et n'était affichée nulle part. Elle a désormais sa
+colonne (« Sellers/bldg »), quartier et rue, et les descriptifs des deux vues
+disent ce que l'indice calcule réellement.
+
+
+### Contrôle après coup : la pression vendeuse encode ENCORE un tiers de la taille du marché
+
+Classement recalculé sur la base réelle après correction (vente, 38 quartiers
+notés, 19 en « données insuffisantes ») :
+
+    tendus  : Wang Thonglang 65 (45 actives, 1,8 vend./imm.)
+              Khan Na Yao    64 (15 actives, 1,07)
+              Bueng Kum      61 (23 actives, 1,44)
+    mous    : Sathon         26 (428 actives, 7,64)
+              Thon Buri      27 (122 actives, 4,07)
+              Bang Kho Laem  28 (156 actives, 6,00)
+
+C'est cohérent et interprétable : Sathon, Vadhana et Pathum Wan, où sept vendeurs
+se font concurrence dans le même immeuble, ressortent comme les marchés les plus
+mous. Le renversement recherché a bien eu lieu.
+
+**Mais le haut du classement reste la périphérie**, et ce n'est pas un hasard :
+avec 15 annonces dispersées sur 14 immeubles, on obtient 1,07 vendeur par
+immeuble **par construction**. Corrélation mesurée entre `log(nombre d'actives)`
+et `annonces par immeuble`, sur les 38 quartiers publiés : **r = 0,55**, soit
+30 % de variance partagée.
+
+Autrement dit : l'ancienne « rareté » valait *littéralement* la taille du marché
+(r = −1 par construction) ; la pression vendeuse en garde environ un tiers. Le
+défaut est fortement atténué, **il n'est pas éliminé**. Le rétrécissement et le
+seuil de publication limitent les dégâts, pas la cause.
+
+Ce n'est corrigeable ni par une pondération ni par un seuil : il faut une mesure
+qui ne dépende pas du comptage d'annonces. C'est exactement ce que fait la série
+`cohort_snapshots` — la variation du stock d'une cohorte entre deux relevés,
+insensible au nombre d'immeubles comme au nombre d'annonces. Un seul instantané
+existe à ce jour (8 429 cohortes, le 2026-07-28) ; il en faut un second, donc un
+scrap, pour que la série commence à parler. **Tant que ce n'est pas fait, le
+score de tension se lit comme un indice relatif grossier, pas comme une mesure.**
+
+### Reste ouvert (mesuré, non traité aujourd'hui)
+
+- **1 399 annonces actives en doublon exact** (8,7 % du stock actif), sur les
+  mêmes immeuble/type/chambres/surface/prix. **1 326 sont intra-source** — le
+  même agent republie le même lot sur le même site, jusqu'à 28 fois. Ça gonfle
+  mécaniquement la pression vendeuse qu'on vient de réparer. `unit_key` existe :
+  il peut servir à ça.
+- **L'empreinte photo est inerte** : `photo_sizes` compte 0 ligne, `est_doublon()`
+  n'a aucun appelant, `repost_of` n'est jamais écrite. Et comme l'empreinte n'est
+  relevée que pour les nouvelles annonces, les 16 147 actives n'en auront jamais :
+  la détection ne pourra apparier que des annonces nées après aujourd'hui. Son
+  test est par ailleurs laxiste — il conclut au doublon dès 2 poids concordants
+  sur 8 quand les nombres de photos diffèrent, sans exiger de proportion.
+- **Payload** : `/for-sale` sérialise vers le navigateur les 8 063 annonces de
+  vente **plus** les 16 147 actives (`allListings`), sans cache, et rend jusqu'à
+  8 000 lignes de tableau sans virtualisation. Les choix « on charge tout »
+  datent de l'époque où la base comptait ~1 000 actives. Les données ne bougeant
+  que tous les 4 jours, la mise en cache est le gain le plus élevé pour le moins
+  d'effort.
+- **`year_built` : 0 sur 4 514 condos.** `backfill_condo_years.py` écrit dans
+  SQLite, pas sur le serveur. C'est la donnée la plus structurante pour une
+  stratégie à 5-10 ans, et elle est vide.
+- **Quota étranger : 197 annonces sur 16 147** (1,2 %). Critère éliminatoire pour
+  un acheteur étranger — sans lui, aucune liste n'est actionnable.
+- **Logique métier dupliquée TS ↔ Python** : `study/run_study.py` réimplémente
+  `median`, `winsorize`, `norm_condo` et le rendement within-condo déjà présents
+  dans `lib/yields.ts`. Deux implémentations, deux vérités possibles, et rien qui
+  signale la divergence.
