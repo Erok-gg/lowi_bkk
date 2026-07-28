@@ -167,7 +167,7 @@ export async function getTensionInputs(): Promise<TensionInput[]> {
   if (process.env.SUPABASE_DB_URL) {
     const db = await getPool();
     const { rows } = await db.query(
-      `select khet, street, deal_type, status, first_seen, delisted_at
+      `select khet, street, deal_type, status, first_seen, delisted_at, condo_name
        from listings where khet is not null`
     );
     return rows.map((r) => ({
@@ -177,6 +177,8 @@ export async function getTensionInputs(): Promise<TensionInput[]> {
       status: r.status as TensionInput["status"],
       firstSeen: r.first_seen ? iso(r.first_seen) : null,
       delistedAt: r.delisted_at ? iso(r.delisted_at) : null,
+      // Dénominateur de la pression vendeuse (annonces par immeuble)
+      condoName: (r.condo_name as string) ?? null,
     }));
   }
   const { DatabaseSync } = await import("node:sqlite");
@@ -188,7 +190,7 @@ export async function getTensionInputs(): Promise<TensionInput[]> {
   try {
     const rows = db
       .prepare(
-        `select khet, street, deal_type, status, first_seen, delisted_at
+        `select khet, street, deal_type, status, first_seen, delisted_at, condo_name
          from listings where khet is not null`
       )
       .all() as Record<string, unknown>[];
@@ -199,6 +201,8 @@ export async function getTensionInputs(): Promise<TensionInput[]> {
       status: r.status as TensionInput["status"],
       firstSeen: r.first_seen ? iso(r.first_seen) : null,
       delistedAt: r.delisted_at ? iso(r.delisted_at) : null,
+      // Dénominateur de la pression vendeuse (annonces par immeuble)
+      condoName: (r.condo_name as string) ?? null,
     }));
   } finally {
     db.close();

@@ -228,6 +228,53 @@ rendement réel est vraisemblablement supérieur à celui affiché.
 
 ---
 
+## 2026-07-28 · L'indice de tension mesurait la petitesse du marché
+
+**Symptôme signalé par Anthony.** La périphérie ressortait plus tendue que le
+centre, alors qu'elle compte très peu d'annonces.
+
+**Cause.** La composante « rareté » de `lib/tension.ts` valait littéralement
+`100 − rang(nombre d'annonces actives)` : **peu d'annonces = tendu, par
+construction**. Or 25 des 55 quartiers ont moins de 20 annonces actives et
+obtenaient donc mécaniquement le score maximal. Taling Chan affiche 2 annonces
+sur 6 immeubles : ce n'est pas de la tension, c'est l'absence de marché. Le
+compte brut confondait **taille** du marché et **tension**.
+
+**Aggravant.** L'absorption — 40 % du poids — repose sur le time-on-market,
+contaminé par le bug de délistage : 6,9 jours médians identiques à Vadhana,
+Khlong Toei et Sathon, soit la cadence de scan, pas le marché. Et Pathum Wan
+comptait 521 délistages pour 413 actives, signature des reposts. Autrement dit
+40 % de l'indice reposait sur une donnée fausse et 15 % sur une définition
+erronée.
+
+**Corrections.**
+1. « Rareté » remplacée par la **pression vendeuse** = actives / nombre
+   d'immeubles du quartier (dénominateur issu du référentiel `condos`).
+   Insensible à la taille du marché et interprétable : 9,6 annonces par immeuble
+   à Bangkok Yai, ce sont des vendeurs en concurrence, donc un marché mou.
+   Poids porté de 15 à 25.
+2. **Rétrécissement** des petits échantillons vers la médiane du marché, poids
+   `n/(n+20)` : à 5 annonces un quartier compte pour 20 % de son propre score.
+3. **Seuil de publication** à 10 annonces actives : en dessous, `tensionScore`
+   vaut `null`. Vingt-cinq quartiers passent en « données insuffisantes » — c'est
+   simplement honnête.
+4. Option `reliableDelistingSince` : ignore les disparitions antérieures au
+   correctif du délistage pour le calcul du time-on-market. À régler sur
+   `2026-07-28` une fois assez de données post-correctif accumulées.
+
+**Vérifié** (`lib/tension.test.mjs`) : un quartier à 3 annonces n'est plus publié ;
+un marché à 10 annonces par immeuble score plus bas qu'un marché à 3 ; la
+pression vendeuse est correctement calculée.
+
+**Limite assumée.** L'absorption reste dans l'indice avec 35 % du poids alors que
+son historique est contaminé. Elle se nettoiera d'elle-même à mesure que les
+délistages post-correctif s'accumulent ; d'ici là, le mécanisme de dégradation
+gracieuse redistribue son poids quand elle est indisponible. À terme, la série
+`cohort_snapshots` est le bon substitut : elle mesure l'écoulement du stock sans
+être trompée par les republications.
+
+---
+
 ## Doctrine de présentation (adoptée le 2026-07-28)
 
 Le produit sert deux usages aux exigences opposées : un outil de décision

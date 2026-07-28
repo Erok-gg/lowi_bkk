@@ -40,3 +40,4 @@ scraper/output/
 # archive locale Supabase (volumineuse, hors repo)
 archive/
 ops/logs/
+lib/tension.compiled.mjs
