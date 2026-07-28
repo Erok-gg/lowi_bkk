@@ -181,6 +181,15 @@ class FazwazAdapter(BaseAdapter):
         else:
             rec.setdefault("tenure", "freehold")
 
+        # année de livraison du PROJET (pas de l'annonce) : FazWaz l'écrit sous
+        # la forme "Completed (Mar 2024)" ou "completed in Mar 2024". Propriété
+        # de l'immeuble → alimente la table `condos` et vaut ensuite pour toutes
+        # ses annonces, passées et futures.
+        my = (re.search(r"Completed\s*\(\s*(?:\w+\s+)?(\d{4})\s*\)", html)
+              or re.search(r"completed\s+in\s+(?:\w+\s+)?(\d{4})", html, re.I))
+        if my and 1970 <= int(my.group(1)) <= 2040:
+            rec["year_built"] = int(my.group(1))
+
         # bathrooms : "<n> Bathroom"
         mb = re.search(r"(\d+)\s+Bathroom", html)
         if mb:

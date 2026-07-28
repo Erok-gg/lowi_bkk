@@ -30,6 +30,7 @@ from pipeline.fetch import Fetcher  # noqa: E402
 from pipeline.normalize import normalize  # noqa: E402
 from pipeline.geo_match import KhetMatcher  # noqa: E402
 from pipeline.images import process_images  # noqa: E402
+from pipeline import photo_sig  # noqa: E402
 from pipeline.fiche import write_fiche  # noqa: E402
 from pipeline.keepawake import prevent_sleep  # noqa: E402
 from store.sqlite_store import SqliteStore  # noqa: E402
@@ -226,6 +227,19 @@ def main() -> None:
                         if m2 and not norm.get("khet"):
                             norm["khet"] = m2
 
+            # Empreinte photo : poids des fichiers relevés par HEAD, sans les
+            # télécharger (une seule image, la couverture, est stockée). Deux
+            # annonces qui réutilisent les mêmes fichiers sont le même lot —
+            # c'est ce qui démasque une republication sous un nouvel identifiant.
+            # Relevée uniquement pour les NOUVELLES annonces : les autres ont
+            # déjà la leur, et c'est là que la question du repost se pose.
+            if existing is None and norm.get("image_urls"):
+                try:
+                    norm["photo_count"], norm["photo_sizes"] = photo_sig.relever(
+                        fetcher, norm["image_urls"])
+                except Exception as e:  # une empreinte manquante n'est pas bloquante
+                    print(f"  (empreinte photo ignorée : {e})")
+
             need_images = (not args.no_images) and bool(norm.get("image_urls")) and (
                 existing is None or not store.has_images(norm["id"])
             )
@@ -297,6 +311,14 @@ def main() -> None:
         store.record_khet_snapshots()
     except Exception as e:
         print(f"  (snapshot khet ignoré : {e})")
+    # Snapshot du stock par COHORTE : c'est cette série qui mesure la tension.
+    # Un repost ne la modifie pas (une annonce meurt, une autre naît dans la
+    # même cohorte) — la variation traduit donc une vraie absorption.
+    try:
+        n = store.record_cohort_snapshots()
+        print(f"  cohortes : {n} instantané(s) de stock")
+    except Exception as e:
+        print(f"  (snapshot cohortes ignoré : {e})")
 
     print("\n── Résumé ──")
     print(f"  scannées : {n_total} | nouvelles : {n_new} | changées : {n_changed} "

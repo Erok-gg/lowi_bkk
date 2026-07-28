@@ -17,6 +17,8 @@ _COLS = (
     "source", "source_url", "title", "deal_type", "quota", "tenure", "price",
     "currency", "area_sqm", "price_per_sqm", "bedrooms", "bathrooms", "condo_name",
     "address_raw", "khet", "khwaeng", "street", "lat", "lng",
+    # cohorte (robuste aux republications), âge du bâtiment, empreinte photo
+    "unit_key", "year_built", "photo_count", "photo_sizes",
 )
 
 
@@ -207,6 +209,29 @@ class SupabaseStore(BaseStore):
             "from listings where khet is not null group by khet order by active_count desc"
         ).fetchall()
         return [{"khet": r[0], "active_count": r[1], "avg_price_per_sqm": r[2]} for r in rows]
+
+    def record_cohort_snapshots(self) -> int:
+        """Stock actif par cohorte (immeuble × chambres × tranche × type).
+
+        Mesure la tension sans être trompée par les republications : un repost
+        fait mourir une annonce et en fait naître une autre dans la MÊME
+        cohorte, donc le stock ne bouge pas. C'est cette série qui remplace la
+        durée de vie des annonces, structurellement faussée par les reposts.
+        """
+        self._execute("""
+            insert into cohort_snapshots (unit_key, condo_name, khet, deal_type,
+                bedrooms, area_bucket, active_count, median_price, min_price, max_price)
+            select unit_key, max(condo_name), max(khet), max(deal_type), max(bedrooms),
+                   (round(avg(area_sqm) / 5) * 5)::int,
+                   count(*),
+                   percentile_cont(0.5) within group (order by price),
+                   min(price), max(price)
+            from listings
+            where status = 'active' and unit_key is not null
+            group by unit_key""")
+        return self._execute(
+            "select count(*) from cohort_snapshots where taken_at > now() - interval '1 minute'"
+        ).fetchone()[0]
 
     def record_khet_snapshots(self) -> int:
         """Un snapshot par (quartier, deal_type) → tension vente/location séparée."""

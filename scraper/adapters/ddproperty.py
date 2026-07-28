@@ -228,6 +228,13 @@ class DdpropertyAdapter(BaseAdapter):
                 price_node = _find_with_keys(data, {"amount", "priceType"})
                 if price_node:
                     rec["price"] = _price_num(price_node)
+            # année de livraison du PROJET (pas de l'annonce) : DDproperty
+            # l'expose sous listingDetail.project.metaByType.verified.
+            # C'est une propriété de l'immeuble → elle alimente la table `condos`
+            # et vaut ensuite pour toutes ses annonces, passées et futures.
+            year = _find_value(data, "completionYear")
+            if year and str(year).isdigit() and 1970 <= int(year) <= 2040:
+                rec["year_built"] = int(year)
 
         # facilities (piscine, gym…) via scan mots-clés sur le HTML
         rec["amenities"] = _scan_facilities(html)

@@ -99,6 +99,22 @@ class Fetcher:
             print(f"  échec GET {url} : {e}")
             return None
 
+    def head_size(self, url: str) -> int | None:
+        """Poids d'un fichier distant sans le télécharger (Content-Length).
+
+        Sert à empreinter les photos d'une annonce : un agent qui republie
+        réutilise les mêmes fichiers, donc les mêmes poids. Aucun octet
+        transféré, aucun stockage — contrainte du plan gratuit.
+        """
+        self._throttle(self.image_rate_limit)
+        try:
+            r = self._session.head(url, timeout=self.timeout, allow_redirects=True)
+            if r.status_code >= 400 or "content-length" not in r.headers:
+                return None
+            return int(r.headers["content-length"])
+        except (requests.RequestException, ValueError):
+            return None
+
     def get_bytes(self, url: str) -> bytes | None:
         # images CDN : débit plus rapide (hors site principal)
         self._throttle(self.image_rate_limit)

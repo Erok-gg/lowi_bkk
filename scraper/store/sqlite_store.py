@@ -65,6 +65,11 @@ class SqliteStore(BaseStore):
         self._migrate()
         self.db.commit()
 
+    @staticmethod
+    def _bind_value(v):
+        """SQLite n'a pas de type tableau : photo_sizes est stocké en JSON."""
+        return json.dumps(v, ensure_ascii=False) if isinstance(v, (list, tuple)) else v
+
     def _migrate(self) -> None:
         """Migrations légères pour les bases créées avant un ajout de colonne."""
         cols = {r["name"] for r in self.db.execute("pragma table_info(khet_snapshots)")}
@@ -76,6 +81,46 @@ class SqliteStore(BaseStore):
             self.db.execute("alter table listings add column missed_count integer not null default 0")
         if "first_missed_at" not in lcols:
             self.db.execute("alter table listings add column first_missed_at text")
+        # Cohorte, âge du bâtiment, empreinte photo (cf. unit_key_photo_sig.sql)
+        for col, typ in (("unit_key", "text"), ("year_built", "integer"),
+                         ("photo_count", "integer"), ("photo_sizes", "text"),
+                         ("repost_of", "text"), ("repost_reason", "text")):
+            if col not in lcols:
+                self.db.execute(f"alter table listings add column {col} {typ}")
+        self.db.execute("create index if not exists idx_listings_unit on listings (unit_key)")
+        self.db.execute("""create table if not exists cohort_snapshots (
+            id integer primary key autoincrement, taken_at text not null,
+            unit_key text not null, condo_name text, khet text, deal_type text,
+            bedrooms integer, area_bucket integer, active_count integer not null,
+            median_price real, min_price real, max_price real)""")
+        self.db.execute("create index if not exists idx_cohort_snap on cohort_snapshots (unit_key, taken_at)")
+
+    def record_cohort_snapshots(self) -> int:
+        """Stock actif par cohorte (immeuble × chambres × tranche × type).
+
+        Mesure la tension sans être trompée par les republications : un repost
+        fait mourir une annonce et en fait naître une autre dans la MÊME
+        cohorte, donc le stock ne bouge pas.
+        """
+        now = _now()
+        rows = self.db.execute("""
+            select unit_key, max(condo_name) condo_name, max(khet) khet,
+                   max(deal_type) deal_type, max(bedrooms) bedrooms,
+                   cast(round(avg(area_sqm)/5)*5 as int) area_bucket,
+                   count(*) n, avg(price) moy, min(price) mn, max(price) mx
+            from listings
+            where status='active' and unit_key is not null
+            group by unit_key""").fetchall()
+        self.db.executemany(
+            "insert into cohort_snapshots (taken_at, unit_key, condo_name, khet,"
+            " deal_type, bedrooms, area_bucket, active_count, median_price,"
+            " min_price, max_price) values (?,?,?,?,?,?,?,?,?,?,?)",
+            [(now, r["unit_key"], r["condo_name"], r["khet"], r["deal_type"],
+              r["bedrooms"], r["area_bucket"], r["n"], r["moy"], r["mn"], r["mx"])
+             for r in rows],
+        )
+        self.db.commit()
+        return len(rows)
 
     def get_listing(self, listing_id: str) -> dict | None:
         row = self.db.execute("select * from listings where id=?", (listing_id,)).fetchone()
@@ -103,13 +148,15 @@ class SqliteStore(BaseStore):
             "source", "source_url", "title", "deal_type", "quota", "tenure", "price",
             "currency", "area_sqm", "price_per_sqm", "bedrooms", "bathrooms", "condo_name",
             "address_raw", "khet", "khwaeng", "street", "lat", "lng",
+            # cohorte (robuste aux republications), âge du bâtiment, empreinte photo
+            "unit_key", "year_built", "photo_count", "photo_sizes",
         )
 
         if existing is None:
             self.db.execute(
                 f"insert into listings (id,{','.join(cols)},status,first_seen,last_seen,raw_data) "
                 f"values (?,{','.join('?' for _ in cols)},'active',?,?,?)",
-                (norm["id"], *[norm.get(c) for c in cols], now, now,
+                (norm["id"], *[self._bind_value(norm.get(c)) for c in cols], now, now,
                  json.dumps(norm.get("raw_data", {}), ensure_ascii=False)),
             )
             if norm.get("price") is not None:
@@ -125,7 +172,7 @@ class SqliteStore(BaseStore):
             f"update listings set {','.join(c+'=?' for c in cols)},"
             f"status='active',last_seen=?,raw_data=?,"
             f"missed_count=0,first_missed_at=null where id=?",
-            (*[norm.get(c) for c in cols], now,
+            (*[self._bind_value(norm.get(c)) for c in cols], now,
              json.dumps(norm.get("raw_data", {}), ensure_ascii=False), norm["id"]),
         )
         status = "unchanged"
