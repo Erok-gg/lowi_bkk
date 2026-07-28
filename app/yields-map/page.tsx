@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getListings } from "@/lib/listings-db";
 import YieldsMapShell, { type YListing } from "@/components/YieldsMapShell";
 import { isAuthed } from "@/lib/auth";
+import { keepPlausible } from "@/lib/market-bounds";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,8 +10,10 @@ export const dynamic = "force-dynamic";
 export default async function YieldsMapPage() {
   if (!(await isAuthed())) redirect("/login?next=/yields-map");
   // payload léger : seuls les champs utiles à la choroplèthe + filtres
-  // (id + condoName requis par la double médiane par condo, lib/yields.ts)
-  const listings: YListing[] = (await getListings()).map((l) => ({
+  // (id + condoName requis par la double médiane par condo, lib/yields.ts).
+  // Le filtre de plausibilité s'applique AVANT la projection : après, il ne
+  // resterait ni `price` ni `areaSqm` pour l'évaluer.
+  const listings: YListing[] = keepPlausible(await getListings()).map((l) => ({
     id: l.id,
     khet: l.khet,
     dealType: l.dealType,

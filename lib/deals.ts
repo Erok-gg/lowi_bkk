@@ -7,18 +7,16 @@
  */
 import type { Listing } from "@/lib/types";
 import { medianAvg } from "@/lib/yields";
+import { isPlausible } from "@/lib/market-bounds";
 
 export type BedCat = "1" | "2" | "3" | "4+";
 export const BED_CATS: BedCat[] = ["1", "2", "3", "4+"];
 
 const BASELINE_N = 10;
-// Bornes de prix de vente plausibles (mêmes que la page For sale) : écarte les
-// aberrations (loyer mal classé en vente, prix erronés) qui faussent les décotes.
-const SALE_MIN = 800_000;
-const SALE_MAX = 100_000_000;
 
-const saleInRange = (l: Listing) =>
-  l.dealType === "sale" && !!l.price && l.price >= SALE_MIN && l.price <= SALE_MAX;
+// Bornes de plausibilité : lib/market-bounds.ts, source unique partagée avec
+// les pages, la tension et la vue SQL `listings_sane`.
+const saleInRange = (l: Listing) => l.dealType === "sale" && isPlausible(l);
 
 /** Tranche de chambres : 1, 2, 3, ou 4 (regroupe 4+). null si inconnu. */
 function bucket(beds: number | null): number | null {
@@ -54,7 +52,9 @@ function baselineByKey(listings: Listing[], deal: "sale" | "rent"): Map<string, 
   const groups = new Map<string, number[]>();
   for (const l of listings) {
     if (l.dealType !== deal || l.pricePerSqm == null || l.bedrooms == null) continue;
-    if (deal === "sale" && !saleInRange(l)) continue; // baseline vente assainie
+    // Les DEUX baselines sont assainies : une location à 300 THB/mois faussait
+    // le rendement estimé aussi sûrement qu'un prix de vente aberrant.
+    if (!isPlausible(l)) continue;
     const k = keyOf(l.khet, l.bedrooms);
     (groups.get(k) ?? groups.set(k, []).get(k)!).push(l.pricePerSqm);
   }
