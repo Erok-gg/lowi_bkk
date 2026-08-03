@@ -8,6 +8,7 @@ forcé (requests ne décode que gzip/deflate par défaut).
 from __future__ import annotations
 
 import random
+import re
 import time
 import urllib.robotparser
 from urllib.parse import urljoin
@@ -89,6 +90,16 @@ class Fetcher:
         if self.respect_robots and not self.allowed(url):
             print(f"  robots.txt interdit : {url}")
             return None
+        # Trace de PAGE DE LISTE. Sans elle, impossible de savoir ou en est un
+        # scan : les logs ne montraient que `max_pages=150` au demarrage, puis
+        # des milliers de lignes d'annonces sans aucun reperage.
+        m = re.search(r"[?&](?:page|p)=(\d+)", url)
+        if m:
+            print(f"  ── page {m.group(1)}/{getattr(self, 'max_pages', '?')} "
+                  f"({url.split('?')[0].rsplit('/', 1)[-1] or 'liste'})", flush=True)
+        elif re.search(r"/page-(\d+)", url):
+            n = re.search(r"/page-(\d+)", url).group(1)
+            print(f"  ── page {n}/{getattr(self, 'max_pages', '?')}", flush=True)
         self._throttle(self.rate_limit, allow_long_pause=True)
         headers = {"Referer": referer, "Sec-Fetch-Site": "same-origin"} if referer else {}
         try:

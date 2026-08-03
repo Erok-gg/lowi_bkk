@@ -5,3 +5,7 @@ Pillow>=10.2
 # partie online (Supabase via Postgres direct) :
 psycopg[binary]>=3.1
 openpyxl>=3.1  # exports xlsx de l'etude (study/run_study.py)
+# Captures des cartes (ops/captures-carte.py) : attend l evenement idle
+# de MapLibre avant de declencher. Utilise le Chrome du systeme (channel=chrome),
+# donc aucun navigateur a telecharger.
+playwright>=1.62

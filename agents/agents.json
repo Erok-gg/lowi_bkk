@@ -1,0 +1,305 @@
+{
+  "_comment": "Registre des 12 agents. C'est ICI que vivent les cadences — elles étaient auparavant figées dans ops/scrap-*.ps1 et dans trois tâches Windows qui n'ont jamais tourné. L'orchestrateur lit ce fichier, interroge le ledger, et décide seul de ce qui est dû. Ajouter un agent = ajouter une entrée ; les agents T0 n'ont pas de code Python, seulement une commande.",
+  "version": 1,
+  "tiers": {
+    "T0": "Déterministe. Aucun LLM. Il leur manque l'orchestration et une trace, pas de l'intelligence.",
+    "T1": "Local qwen3:8b, EN MODE EXTRACTION uniquement (le modèle constate, le code décide).",
+    "T2": "Claude, via la file agents/queue/. Rare, enjeu fort, besoin de l'accès dépôt."
+  },
+  "lanes": {
+    "sale": "Journée VENTE — tous les 4 jours",
+    "rent": "Journée LOCATION — tous les 4 jours, décalée de 2 jours",
+    "weekly": "Hebdomadaire — archivage, purge, audit"
+  },
+  "agents": [
+    {
+      "name": "extract-fazwaz",
+      "famille": "Extraction",
+      "tier": "T0",
+      "lanes": [
+        "sale",
+        "rent"
+      ],
+      "every_days": 4,
+      "cmd": [
+        "@py",
+        "scraper/run.py",
+        "--source",
+        "fazwaz",
+        "--deal-type",
+        "{deal}",
+        "--full",
+        "--store",
+        "supabase"
+      ],
+      "then": [
+        [
+          "@py",
+          "scraper/run.py",
+          "--source",
+          "fazwaz",
+          "--config",
+          "config/targets/fazwaz-corridors.json",
+          "--store",
+          "supabase"
+        ]
+      ],
+      "_then_pourquoi": "La passe ciblée SUIT le scan global : la fenêtre 150 pages du --full délisterait à tort les districts ciblés, la passe ciblée les réactive.",
+      "bandes": {
+        "nouvelles": [
+          50,
+          2000
+        ],
+        "traces_erreur": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "extract-ddproperty",
+      "famille": "Extraction",
+      "tier": "T0",
+      "lanes": [
+        "sale",
+        "rent"
+      ],
+      "every_days": 4,
+      "cmd": [
+        "@py",
+        "scraper/run.py",
+        "--source",
+        "ddproperty",
+        "--deal-type",
+        "{deal}",
+        "--full",
+        "--geocode",
+        "--store",
+        "supabase"
+      ],
+      "then": [
+        [
+          "@py",
+          "scraper/run.py",
+          "--source",
+          "ddproperty",
+          "--config",
+          "config/targets/ddproperty-corridors.json",
+          "--store",
+          "supabase"
+        ]
+      ],
+      "bandes": {
+        "nouvelles": [
+          30,
+          1500
+        ],
+        "traces_erreur": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "extract-propertyscout",
+      "famille": "Extraction",
+      "tier": "T0",
+      "lanes": [
+        "rent"
+      ],
+      "every_days": 4,
+      "cmd": [
+        "@py",
+        "scraper/run.py",
+        "--source",
+        "propertyscout",
+        "--full",
+        "--store",
+        "supabase"
+      ],
+      "bandes": {
+        "nouvelles": [
+          10,
+          600
+        ],
+        "traces_erreur": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "extract-nestopa",
+      "famille": "Extraction",
+      "tier": "T0",
+      "lanes": [
+        "rent"
+      ],
+      "every_days": 4,
+      "cmd": [
+        "@py",
+        "scraper/run.py",
+        "--source",
+        "nestopa",
+        "--full",
+        "--geocode",
+        "--store",
+        "supabase"
+      ],
+      "bandes": {
+        "nouvelles": [
+          5,
+          400
+        ],
+        "traces_erreur": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "watch-health",
+      "famille": "Surveillance",
+      "tier": "T1",
+      "lanes": [
+        "sale",
+        "rent"
+      ],
+      "every_days": 1,
+      "module": "agents.bots.watch_health",
+      "after": [
+        "extract-fazwaz",
+        "extract-ddproperty",
+        "extract-propertyscout",
+        "extract-nestopa"
+      ]
+    },
+    {
+      "name": "watch-sources",
+      "famille": "Surveillance",
+      "tier": "T1",
+      "lanes": [
+        "weekly"
+      ],
+      "every_days": 14,
+      "module": "agents.bots.watch_sources"
+    },
+    {
+      "name": "analyze-sale",
+      "famille": "Analyse",
+      "tier": "T1",
+      "lanes": [
+        "sale"
+      ],
+      "every_days": 4,
+      "module": "agents.bots.analyze_sale",
+      "after": [
+        "extract-fazwaz",
+        "extract-ddproperty"
+      ],
+      "needs_supabase": true,
+      "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté."
+    },
+    {
+      "name": "analyze-rent",
+      "famille": "Analyse",
+      "tier": "T1",
+      "lanes": [
+        "rent"
+      ],
+      "every_days": 4,
+      "module": "agents.bots.analyze_rent",
+      "after": [
+        "extract-fazwaz",
+        "extract-ddproperty",
+        "extract-propertyscout",
+        "extract-nestopa"
+      ],
+      "needs_supabase": true,
+      "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté."
+    },
+    {
+      "name": "organize",
+      "famille": "Data organizing",
+      "tier": "T1",
+      "lanes": [
+        "sale",
+        "rent"
+      ],
+      "every_days": 4,
+      "module": "agents.bots.organize",
+      "after": [
+        "extract-ddproperty"
+      ],
+      "needs_supabase": true,
+      "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté."
+    },
+    {
+      "name": "report",
+      "famille": "Data reporting",
+      "tier": "T0",
+      "lanes": [
+        "rent"
+      ],
+      "every_days": 4,
+      "cmd": [
+        "@py",
+        "study/run_study.py"
+      ],
+      "_pourquoi_rent": "L'étude tourne en fin de journée LOCATION : les deux deal_types sont alors frais de moins de 4 jours.",
+      "escalate_after": {
+        "kind": "narratif_mensuel",
+        "severity": "low",
+        "day_of_month": 1
+      },
+      "bandes": {
+        "traces_erreur": [
+          0,
+          0
+        ]
+      },
+      "needs_supabase": true,
+      "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté."
+    },
+    {
+      "name": "storage",
+      "famille": "Security & storage",
+      "tier": "T0",
+      "lanes": [
+        "weekly"
+      ],
+      "every_days": 7,
+      "cmd": [
+        "@py",
+        "ops/sync_supabase_local.py",
+        "--prune"
+      ],
+      "_garde_fou": "L'orchestrateur refuse de lancer cet agent si le dernier run d'un extracteur a échoué : jamais de purge derrière un cycle douteux.",
+      "requires_healthy": [
+        "extract-fazwaz",
+        "extract-ddproperty"
+      ],
+      "bandes": {
+        "traces_erreur": [
+          0,
+          0
+        ]
+      },
+      "needs_supabase": true,
+      "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté."
+    },
+    {
+      "name": "overseer",
+      "famille": "Overseeing",
+      "tier": "T1",
+      "lanes": [
+        "sale",
+        "rent",
+        "weekly"
+      ],
+      "every_days": 1,
+      "module": "agents.bots.overseer",
+      "_dernier": "Toujours exécuté en dernier : il relit le cycle entier."
+    }
+  ]
+}

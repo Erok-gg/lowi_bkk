@@ -3,8 +3,29 @@
 """
 from __future__ import annotations
 
+import json
 import math
 from datetime import datetime, timezone
+
+from pipeline import details
+
+# Les 12 champs extraits du descriptif. Ordre fige : il sert de reference aux
+# stores (colonnes) et au tooltip.
+CHAMPS_DETAIL = tuple(details.CHAMPS)
+
+
+def _details(description: str | None, area_sqm: float | None = None) -> dict:
+    """Extrait les details, avec les memes cles quelle que soit la source.
+
+    Toujours les 12 cles, meme vides : un store ne doit pas avoir a deviner
+    quelles colonnes existent selon l'annonce. Les listes partent en JSON, seul
+    format commun a SQLite (TEXT) et Postgres (jsonb)."""
+    brut = details.extraire(description, area_sqm) if description else {}
+    out = {}
+    for cle in CHAMPS_DETAIL:
+        v = brut.get(cle)
+        out[f"d_{cle}"] = json.dumps(v, ensure_ascii=False) if isinstance(v, list) else v
+    return out
 
 
 def _num(v):
@@ -102,6 +123,19 @@ def normalize(rec: dict) -> dict:
         "bedrooms": rec.get("bedrooms"),
         "bathrooms": rec.get("bathrooms"),
         "condo_name": rec.get("condo_name"),
+        # Descriptif libre — la seule matière textuelle de la base. Capturé
+        # depuis le 2026-07-31 ; NON rétroactif (les annonces antérieures
+        # resteront à NULL sans re-scrape complet).
+        "description": rec.get("description"),
+        # TEXTE INTEGRAL de la page, non tronque : c'est la MATIERE PREMIERE.
+        # `description` en est un produit fini (tronque a 4000, nettoye, cadre) ;
+        # `page_text` permet de REJOUER une extraction quand un motif se revele
+        # faux, sans re-scraper. Trois motifs ont du etre corriges le 2026-08-02.
+        "page_text": rec.get("page_text"),
+        # Détails extraits du descriptif (cf. pipeline/details.py). Branché ICI
+        # plutôt que dans chaque adaptateur : les 4 sources passent par
+        # normalize(), donc un seul point d'entrée et un seul comportement.
+        **_details(rec.get("description"), area),
         "address_raw": rec.get("full_address") or rec.get("district"),
         "khet": rec.get("district"),  # affiné par geo_match si lat/lng
         "khwaeng": rec.get("khwaeng"),
@@ -134,6 +168,12 @@ def normalize(rec: dict) -> dict:
         "posted_at": rec.get("posted_at"),
         # Republication signalée par le site lui-même.
         "is_auto_repost": rec.get("is_auto_repost"),
+        # VENDU / LOUÉ dit par la source, AVANT même la disparition de l'annonce.
+        # C'est le seul signal de TRANSACTION directement observable : le
+        # délistage, lui, confond vente, retrait et artefact de fenêtre de scan.
+        # On l'ENREGISTRE sans toucher à `status` — requalifier une annonce en
+        # vendue est une décision d'analyse, pas un effet de bord du scrap.
+        "market_status": rec.get("market_status"),
     }
     rec_out["unit_key"] = unit_key(rec_out)
     return rec_out

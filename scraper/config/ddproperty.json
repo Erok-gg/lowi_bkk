@@ -12,11 +12,11 @@
   "fetch_detail": true,
   "searches": [
     {
-      "path": "/en/property-for-sale?freetext=Bangkok&property_type_code%5B%5D=CONDO&listing_type=sale",
+      "path": "/en/property-for-sale?freetext=Bangkok&property_type_code%5B%5D=CONDO&listing_type=sale&sort=date&order=desc",
       "deal_type": "sale"
     },
     {
-      "path": "/en/property-for-rent?freetext=Bangkok&property_type_code%5B%5D=CONDO&listing_type=rent",
+      "path": "/en/property-for-rent?freetext=Bangkok&property_type_code%5B%5D=CONDO&listing_type=rent&sort=date&order=desc",
       "deal_type": "rent"
     }
   ],
@@ -26,5 +26,6 @@
     "format": "webp",
     "quality": 80,
     "max_per_listing": 1
-  }
+  },
+  "_tri": "Tri par fraicheur VERIFIE le 2026-07-31 : sort=date&order=desc remonte des annonces du 2026-08-01, contre 2026-07-27 sans tri. Attention, 'sort=new' donne des annonces PLUS ANCIENNES (2026-07-13) — piege. Avec max_pages=150, le tri decide QUELLES annonces entrent dans la fenetre."
 }

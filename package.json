@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "geo:khet": "tsx scripts/fetch-khet-geojson.ts",
     "geo:pois": "tsx scripts/fetch-pois.ts",
-    "geo:corridors": "tsx scripts/fetch-corridors.ts"
+    "geo:corridors": "tsx scripts/fetch-corridors.ts",
+    "dev:test": "set LOWI_SQLITE_DB=tests-scrap/2026-08-01-COMPLET/bangkok.db&& next dev"
   },
   "dependencies": {
     "@turf/boolean-point-in-polygon": "^7.1.0",

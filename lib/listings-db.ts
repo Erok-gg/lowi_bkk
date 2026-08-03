@@ -16,8 +16,68 @@ const num = (v: unknown): number | null =>
 const iso = (v: unknown): string =>
   v == null ? "" : v instanceof Date ? v.toISOString() : String(v);
 
+/** Colonnes de détails lues dans le descriptif. Le préfixe `d_` les distingue
+ *  des champs fournis par la source elle-même. */
+const COLONNES_DETAIL = [
+  "d_etage", "d_cam_fee_thb", "d_meuble", "d_vues", "d_vues_n", "d_batiment",
+  "d_elec_kwh", "d_eau_m3", "d_tarif_regime", "d_quota", "d_proprietaire", "d_animaux_ok",
+  "d_publie_par", "d_annee_construction", "d_livre", "d_promoteur", "d_duree_min_mois",
+  "d_landmark", "d_unite_ref",
+] as const;
+
+/** Les listes sont stockées en TEXT (SQLite) ou jsonb (Postgres). */
+function parseListe(v: unknown): unknown {
+  if (v == null) return null;
+  if (typeof v !== "string") return v;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return null;
+  }
+}
+
+function rowToDetails(r: Record<string, unknown>): Listing["details"] {
+  if (!("d_etage" in r)) return undefined; // colonnes absentes de cette base
+  const d = {
+    floor: num(r.d_etage),
+    camFeeThb: num(r.d_cam_fee_thb),
+    furnished: (r.d_meuble as string) ?? null,
+    views: parseListe(r.d_vues) as string[] | null,
+    viewCount: num(r.d_vues_n),
+    building: (r.d_batiment as string) ?? null,
+    elecThbKwh: num(r.d_elec_kwh),
+    waterThbM3: num(r.d_eau_m3),
+    utilityRate: (r.d_tarif_regime as "government" | "private") ?? null,
+    quota: (r.d_quota as string) ?? null,
+    ownerNationality: (r.d_proprietaire as string) ?? null,
+    petsAllowed: r.d_animaux_ok == null ? null : Boolean(r.d_animaux_ok),
+    listedBy: (r.d_publie_par as string) ?? null,
+    yearBuilt: num(r.d_annee_construction),
+    delivered: r.d_livre == null ? null : Boolean(r.d_livre),
+    developer: (r.d_promoteur as string) ?? null,
+    minRentalMonths: num(r.d_duree_min_mois),
+    landmark: parseListe(r.d_landmark) as [string, number] | null,
+    unitRef: (r.d_unite_ref as string) ?? null,
+  };
+  // Tout vide = pas de détails du tout : évite d'afficher une section morte.
+  return Object.values(d).some((v) => v != null && v !== "") ? d : undefined;
+}
+
+/**
+ * Quelle source de donnees ?
+ *
+ * LOWI_SQLITE_DB force la lecture d'un fichier SQLite precis et prime sur
+ * Supabase. C'est ce qui permet de previsualiser un scrap ISOLE sans toucher a
+ * la production — et sans dependre d'astuces de shell : sous cmd, `set VAR=`
+ * SUPPRIME la variable, Next recharge alors .env.local et repart sur Supabase.
+ */
+function useSupabase(): boolean {
+  return !process.env.LOWI_SQLITE_DB && Boolean(process.env.SUPABASE_DB_URL);
+}
+
 function rowToListing(r: Record<string, unknown>, images: Listing["images"]): Listing {
   return {
+    details: rowToDetails(r),
     id: r.id as string,
     source: r.source as string,
     sourceUrl: r.source_url as string,
@@ -63,10 +123,19 @@ async function getPool(): Promise<PgPool> {
 
 async function fromSupabase(): Promise<Listing[]> {
   const db = await getPool();
+  // Les colonnes de détails ne sont pas encore appliquées en production
+  // (supabase/migrations/details_descriptif.sql). On les sélectionne seulement
+  // si elles existent, pour que la page fonctionne avant ET après la migration.
+  const { rows: cols } = await db.query(
+    `select column_name from information_schema.columns
+     where table_name = 'listings' and column_name = any($1)`,
+    [COLONNES_DETAIL as unknown as string[]]
+  );
+  const extra = cols.length ? ", " + cols.map((c) => c.column_name).join(", ") : "";
   const { rows } = await db.query(
     `select id, source, source_url, title, deal_type, quota, tenure, price, currency,
             area_sqm, price_per_sqm, bedrooms, bathrooms, condo_name,
-            address_raw, khet, khwaeng, street, lat, lng, status, first_seen, last_seen
+            address_raw, khet, khwaeng, street, lat, lng, status, first_seen, last_seen${extra}
      from listings where status = 'active'`
   );
   const imgs = await db.query(
@@ -91,15 +160,24 @@ async function fromSqlite(): Promise<Listing[]> {
   const { DatabaseSync } = await import("node:sqlite");
   const { join } = await import("node:path");
   const { existsSync } = await import("node:fs");
-  const dbPath = join(process.cwd(), "scraper", "output", "bangkok.db");
+  // LOWI_SQLITE_DB permet de pointer sur une base de TEST sans toucher a la
+  // production : c'est ce qui rend previsualisable un scrap isole.
+  const dbPath =
+    process.env.LOWI_SQLITE_DB ?? join(process.cwd(), "scraper", "output", "bangkok.db");
   if (!existsSync(dbPath)) return [];
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
+    const presentes = new Set(
+      (db.prepare("pragma table_info(listings)").all() as Record<string, unknown>[])
+        .map((c) => c.name as string)
+    );
+    const dispo = COLONNES_DETAIL.filter((c) => presentes.has(c));
+    const extra = dispo.length ? ", " + dispo.join(", ") : "";
     const rows = db
       .prepare(
         `select id, source, source_url, title, deal_type, quota, tenure, price, currency,
                 area_sqm, price_per_sqm, bedrooms, bathrooms, condo_name,
-                address_raw, khet, khwaeng, street, lat, lng, status, first_seen, last_seen
+                address_raw, khet, khwaeng, street, lat, lng, status, first_seen, last_seen${extra}
          from listings where status = 'active'`
       )
       .all() as Record<string, unknown>[];
@@ -128,7 +206,7 @@ async function fromSqlite(): Promise<Listing[]> {
 export const getListings = memoTTL(
   "listings",
   async (): Promise<Listing[]> =>
-    process.env.SUPABASE_DB_URL ? fromSupabase() : fromSqlite()
+    useSupabase() ? fromSupabase() : fromSqlite()
 );
 
 /**
@@ -137,7 +215,7 @@ export const getListings = memoTTL(
  */
 export const getOriginalPrices = memoTTL("original-prices", async (): Promise<Map<string, number>> => {
   const out = new Map<string, number>();
-  if (process.env.SUPABASE_DB_URL) {
+  if (useSupabase()) {
     const db = await getPool();
     const { rows } = await db.query(
       "select listing_id, max(price) as orig from price_history group by listing_id"
@@ -172,7 +250,7 @@ const dealOf = (v: unknown): TensionInput["dealType"] =>
  * (inactive/sold), pour calculer âge et time-on-market. Payload léger.
  */
 export const getTensionInputs = memoTTL("tension-inputs", async (): Promise<TensionInput[]> => {
-  if (process.env.SUPABASE_DB_URL) {
+  if (useSupabase()) {
     const db = await getPool();
     const { rows } = await db.query(
       `select khet, street, deal_type, status, first_seen, delisted_at, condo_name
@@ -237,7 +315,7 @@ export const getKhetSnapshots = memoTTL("khet-snapshots", async (): Promise<Khet
     "select taken_at, khet, deal_type, active_count, avg_price_per_sqm," +
     " median_price_per_sqm from khet_snapshots order by taken_at";
 
-  if (process.env.SUPABASE_DB_URL) {
+  if (useSupabase()) {
     try {
       const db = await getPool();
       const { rows } = await db.query(SQL);

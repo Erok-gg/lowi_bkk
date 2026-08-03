@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import psycopg
 from psycopg.types.json import Json
 
+from pipeline import details
 from store.base import BaseStore
 
 _COLS = (
@@ -21,7 +22,43 @@ _COLS = (
     "unit_key", "year_built", "photo_count", "photo_sizes",
     # provenance : qui publie, quand, et republication signalée par la source
     "agent_id", "agency_id", "posted_at", "is_auto_repost",
+    # vendu/loue dit par la source, avant disparition (cf. fazwaz.statut_marche)
+    "market_status",
+    # descriptif libre (capturé depuis le 2026-07-31, non rétroactif) et TEXTE
+    # INTÉGRAL de la page, compressé — la matière première qui permet de REJOUER
+    # une extraction quand un motif se révèle faux, sans re-scraper.
+    "description", "page_text",
+    # détails extraits du descriptif — dérivés de details.COLONNES, jamais
+    # recopiés : trois listes tenues à la main, c'est trois façons de diverger.
+    *(c for c, _ in details.COLONNES),
 )
+
+
+#: Colonnes BOOLÉENNES côté Postgres. SQLite n'a pas de type booléen et y range
+#: des entiers 0/1 : les transférer tels quels casse l'écriture en ligne
+#: (« column d_animaux_ok is of type boolean but expression is of type smallint »).
+#: C'est la même famille de divergence entre les deux stores que `median_price`
+#: (moyenne en SQLite, médiane en Postgres) corrigée le 2026-07-28.
+#: La conversion est faite ICI plutôt que chez l'appelant : tout chemin d'écriture
+#: en profite, y compris `ops/remonter-local.py`.
+_BOOLEENNES = ("is_auto_repost", "d_animaux_ok", "d_livre")
+
+
+def _coerce(col: str, v):
+    if v is None or col not in _BOOLEENNES:
+        return v
+    return bool(v)
+
+
+#: Jours pendant lesquels une annonce doit rester marquee vendue avant de
+#: quitter le stock actif. Decide le 2026-08-03.
+#:
+#: Le delai n'est pas de la prudence de facade : un badge « Sold » peut etre
+#: transitoire — vente qui capote, erreur d'agent. Sept jours de persistance en
+#: font une preuve. Meme principe que `missed_count`, ou une annonce doit
+#: manquer a plusieurs scans CONSECUTIFS avant d'etre delistee : on exige de la
+#: DUREE, jamais une observation isolee.
+JOURS_AVANT_SORTIE_VENDU = 7
 
 
 def _now() -> str:
@@ -74,14 +111,14 @@ class SupabaseStore(BaseStore):
         # Revue = série d'absences interrompue : on remet le compteur à zéro.
         self._execute(
             "update listings set status='active', last_seen=%s,"
-            " missed_count=0, first_missed_at=null where id=%s",
+            " missed_count=0, first_missed_at=null,delisted_at=null where id=%s",
             (_now(), listing_id),
         )
 
     def upsert_listing(self, norm: dict, images: list[dict] | None) -> tuple[str, float | None]:
         existing = self.get_listing(norm["id"])
         now = _now()
-        vals = [norm.get(c) for c in _COLS]
+        vals = [_coerce(c, norm.get(c)) for c in _COLS]
 
         if existing is None:
             placeholders = ",".join(["%s"] * (len(_COLS) + 5))  # id + cols + status + 2 dates + raw_data
@@ -92,16 +129,21 @@ class SupabaseStore(BaseStore):
             )
             if norm.get("price") is not None:
                 self._add_price(norm["id"], norm["price"], now)
+            if norm.get("posted_at"):
+                self._add_posted_at(norm["id"], norm["posted_at"], now)
             self._set_images(norm["id"], images)
             self._set_amenities(norm["id"], norm.get("amenities", []))
             return "new", None
 
         old_price = existing["price"]
         new_price = norm.get("price")
+        # AVANT l'écrasement — cf. SqliteStore._track_posted_at pour le pourquoi.
+        self._track_posted_at(existing, norm.get("posted_at"), now)
+        self._suivre_statut_marche(existing, norm.get("market_status"), now)
         set_clause = ",".join(f"{c}=%s" for c in _COLS)
         self._execute(
             f"update listings set {set_clause},status='active',last_seen=%s,raw_data=%s,"
-            f"missed_count=0,first_missed_at=null where id=%s",
+            f"missed_count=0,first_missed_at=null,delisted_at=null where id=%s",
             (*vals, now, Json(norm.get("raw_data", {})), norm["id"]),
         )
         status = "unchanged"
@@ -117,6 +159,29 @@ class SupabaseStore(BaseStore):
             "insert into price_history (listing_id,price,observed_at) values (%s,%s,%s)",
             (listing_id, price, when),
         )
+
+    def _add_posted_at(self, listing_id: str, valeur, when: str) -> None:
+        self._execute(
+            "insert into posted_at_history (listing_id,posted_at,observed_at) "
+            "values (%s,%s,%s)", (listing_id, valeur, when),
+        )
+
+    def _track_posted_at(self, existing, nouveau, when: str) -> None:
+        """Historise `posted_at` quand il CHANGE — cf. SqliteStore._track_posted_at.
+
+        Tant que `posted_at_history` est vide, `posted_at` NE remplace PAS
+        `first_seen` dans le time-on-market : mesuré à -16 jours d'écart médian,
+        il se comporte comme une date de remontée, pas de publication.
+        """
+        if not nouveau:
+            return
+        try:
+            ancien = existing["posted_at"]
+        except (KeyError, IndexError):
+            return
+        if ancien and str(ancien) == str(nouveau):
+            return
+        self._add_posted_at(existing["id"], nouveau, when)
 
     def _set_images(self, listing_id: str, images: list[dict] | None) -> None:
         if images is None:
@@ -143,6 +208,43 @@ class SupabaseStore(BaseStore):
             q += " and deal_type=%s"
             params.append(deal_type)
         return self._execute(q, params).fetchone()[0]
+
+    def _suivre_statut_marche(self, existant, nouveau, maintenant) -> None:
+        """Date la PREMIERE apparition de la valeur courante de market_status.
+
+        Ne bouge que sur CHANGEMENT. Sans ca, `market_status_since` suivrait
+        `last_seen` et la regle des sept jours ne se declencherait jamais : elle
+        compterait toujours zero jour d'anciennete.
+        """
+        try:
+            ancien = existant["market_status"]
+        except (KeyError, IndexError, TypeError):
+            return
+        if (ancien or None) == (nouveau or None):
+            return
+        self._maj_since(existant["id"], maintenant if nouveau else None)
+
+    def _maj_since(self, lid, quand) -> None:
+        self._execute("update listings set market_status_since=%s where id=%s", (quand, lid))
+
+    def appliquer_ventes(self, jours: int = JOURS_AVANT_SORTIE_VENDU) -> int:
+        """Sort du stock actif les annonces marquees vendues depuis `jours`.
+
+        `status='sold'` est DISTINCT de `'inactive'` : l'annonce n'a pas disparu,
+        la source dit qu'elle est vendue. Confondre les deux ferait perdre
+        exactement l'information qu'on vient de gagner — le delistage confond
+        vente, retrait et artefact de fenetre, ce marqueur les separe.
+
+        `delisted_at` recoit la date de PREMIERE apparition du marqueur, pas
+        celle du jour : c'est la date ou le lot a quitte le marche, et c'est elle
+        qui doit compter dans les analyses de tension.
+        """
+        cur = self._execute(
+            "update listings set status='sold', delisted_at=market_status_since "
+            "where market_status='sold' and status='active' "
+            "  and market_status_since is not null "
+            f"  and market_status_since <= now() - interval '{int(jours)} days'")
+        return cur.rowcount if cur is not None else 0
 
     def mark_missing_inactive(self, source: str, seen_ids: set[str],
                               deal_type: str | None = None,
