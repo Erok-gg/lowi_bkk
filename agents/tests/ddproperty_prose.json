@@ -1,0 +1,1399 @@
+[
+ {
+  "id": "ddproperty:sale:60142015",
+  "condo": "The Address Sukhumvit 28, Bangkok",
+  "extraits": [
+   "The Address Sukhumvit 28 is located on approximately 2 rai of land, with a 31-storey condominium unit with 246 units of privacy and tranquility at a starting price of 6,700,000 Baht.",
+   "ing buildings) Facilities: Wireless internet, Swimming pool with children's pool, Fitness room, Sauna (male / female), Outdoor Garden on 8th and 31st floors, 3 passenger lifts, 1 fire extinguisher.",
+   "Car park And ACCESS CONTROL ROOM - ACCESS CONTROL Access to the 2nd floor car park."
+  ],
+  "verite": {
+   "nb_etages": 31,
+   "nb_lots": 246,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500403875",
+  "condo": "IDEO Sukhumvit 93, Bangkok",
+  "extraits": [
+   "Ideo Sukhumvit 93 condominium is divided into 2 buildings, 1 building A, 38 floors B, 27 floors and 17 floors, 1,332 units and 2 storey buildings.",
+   "2 storey 2 units are called designers have divided the zone of the unit room.",
+   "Or garden behind the building.",
+   "There are more than 1,900 square meters of common living space and full facilities within the building, including large swimming pool, tennis court and recreation room.",
+   "Project Type: The condominium is divided into 2 buildings, 1 building A, 38 floors, 27 floors and 17 floors, 1,332 units and 2 buildings, 2 floors with 2 units."
+  ],
+  "verite": {
+   "nb_etages": "ambigu",
+   "nb_lots": 1332,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500445147",
+  "condo": "Taka Haus, Bangkok",
+  "extraits": [],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500441686",
+  "condo": "BEATNIQ Sukhumvit 32, Bangkok",
+  "extraits": [
+   "It looks like a flat building.",
+   "It is seen from Facade of the BEATNIQ Sukhumvit 32 building which is connected between the steelwork and the glass."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500228594",
+  "condo": "Park Origin Phrom Phong (Park 24), Bangkok",
+  "extraits": [
+   "The number of units per floor is limited to 12 units per floor.",
+   "Park Origin Phromphong , Heights Condo, 51-storey building with 533 units and 29 floors of 300 units and 2 commercial buildings, 2 stories, 4 units.",
+   "Project area 5-0-82 acres High Heights Condominium, 51 floors, 533 units and 29 floors, 300 units and commercial buildings, 1 building, 2 floors, 4 units.",
+   "Up to 12 units Parking area is 426 cars, not including parking (51%).",
+   "Completed: 2018 Building 2 has 5 elevators, divided into four elevators and one elevator."
+  ],
+  "verite": {
+   "nb_etages": "ambigu",
+   "nb_lots": "ambigu",
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500191597",
+  "condo": "Noble Around Sukhumvit 33, Bangkok",
+  "extraits": [
+   "Noble Around Sukhumvit 33 is a freehold project developed by Noble Development Public Company Limited at 17 Sukhumvit 33, Klongtonnua, Wattana, Bangkok.",
+   "The building is one 25-storey high building on the area of 1-2-95.",
+   "The total unit of the project is 274 units, consisting of two types of rooms: 1 bedroom (27 - 51 sq.",
+   "Noble Around Sukhumvit 33 is expected to be completed in early 2020."
+  ],
+  "verite": {
+   "nb_etages": 25,
+   "nb_lots": 274,
+   "promoteur": "Noble Development"
+  }
+ },
+ {
+  "id": "ddproperty:sale:500403808",
+  "condo": "President Park Sukhumvit 24, Bangkok",
+  "extraits": [],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:60095768",
+  "condo": "Chewathai Residence Asoke, Bangkok",
+  "extraits": [
+   "Chewathai Residence Asoke Condominium with 29 floors, 315 units with security system such as Access Key Card from the entrance, Digital Door Lock security guard.",
+   "Because there are not many units.",
+   "To be the tallest building in ASEAN, \"The Super Tower\", with a premium office building, 6-star hotel and skyline restaurant, is expected to be completed in 2019.",
+   "hewathai plc Location: Asoke-Din Daeng Road, Makkasan, Ratchathewi, Bangkok Project area: 1 rai 2 ngan 66 square wah Type: 29-storey condominium, 315 units Security: Access Key Card from the entrance, Digital Door Lock security guard.",
+   "CCTV 24 hours Co-Working Lounge, Chilling Area, Athletic Club, Kids Stadium, Swimming Pool, Steam Room and Garden) and 29th floor."
+  ],
+  "verite": {
+   "nb_etages": 29,
+   "nb_lots": 315,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:11739796",
+  "condo": "Aspire Sukhumvit 48, Bangkok",
+  "extraits": [
+   "ect Sukhumvit 48 starting price less than 5 million aspire sukhumvit 48 The project consists of two high rise condominiums comprising 25 storeys of N buildings and a 30-storey S building.",
+   "There is also the C building, an 8-storey car park and a basement with 50 parking spaces.",
+   "% Facilities at rooftop The two buildings aspire sukhumvit 48 completed with living.",
+   "The lobby features a modern interior, a beautiful view from the building, a security system that requires a key card from the entrance to the aspire sukhumvit 48 to a locked cabin.",
+   "Including the appearance of the central area on the roof of the building S, all of which are priced at the aspire sukhumvit 48 starting at 4."
+  ],
+  "verite": {
+   "nb_etages": "ambigu",
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500451757",
+  "condo": "Royce Private Residences, Bangkok",
+  "extraits": [
+   "The garden is decorated in English style and also has a private lift for all units.",
+   "ROYCE PRIVATE is a high rise condominium project, Building A, 39 floors high, 25 floors high, and 161 units."
+  ],
+  "verite": {
+   "nb_etages": "ambigu",
+   "nb_lots": 161,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500351795",
+  "condo": "Bearing Residence, Bangkok",
+  "extraits": [
+   "gl/NeMy3gwmMHUWMRVs8 Station : BTS-Bearing Property type : Condo No of floors : 7 Usable area : 250 sqm No."
+  ],
+  "verite": {
+   "nb_etages": 7,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:11808430",
+  "condo": "The Residences 38, Bangkok",
+  "extraits": [
+   "THE RESIDENCES 38 Iconic residences above La Clef Bangkok by the Crest Collection with 56 meticulously appointed freehold units."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": 56,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500403955",
+  "condo": "The Address Chidlom, Bangkok",
+  "extraits": [
+   "The Address Chidlom is a 2 buildings freehold high-rise condominium developed by AP Thailand with 22 and 24 floors, 597 units.",
+   "The project is completed and ready to move in.",
+   "You’ll find the building on your left-hand side.",
+   "5 Rai High-Rise condominium 2 buildings, 22 and 24 floors, 597 units.",
+   "completed and ready to move in, completed in 2007."
+  ],
+  "verite": {
+   "nb_etages": "ambigu",
+   "nb_lots": 597,
+   "promoteur": "AP Thailand"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500447280",
+  "condo": "The Address Sathorn, Bangkok",
+  "extraits": [
+   "at the height of 40 floors.",
+   "The Address Sathorn is also surrounded by an office building, which is a high-potential and easy-to-use private car.",
+   "The address of The Address Sathorn is on the second floor of the swimming pool, fitness and swimming pool.",
+   "The ground floor is on the 1st floor and the top floor is on the 41st floor."
+  ],
+  "verite": {
+   "nb_etages": 40,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500456673",
+  "condo": "The Breeze Narathiwas, Bangkok",
+  "extraits": [
+   "The Breeze Narathiwas is a 374-storey high-rise condominium in Narathiwat, 294 units completed by EASTERN STAR - Eastern Star Real Estate Plc.",
+   "3 acres Project Type: 374 Heights Condominium Condominium, 294 units Construction Status: Completed in 2012."
+  ],
+  "verite": {
+   "nb_etages": "ambigu",
+   "nb_lots": 294,
+   "promoteur": "Eastern Star"
+  }
+ },
+ {
+  "id": "ddproperty:sale:500455774",
+  "condo": "ROMM Convent, Bangkok",
+  "extraits": [
+   "Developed by Proud Real Estate Public Company Limited, this project covers an area of approximately 2,562.",
+   "80 square metres, comprising 180 units with living spaces ranging from 34.",
+   "Regarding the interior atmosphere of the residential units, the emphasis is on spacious living areas designed to accommodate family living, providing a home-like feel.",
+   "The project offers a total of 7 different room types to choose from, including: 1 bedroom: This unit, with a living area of 34.",
+   "5 square metres is designed to accommodate 1 x bedroom, 1 x bathroom and 1 x foyer 1 bedroom deluxe: This unit, with a living area of 48-51 square metres is designed to accommodate 1 x bedroom, 1 x bathroom and 1 x foyer."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": 180,
+   "promoteur": "Proud Real Estate"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500180632",
+  "condo": "Noble Ploenchit, Bangkok",
+  "extraits": [
+   "There are over 1,400 units and the highlight of the sale is the private elevator for every unit.",
+   "Noble Ploenchit Design Facility to Accommodate the Lifestyle of Residents Most of them are new generation, working age and the family is building.",
+   "Basketball court, swimming pool with children's pool and Jacuzzi more than 45 meters in buildings A and B, as well as steam rooms.",
+   "Multi-purpose room on the 3rd floor with sky garden and sky lounge on the roof of Building A Noble Ploenchit is in the heart of the city.",
+   "In one floor there are two rooms that share a lift."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": "ambigu",
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500348830",
+  "condo": "The Collect Ratchada 32, Bangkok",
+  "extraits": [
+   "The Collect Ratchada 32 is a distinguished freehold condominium at 89 Soi Ratchadaphisek 36, Lane 19-1, Chantharakasem, Chatuchak, Bangkok 10900, Thailand.",
+   "eloped by The Next Real Estate in 2021, this condominium comprises 64 residential units, offering a selection of one-bedroom apartments and duo space units tailored to meet different lifestyle preferences."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": 64,
+   "promoteur": "The Next Real Estate"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500402004",
+  "condo": "IDEO Verve Ratchaprarop, Bangkok",
+  "extraits": [
+   "h-Rise condominium project in Ratchathewi area, starting price lower than 5 million Ideo Verve Ratchaprarop is a 34 storey condominium with total 447 units.",
+   "And the selection of materials for construction is excellent."
+  ],
+  "verite": {
+   "nb_etages": 34,
+   "nb_lots": 447,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500404409",
+  "condo": "City Living Ratchada, Bangkok",
+  "extraits": [
+   "Completed, comprising of 1 17-storey building totaling 158 units located in the heart of the city, Ratchadapisek Road, near Huay Kwang intersection.",
+   "Surrounded by office Large office buildings.",
+   "During the day, it is an economic hub with department stores and office buildings.",
+   "Project Name: City Living Ratchada Condominium City Living Ratchada Condominium Developer: PK - PK Global Ltd."
+  ],
+  "verite": {
+   "nb_etages": 17,
+   "nb_lots": 158,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500461922",
+  "condo": "Magnolias Waterfront Residences, Bangkok",
+  "extraits": [
+   "Project Name: Magnolias Waterfront Residences ICONSIAM (Magnificent Waterfront Residences at Icon Siam) Developer: ICONSIAM - The Icons Siam Residences Co.",
+   "esidences-iconsiam/review Condo Near BTS: MRT Krung Thon Buri Project area: 7 rai 2 ngan 63 sqw Project Type: 70-storey Heisman Condominium Total 379 units Construction Status: Expected to be completed by 2016."
+  ],
+  "verite": {
+   "nb_etages": 70,
+   "nb_lots": 379,
+   "promoteur": "ICONSIAM"
+  }
+ },
+ {
+  "id": "ddproperty:sale:500229070",
+  "condo": "C Ekkamai, Bangkok",
+  "extraits": [
+   "The price began to gradually climb up the order of the building floor.",
+   "C Ekkamai is designed to appeal to consumers with the \"C\" shape of the building, by the name and the highest altitude statistic on Ekamai.",
+   "As a result, 360-degree views of the Sky Lounge are on the top floor, with built-in and high-end materials in the market.",
+   "On Ekamai Road The building is reflected through the architectural style, similar to the Prism, when viewed with a facade.",
+   "The wooden pattern adds dimension to the building."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500401305",
+  "condo": "LAVIQ Sukhumvit 57, Bangkok",
+  "extraits": [
+   "LAVIQ Sukhumvit 57 is a luxury free hold high-rise condominium located in a prime location, only 3 minutes walk from BTS Thong Lo developed by Real asset Development.",
+   "The building has 33 floors, offers 235 Units, consists of 3 types of rooms, starting at THB 9.",
+   ", Ltd Sukhumvit Road, Soi Sukhumvit 57 2-1-65 Rai Luxury Condominium 1 building, 33 floors, 235 units, 235 Parking Spaces (100% of the units).",
+   "9 Million Penthouse: 244-357 sq m for THB 65-91 Million The building and the design make it a perfect luxurious building."
+  ],
+  "verite": {
+   "nb_etages": 33,
+   "nb_lots": 235,
+   "promoteur": "Real Asset Development"
+  }
+ },
+ {
+  "id": "ddproperty:sale:11486474",
+  "condo": "ROMM Convent, Bangkok",
+  "extraits": [
+   "Developed by Proud Real Estate Public Company Limited, this project covers an area of approximately 2,562.",
+   "80 square metres, comprising 180 units with living spaces ranging from 34.",
+   "Regarding the interior atmosphere of the residential units, the emphasis is on spacious living areas designed to accommodate family living, providing a home-like feel.",
+   "The project offers a total of 7 different room types to choose from, including: 1 bedroom: This unit, with a living area of 34.",
+   "5 square metres is designed to accommodate 1 x bedroom, 1 x bathroom and 1 x foyer 1 bedroom deluxe: This unit, with a living area of 48-51 square metres is designed to accommodate 1 x bedroom, 1 x bathroom and 1 x foyer."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": 180,
+   "promoteur": "Proud Real Estate"
+  }
+ },
+ {
+  "id": "ddproperty:sale:500395134",
+  "condo": "Park Origin Phrom Phong (Park 24), Bangkok",
+  "extraits": [
+   "The number of units per floor is limited to 12 units per floor.",
+   "Park Origin Phromphong , Heights Condo, 51-storey building with 533 units and 29 floors of 300 units and 2 commercial buildings, 2 stories, 4 units.",
+   "Project area 5-0-82 acres High Heights Condominium, 51 floors, 533 units and 29 floors, 300 units and commercial buildings, 1 building, 2 floors, 4 units.",
+   "Up to 12 units Parking area is 426 cars, not including parking (51%).",
+   "Completed: 2018 Building 2 has 5 elevators, divided into four elevators and one elevator."
+  ],
+  "verite": {
+   "nb_etages": "ambigu",
+   "nb_lots": "ambigu",
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500403677",
+  "condo": "Mayfair Place Sukhumvit 50, Bangkok",
+  "extraits": [
+   "And privacy The project consists of 3 buildings with a residential section.",
+   "The old railway is also a well-developed area.",
+   "Project Name: Mayfair Place Sukhumvit 50 • Developer: PTF Realty: PT Realty Co.",
+   "Project area: 3 rai 1 ngan 72 square wah Format: 3-storey building consists of 14-storey building A, 7-storey building B and 8-storey building.",
+   "Status: Construction Starts May 2016 Expected Completion May 2018 Security: Digital Door Lock, Access Key Card CCTV 24 hours Residence: divided into Building A, starting on floors 1 - 14 and Building B on floors 1 - 17."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": "PTF Realty"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500402557",
+  "condo": "Rhythm Sukhumvit 42, Bangkok",
+  "extraits": [
+   "Rhythm Sukhumvit 42 is a high rise 36 story 1 storey building and 8 storey car park + 2 basements.",
+   "1 living room with 407 units.",
+   "Add the garden space in every 5 floors to make it feel shady.",
+   "Rhythm Sukhumvit 42 ready to move in.",
+   "oi Sukhumvit 42, Prakanong, Klongtoey, Bangkok Project area: Approximately 3-0-62 rai (1,262 square wah) Project Type: 36-storey condominium with 407 units and 8-storey car park with 2 basements."
+  ],
+  "verite": {
+   "nb_etages": "ambigu",
+   "nb_lots": 407,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:60079805",
+  "condo": "BEATNIQ Sukhumvit 32, Bangkok",
+  "extraits": [
+   "It looks like a flat building.",
+   "It is seen from Facade of the BEATNIQ Sukhumvit 32 building which is connected between the steelwork and the glass."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500405207",
+  "condo": "Noble State 39, Bangkok",
+  "extraits": [],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500404492",
+  "condo": "Noble Reveal, Bangkok",
+  "extraits": [
+   "Construction Status: Completed in 2011."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:11071903",
+  "condo": "Baan Sukhothai Ramkhamhaeng, Bangkok",
+  "extraits": [],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500237885",
+  "condo": "The Key MRT Phetkasem 48, Bangkok",
+  "extraits": [],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:11676041",
+  "condo": "The St. Regis Bangkok (Residences), Bangkok",
+  "extraits": [
+   "Regis is a luxury super-luxury project consisting of a 47-storey building with 53 units in prime location on the CBD of Ratchadamri, an economic hub.",
+   "Regis can then be accessed as it connects to the building.",
+   "Regis Location: Rajdamri Road, Lumpini, Pathumwan, Bangkok 10330 Condo near the BTS: BTS Ratchadamri station (link to the building) Project area: 3 rai 1 ngan 9 sq."
+  ],
+  "verite": {
+   "nb_etages": 47,
+   "nb_lots": 53,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500446305",
+  "condo": "IDEO Verve Sukhumvit, Bangkok",
+  "extraits": [
+   "Ideo Verve Sukhumvit The popular condominium project, Ideo Verve Sukhumvit, is a popular high rise building on the IDEO Verve Sukhumvit, a 490-unit high rise condominium.",
+   "Station This will cause the direction of the building to adjust to the north-south.",
+   "This building looks like a hexagonal honeycomb.",
+   "There is a swimming pool and fitness center located in front of the building at the same level as the BTS station.",
+   "many government offices and schools in the vicinity, such as Wells International School, Bangkok College and Bangkok Prep, which are currently under construction on Soi On Nut."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": 490,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500013375",
+  "condo": "Noble Around Ari, Bangkok",
+  "extraits": [
+   "High-rise condominium project in Aree district Noble Around Aree is a freehold project developed by Noble Development Public Company Limited located on Phaholyothin Road, Samsennai, Phayathai, Bangkok.",
+   "The building is a 39-story high rise building and 7 storey building on 3-0-23 rai of land.",
+   "The total number of units is 611 units, consisting of two types of rooms: 1 bedroom (26.",
+   "Noble Around Ari is a project under construction and is expected to be completed in 2022."
+  ],
+  "verite": {
+   "nb_etages": "ambigu",
+   "nb_lots": null,
+   "promoteur": "Noble Development"
+  }
+ },
+ {
+  "id": "ddproperty:sale:500228148",
+  "condo": "Rhythm Sathorn, Bangkok",
+  "extraits": [
+   "Modern style building.",
+   "The Rhythm Sathorn project has clearly separated the facilities of each building.",
+   "Surrounded by office Large office buildings.",
+   "th Building) and 41-storey condominium, 4-storey building (South Building) Number of condominium units: 910 units Construction Status: Expected to be completed by 2015 (completed ready) Parking: Approximately 580 cars (including parking).",
+   "Condominium, Swimming Pool, Mutipurposed Room, Garden, Sauna, Gym 5 high-speed lifts, 1 high-speed fire extinguisher, 1 fire extinguisher for B4 - 1 floor."
+  ],
+  "verite": {
+   "nb_etages": "ambigu",
+   "nb_lots": 910,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500180192",
+  "condo": "HQ Thonglor by Sansiri, Bangkok",
+  "extraits": [
+   ", height of 36 floors, the number of 197 units provides a lot of privacy.",
+   "Each unit has only 8 units, suitable for people living in Thonglor with privacy.",
+   "Format: 36-storey condominium, 1 tower, 197 units Security: Access Key Card CCTV Monitoring & Control Central: Located on the 10th floor with library, lobby, swimming pool, fitness.",
+   "Parking: 2nd - 9th floor (83% or 160 cars) Public fee: 55 baht / sq."
+  ],
+  "verite": {
+   "nb_etages": 36,
+   "nb_lots": 197,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500401344",
+  "condo": "Nara 9 by Eastern Star, Bangkok",
+  "extraits": [
+   "Completed with 40-storey residential condominium, A Modern Luxury Contemporary, totaling 361 units on 3 rai - 1 sq.",
+   "The pool is sky-high outside the building.",
+   "And a 180 degree view on the 30th floor, perfect for living up to the price of 8,400,000 baht.",
+   "Project Name: (Nara 9 Sathon - Naradhiwas) Nara 9 Sathon Narathiwat Developer: Eastern Star - Eastern Star Real Estate Co.",
+   "Project Type: 40-storey Residential Condominium A Modern Luxury Contemporary and Total 361 Units Construction: Ready to be built in 2016."
+  ],
+  "verite": {
+   "nb_etages": 40,
+   "nb_lots": 361,
+   "promoteur": "Eastern Star"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500348797",
+  "condo": "The Key Sathorn-Charoenraj, Bangkok",
+  "extraits": [
+   "Highrise condominium project Sathorn - Charoenrat The key Sathorn - Charoenrat Hiroy Tower, 38 floors, 885 units, near BTS Surasak, BRT Charoenrat is a new definition of happiness in the city center.",
+   "38-storey building with 1 building.",
+   "The building is connected with 3 wings.",
+   "unal pool swimming pool fitness floor 5 Parking is about 400 units (if the proportion of parking is 65% from 1-4) 5 passenger lifts, 1 service lift • Construction Status: Recently started construction.",
+   "Accounted for 70% of the total or about 19 units / floor) There are 2 types of rooms: 1, 55."
+  ],
+  "verite": {
+   "nb_etages": 38,
+   "nb_lots": 885,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500382957",
+  "condo": "MARQUE Sukhumvit, Bangkok",
+  "extraits": [
+   "Highrise condominium project Phrom Phong District Starting price lower than 30 million MARQUE Sukhumvit is a 50-storey high rise condominium 147 units located on 3 rd prime land."
+  ],
+  "verite": {
+   "nb_etages": 50,
+   "nb_lots": 147,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500411594",
+  "condo": "Plum Condo Nawamin, Bangkok",
+  "extraits": [
+   "Plum Condo Nawamin is low-rise condominium with 8 floors, 3 buildings with 711 units.",
+   "Project Name: Plum Condo Nawamin (Plum Condo Nawamin) Developer: Pruksa - Pruksa Real Estate Co.",
+   "Project Type: Low-rise condominium, 8 floors, 3 buildings, 711 units."
+  ],
+  "verite": {
+   "nb_etages": 8,
+   "nb_lots": 711,
+   "promoteur": "Pruksa"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500350828",
+  "condo": "Life Ladprao Valley, Bangkok",
+  "extraits": [
+   "High-rise condominium project in Ladprao area Life Ladprao Valley is a freehold project developed by AP (Thailand) Public Company Limited located on Phaholyothin Road, Chomphon, Chatuchak, Bangkok.",
+   "The building is a 44-story high rise building on 5-2-33.",
+   "The total number of units is 1140 units.",
+   ") Life Ladprao Valley is a project under construction and is expected to be completed in 2021."
+  ],
+  "verite": {
+   "nb_etages": 44,
+   "nb_lots": null,
+   "promoteur": "AP Thailand"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500451529",
+  "condo": "The Ritz-Carlton Residences, Bangkok",
+  "extraits": [
+   "The Ritz Carlton Residences is a 77 storey building built on 9 rai 1 ngan 49 sq.",
+   "The building is close to BTS Sky train station, Chong Nonsi BTS station.",
+   "It is the tallest building in Thailand.",
+   "Project Name: The Ritz Carlton Residences Project developer: Pace - Pace Development Corporation Plc.",
+   "com/about_th/developer/home Condo close to BTS: Chong Nonsi BTS."
+  ],
+  "verite": {
+   "nb_etages": 77,
+   "nb_lots": null,
+   "promoteur": "Pace Development"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500461717",
+  "condo": "Noble Around Sukhumvit 33, Bangkok",
+  "extraits": [
+   "Noble Around Sukhumvit 33 is a freehold project developed by Noble Development Public Company Limited at 17 Sukhumvit 33, Klongtonnua, Wattana, Bangkok.",
+   "The building is one 25-storey high building on the area of 1-2-95.",
+   "The total unit of the project is 274 units, consisting of two types of rooms: 1 bedroom (27 - 51 sq.",
+   "Noble Around Sukhumvit 33 is expected to be completed in early 2020."
+  ],
+  "verite": {
+   "nb_etages": 25,
+   "nb_lots": 274,
+   "promoteur": "Noble Development"
+  }
+ },
+ {
+  "id": "ddproperty:sale:500457082",
+  "condo": "Fynn Asoke, Bangkok",
+  "extraits": [
+   "8-storey low-rise building style with 2 buildings on 1-3-70 rai of land.",
+   "The total unit size is 263 units, consisting of 5 types of rooms, 1 bedroom (24 - 49 sq.",
+   ") FYNN Asoke is still a construction project and is expected to be completed in 2021.",
+   "5 km) including various office buildings in Rakhine, such as Interchange Building, GMM Building as well FYNN Asoke Away from the main road."
+  ],
+  "verite": {
+   "nb_etages": 8,
+   "nb_lots": 263,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500333523",
+  "condo": "Baan Chan Condominium, Bangkok",
+  "extraits": [],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500230522",
+  "condo": "Life Rama 4-Asoke, Bangkok",
+  "extraits": [
+   "Life Rama 4 – Asoke is now complete and ready to move in.",
+   "Another thing that both me and everyone is waiting to see is the ‘view’ on the upper floors of this project.",
+   "llows: It is a large project with more than 1,237 units and provides a lot of common areas, especially Sky Facilities, which are located on the top 4 floors of the project."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": "ambigu",
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500461809",
+  "condo": "Thru Thonglor, Bangkok",
+  "extraits": [
+   "This does not include the units in the project."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:11404910",
+  "condo": "Magnolias Waterfront Residences, Bangkok",
+  "extraits": [
+   "Project Name: Magnolias Waterfront Residences ICONSIAM (Magnificent Waterfront Residences at Icon Siam) Developer: ICONSIAM - The Icons Siam Residences Co.",
+   "esidences-iconsiam/review Condo Near BTS: MRT Krung Thon Buri Project area: 7 rai 2 ngan 63 sqw Project Type: 70-storey Heisman Condominium Total 379 units Construction Status: Expected to be completed by 2016."
+  ],
+  "verite": {
+   "nb_etages": 70,
+   "nb_lots": 379,
+   "promoteur": "ICONSIAM"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500461655",
+  "condo": "Noble State 39, Bangkok",
+  "extraits": [],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500000141",
+  "condo": "185 Rajadamri, Bangkok",
+  "extraits": [
+   "Double-glazed floor-to-ceiling windows are installed.",
+   "Project Name: 185 Rajadamri (185 Rajadamri) Developer: Raimon Land - Raimon Land Plc."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": "Raimon Land"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500282069",
+  "condo": "Whizdom Essence, Bangkok",
+  "extraits": [
+   "Whizdom Essence Sukhumvit has been launched from 3.",
+   "Whizdom Essence Sukhumvit The project is located in the north and south to reduce the amount of heat entering the building.",
+   "Project area: 6 rai 1 ngan 91 square wah Layout: 664 condominiums, 664 units and 2 units of commercial space.",
+   "Construction Status: Construction is scheduled to start in mid-2016, with completion expected to be 100% by mid-2016.",
+   "Surrounding buildings with Business Lounge, 3rd Floor, Library and Special Study Room on 4th Floor and Olympic Standard Pool, Children's Pool and Jacuzzi, Fitness, Yoga Room."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": 664,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500026059",
+  "condo": "Noble Reveal, Bangkok",
+  "extraits": [
+   "Construction Status: Completed in 2011."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:60174728",
+  "condo": "Park Origin Thonglor, Bangkok",
+  "extraits": [
+   "The building is a 61 storey townhouse building on the area of 5-3-90.",
+   "The total unit of the project is 1182 units, consisting of 6 types of rooms: 1 bedroom (31.",
+   ") Park Origin Thonglor is also under construction.",
+   "It is expected to be completed in 2021."
+  ],
+  "verite": {
+   "nb_etages": 61,
+   "nb_lots": 1182,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500344212",
+  "condo": "Mazarine Ratchayothin, Bangkok",
+  "extraits": [],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500461624",
+  "condo": "Knightsbridge Space Ratchayothin, Bangkok",
+  "extraits": [
+   "Highrise condominium project in Ratchayothin KnightsBridge Space Ratchayothin is a freehold project developed by Original Property Company Limited located on Phaholyothin Road, Chatuchak, Chatuchak, Bangkok.",
+   "The building is a 33-storey high building with a total of 488 units on 2-2-74.",
+   "KnightsBridge Space Ratchayothin is also under construction and is expected to be completed by 2020."
+  ],
+  "verite": {
+   "nb_etages": 33,
+   "nb_lots": 488,
+   "promoteur": "Original Property"
+  }
+ },
+ {
+  "id": "ddproperty:sale:500228783",
+  "condo": "The Strand Thonglor, Bangkok",
+  "extraits": [
+   "The Strand Thonglor is a freehold project located on Sukhumvit 55, Sukhumvit Road, Klongtannua, Wattana, Bangkok.",
+   "The building is a 30-storey high building on a land area of 1-2-46 rai.",
+   "The total number of units is 198 units, consisting of 4 types of rooms: 1 bedroom (48.",
+   "Lounge bar business with the Strand the Strand Park Thonglor project is under construction and expected to be c."
+  ],
+  "verite": {
+   "nb_etages": 30,
+   "nb_lots": 198,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500351677",
+  "condo": "The Monument Thonglor, Bangkok",
+  "extraits": [
+   "The Monument Thonglor is a freehold high-rise condominium project developed by Sansiri Public Company Limited, located in Soi Sukhumvit 55, Klongton Nuea, Wattana, Bangkok.",
+   "The building is a high-rise 45 floors, offers 127 units in an area of 2-2-45.",
+   "The project is completed and ready to move in."
+  ],
+  "verite": {
+   "nb_etages": 45,
+   "nb_lots": 127,
+   "promoteur": "Sansiri"
+  }
+ },
+ {
+  "id": "ddproperty:rent:60241035",
+  "condo": "The Residences at Sindhorn Kempinski, Bangkok",
+  "extraits": [],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:11585091",
+  "condo": "Bright Sukhumvit 24, Bangkok",
+  "extraits": [
+   "The condo has two 36-storey buildings and a total of 292 units.",
+   "Located in Soi Sukhumvit 24 next to the project launched in 2013, Park 24 and LPN Sukhumvit 24.",
+   "The Bright Sukhumvit 24 project is a completed project.",
+   "Each building has 3 passenger lifts and a separate service lift, and the maximum number of units per floor is 8 rooms.",
+   "Up to the 19th floor, it is reduced to 6 rooms on 2 floors only."
+  ],
+  "verite": {
+   "nb_etages": 36,
+   "nb_lots": 292,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500456859",
+  "condo": "Ramada Residence (Siamese) Sukhumvit 87, Bangkok",
+  "extraits": [
+   "Siamese Sukhumvit 87 is a freehold project developed by Cyada Asset Co.",
+   "The building is a 25-storey high building on 1-3-83 rai of land.",
+   "The total unit of the project is 372 units and 1 unit of unit.",
+   "The unit consists of 2 types of rooms, 1 bedroom and 2 units.",
+   "Siamese Sukhumvit 87 is expected to be completed in 2020."
+  ],
+  "verite": {
+   "nb_etages": 25,
+   "nb_lots": null,
+   "promoteur": "Cyada Asset"
+  }
+ },
+ {
+  "id": "ddproperty:sale:60160763",
+  "condo": "Athenee Residence, Bangkok",
+  "extraits": [
+   "The Athenee Residence project will cost from 9,000,000 - 40,000,000 Baht Athenee Residence , a 41-storey building with 219 rooms and 529 parking spaces, makes the Athenee Residence a real pride for everyone.",
+   "Project Location: 888 / 5-6 Ploenchit Road, Lumpini, Pathumwan, Bangkok 10260 Project Type: 1 41-storey building, 219 units Land Approximately: 4 Rai 95."
+  ],
+  "verite": {
+   "nb_etages": 41,
+   "nb_lots": 219,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500404292",
+  "condo": "Khun By Yoo, Bangkok",
+  "extraits": [
+   "ion The architecture of KHUN by YOO inspired the modernity of the Thonglor district, bringing the concept of Industrial Heritage to the design of the building.",
+   "Company Limited Location: Soi Thonglor 12 (Sukhumvit Soi 55), Klongton Nua, Wattana Project Area: 1 rai Project Type: 27-storey condominium with 148 units Construction Status: Construction Starts in January, 2017, is expected to be completed by July 2020.",
+   "Automated Parking System, B1 Floor - B4 and Floor 1 - 5 (102%) Residences: Starts 6th - 23th and 26th Facilities: There is a lobby area on the first floor, a Jacuzzi pool on the 24th floor, a fitness room on the 25th floor, and a movie room on the 27th floor.",
+   "Starting Price: 15 Million / Unit Room Type: Fully Fitted Room 1 bedroom, 1 bathroom, living area 41."
+  ],
+  "verite": {
+   "nb_etages": 27,
+   "nb_lots": 148,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500445714",
+  "condo": "Saladaeng Residences, Bangkok",
+  "extraits": [
+   "SALADAENG RESIDENCES is a 25 storey (underground 5 floor) highrise condominium with 132 built units.",
+   "The views and privacy are due to the environment filled with high rise buildings and office buildings, which will obscure some good views in some corners.",
+   "If you go to Silom, you will see the Silicium Building on BTS Sala Daeng.",
+   "If you leave, Sathorn will be right next to Tisco Building.",
+   "This is a major commercial area of Thailand that combines office buildings, commercial buildings with facilities."
+  ],
+  "verite": {
+   "nb_etages": 25,
+   "nb_lots": 132,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500456533",
+  "condo": "La Vie En Rose Place, Bangkok",
+  "extraits": [],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500398794",
+  "condo": "Rhythm Charoenkrung Pavillion, Bangkok",
+  "extraits": [
+   "Condo Rhythm Charoenkrung Pavilion Ready to move in price 32,000 Size: 44 sq.",
+   "8 km) •Educational institutions / Office buildings - Shrewsbury International School Bangkok (100 m) - Assumption College (1.",
+   "8 km) - Sathorn Square Building (2."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500346637",
+  "condo": "Mode Sukhumvit 61, Bangkok",
+  "extraits": [
+   "real MODE Sukhumvit 61 is a 2 storey building with 80 units of space.",
+   "MODE Sukhumvit 61 consists of 80 units, making it one of the most unique and unique condominiums.",
+   "Project Name: MODE Sukhumvit 61 (Sukhumvit 61) Developer: Gaysorn - Gaysorn Property Co.",
+   "Project Type: Condominium 8 floors, 168 buildings.",
+   "In the heart of the city Construction Status: Completed in 2013."
+  ],
+  "verite": {
+   "nb_etages": "ambigu",
+   "nb_lots": 80,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500178977",
+  "condo": "Aspire Ladprao 113, Bangkok",
+  "extraits": [
+   "Starting at only 1,650,000 Baht aspire Ladprao 113 Condo Low Rise 8 storey 1 building, total 270 units, decorated with design and design project aspire Lat Phrao 113 by the tone of dark building."
+  ],
+  "verite": {
+   "nb_etages": 8,
+   "nb_lots": 270,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500228341",
+  "condo": "The Shade Sathorn 1, Bangkok",
+  "extraits": [],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:10218273",
+  "condo": "Belle Park Residence, Bangkok",
+  "extraits": [
+   "com Project Area: 8 rai Project Type: Highrise condominium, 22 floors, 5 buildings, 710 units.",
+   "Construction Status: Completed in 2009."
+  ],
+  "verite": {
+   "nb_etages": 22,
+   "nb_lots": 710,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500229908",
+  "condo": "Lumpini Ville Phatanakan-Srinakarin, Bangkok",
+  "extraits": [
+   "โครงการคอนโดมิเนียมไฮไรส์ ย่านพัฒนาการ–ศรีนครินทร์ Lumpini Ville พัฒนาการ–ศรีนครินทร์ เป็นโครงการคอนโดแบบขายขาด (Freehold) ถูกพัฒนาโดย บริษัท แอล."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500445676",
+  "condo": "Wish Signature Midtown Siam, Bangkok",
+  "extraits": [
+   "Highrise condominium project in Ratchathewi area Wish Signature Midtown Siam is a freehold project developed by Siam Nut Co.",
+   "(Soi Petchaburi 20), Ratchathewi, Ratchathewi, Bangkok The building is a 45-story high rise building on an area of 2-3-60 rai.",
+   "The total number of units in the project is 623 units, consisting of three types of rooms: 1 bedroom (27.",
+   "Wish Signature Midtown Siam is a completed project from 2017 ready to move in."
+  ],
+  "verite": {
+   "nb_etages": 45,
+   "nb_lots": null,
+   "promoteur": "Siam Nut"
+  }
+ },
+ {
+  "id": "ddproperty:sale:500445556",
+  "condo": "Good Day Sukhumvit 93, Bangkok",
+  "extraits": [
+   "We are one of the leading real estate agents in Thailand and can offer you all available rental and sale units."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500461513",
+  "condo": "Life Ladprao, Bangkok",
+  "extraits": [
+   "Project Name: Life Ladprao Project developer: AP - AP (Thailand) Public Company Limited Joint Developer: Mitsubishi Group Location: Phaholyothin Rd.",
+   "4 rai Project Description: 2 condominiums, comprising of 45-storey A tower and 46-storey B tower with 1,615 units and 1 shop."
+  ],
+  "verite": {
+   "nb_etages": "ambigu",
+   "nb_lots": 1615,
+   "promoteur": "AP Thailand"
+  }
+ },
+ {
+  "id": "ddproperty:rent:11835930",
+  "condo": "Asa Garden, Bangkok",
+  "extraits": [],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:60103749",
+  "condo": "H Sukhumvit 43, Bangkok",
+  "extraits": [
+   "\" H Sukhumvit 43 is a 32-storey high rise condominium with 276 units located on 1-3-70 rai plot located at Soi Prommitr, Khlong Toei, Nontawat, Wattana, Bangkok 10110.",
+   "The 32-storey high rise building of H Sukhumvit 43, all designed with stacked design or \"Stack\" design.",
+   "Bangkok hospital Camillian Hospital Project Name: H Sukhumvit 43 Developer: V property - V Property Development Co.",
+   "com Condo Near BTS: Green Line BTS (Sukhumvit Line) Phrom Phong Station Project Area: 1-3-70 acres Project Type: High-rise condominium 32 floors with 276 units.",
+   "Construction Status: Built in 2014."
+  ],
+  "verite": {
+   "nb_etages": 32,
+   "nb_lots": 276,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500386406",
+  "condo": "Life Asoke Hype, Bangkok",
+  "extraits": [
+   "Life Asoke Hype is a freehold project developed by AP (Thailand) Public Company Limited.",
+   "Asoke - Din Daeng Road, Makkasan, Rajthevi, Bangkok The building is a 40-storey highrise building and 4 units of retail space on 5-0-10 rai.",
+   "The total units of the project are 1253 units, consisting of 4 types of studio units (25.",
+   ") Life Asoke Hype The project is under construction and is expected to be completed in 2021."
+  ],
+  "verite": {
+   "nb_etages": 40,
+   "nb_lots": null,
+   "promoteur": "AP Thailand"
+  }
+ },
+ {
+  "id": "ddproperty:sale:500354407",
+  "condo": "The Lofts Asoke, Bangkok",
+  "extraits": [
+   "The Lofts Asoke, a 45-storey building with 211 units, is located next to Asoke Montri Road.",
+   "The front of the building is in a Warehouse style.",
+   "And the number of units is not too much.",
+   "Many markets The Sermit Market Located opposite the Sino-Thai Building.",
+   "If you can not afford to walk to the back of the Grammy building."
+  ],
+  "verite": {
+   "nb_etages": 45,
+   "nb_lots": 211,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500401505",
+  "condo": "Tridhos City Marina, Bangkok",
+  "extraits": [
+   "PropertyScout ID 2102499 Fully furnished 3 bedrooms, 4 bathrooms condo for sale with a floorsize of 269 squaremeters, located on the 6th floor, at Tridhos City Marina building, in the popular Khlong San district near BTS Wongwian Yai.",
+   "Building features: * Building completed in 2009 PropertyScout https://propertyscout.",
+   "We are one of the leading real estate agents in Thailand and can offer you all available rental and sale units."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:500035738",
+  "condo": "Siri At Sukhumvit, Bangkok",
+  "extraits": [
+   "SIRI at Sukhumvit High-Rise 34-storey condominium, a total of 460 units from developer Sansiri, with a potential location.",
+   "Project Type: 34-storey condominium with 1 building totaling 460 units."
+  ],
+  "verite": {
+   "nb_etages": 34,
+   "nb_lots": 460,
+   "promoteur": "Sansiri"
+  }
+ },
+ {
+  "id": "ddproperty:sale:500229886",
+  "condo": "Tonson One Residence, Bangkok",
+  "extraits": [],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500456704",
+  "condo": "H Sukhumvit 43, Bangkok",
+  "extraits": [
+   "\" H Sukhumvit 43 is a 32-storey high rise condominium with 276 units located on 1-3-70 rai plot located at Soi Prommitr, Khlong Toei, Nontawat, Wattana, Bangkok 10110.",
+   "The 32-storey high rise building of H Sukhumvit 43, all designed with stacked design or \"Stack\" design.",
+   "Bangkok hospital Camillian Hospital Project Name: H Sukhumvit 43 Developer: V property - V Property Development Co.",
+   "com Condo Near BTS: Green Line BTS (Sukhumvit Line) Phrom Phong Station Project Area: 1-3-70 acres Project Type: High-rise condominium 32 floors with 276 units.",
+   "Construction Status: Built in 2014."
+  ],
+  "verite": {
+   "nb_etages": 32,
+   "nb_lots": 276,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500445821",
+  "condo": "The Seed Mingle Sathorn-Suanplu, Bangkok",
+  "extraits": [
+   "The number of units is relatively high, but tall buildings.",
+   "SEED Mingle Sathorn Suanplu has a total of 531 condominium units, complemented by the elements of living around the project.",
+   "The completed project is ready.",
+   "LOCATION: 389 Soi Suanplu 8 Soi Suanplu, Tungmahamek, Sathorn, Bangkok 10120 Project Area: 3-0-0 Rai Project Type: High floor condominium, 31 floors, 1 building (underground floor, 8 floors) Total 531 units.",
+   "Key Card, elevator, floor lock, lever door."
+  ],
+  "verite": {
+   "nb_etages": 31,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:rent:60228085",
+  "condo": "28 Chidlom, Bangkok",
+  "extraits": [
+   "Highrise condominium project in Chidlom area starting price 14 million 28 Chidlom is a super-luxury condominium, divided into 2 buildings, namely The Tower and The Villa.",
+   "28 Chidlom common areas of the project It is designed in a luxurious style and shaded from the garden of Urban Oasis that connects the building.",
+   "Near the entire office building.",
+   "Is like an oasis in the city The green space connects the buildings of The Tower and The Villa.",
+   "28 Chidlom observes that within 500 meters, they are surrounded by shopping malls, restaurants, office buildings."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:60146123",
+  "condo": "AGUSTON Sukhumvit 22, Bangkok",
+  "extraits": [
+   "An exotic spainish contemporary twilight building that is quite colorful.",
+   "Featured Project Aguston Sukhumvit 22 Aguston Sukhumvit 22 is a condominium developed by Major Development.",
+   "The structure of Aguston Sukhumvit 22 was completed in 2009.",
+   "The condo has 24 floors and 269 units."
+  ],
+  "verite": {
+   "nb_etages": 24,
+   "nb_lots": 269,
+   "promoteur": "Major Development"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500404817",
+  "condo": "Hyde Sukhumvit 13, Bangkok",
+  "extraits": [
+   "hyde sukhumvit 13 luxury condominium in the heart of Sukhumvit, 40 storeys high building, hyde sukhumvit 13 project emphasizes luxury, but also focus on privacy.",
+   "There will be a trendy building with convenience stores and many restaurants.",
+   "set - Grand Asset Hotels and Property LOCATION: Sukhumvit Soi 13, Sukhumvit Road, Klongtoey Nua Wattana Bangkok Project Type: High Rise Condo 40, 1st Floor, Building 454 Units Estimated Land: 2-1-76."
+  ],
+  "verite": {
+   "nb_etages": "ambigu",
+   "nb_lots": 454,
+   "promoteur": "Grande Asset"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500043577",
+  "condo": "Life Asoke, Bangkok",
+  "extraits": [
+   "With swimming pool and panoramic fitness on the 7th floor, the pool and fitness area will have a view of Makkasan.",
+   "7th floor, with panoramic views across the garden and swimming pool, separated in the middle with a fitness gym, all with panoramic views and a 35th floor garden.",
+   "Project Area: Approximately 6-2-85 acres Project Type: 35-storey high-rise condominium units totaling 1,642 units, consisting of 1,639 units of residences and 3 units of units."
+  ],
+  "verite": {
+   "nb_etages": 35,
+   "nb_lots": 1642,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500343218",
+  "condo": "Origins Bangmod-Rama 2, Bangkok",
+  "extraits": [
+   "Respond to urban lifestyle from Orin 1 condominium, 19 storey, 367 units, 4 units ready to move in.",
+   "Now the Serrano Condominium project has been completed already.",
+   "Project Name: (Origins Bangmod-Rama II) Origins Bangmod - Rama II Developer: Orin Property Location: Rama 2 Road, Bangmod, Chomthong, Bangkok.",
+   "Project Type: 1 storey building, 19 storeys, 367 units, 4 units Construction Status: Completed in 2015."
+  ],
+  "verite": {
+   "nb_etages": 19,
+   "nb_lots": 367,
+   "promoteur": "Orin Property"
+  }
+ },
+ {
+  "id": "ddproperty:sale:500209552",
+  "condo": "Quattro by Sansiri, Bangkok",
+  "extraits": [
+   "Quattro by Sansiri is a high rise condominium and ready to move in.",
+   "Quattro by Sansiri is located in Soi Thonglor, about 600 meters from Thonglor BTS and close to community mall such as Market Place, Maze, Eight Building and J Avenue Thonglor.",
+   "There are 446 units available.",
+   "Quattro by Sansiri is a modern high rise building.",
+   "On both sides of Thonglor Road there will be commercial buildings."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": 446,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500234729",
+  "condo": "The Parkland Ratchada-Wongsawang, Bangkok",
+  "extraits": [
+   "The Parkland Ratchada Wongsawang is a 33-storey, 33-floor, high rise condominium designed with a living room wall.",
+   "And the layout of the building on the grounds of over 1 acre garden to encircle the privacy to.",
+   "Project Name: The Parkland Ratchada-Wongsawang: The Parkland Ratchada-Wongsawang Developer: Narai Property- Narai Property Co.",
+   "Project Type: High Rise 33 condo, 743 units + 1 office unit Construction Status: Completed in 2015."
+  ],
+  "verite": {
+   "nb_etages": 33,
+   "nb_lots": null,
+   "promoteur": "Narai Property"
+  }
+ },
+ {
+  "id": "ddproperty:rent:11395819",
+  "condo": "Tonson One Residence, Bangkok",
+  "extraits": [],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500445787",
+  "condo": "XT 10 Ekkamai, Bangkok",
+  "extraits": [
+   "The project is pet-friendly, allowing pets in a separate building.",
+   "As for the residential units, there are both Simplex and Loft options with 4.",
+   "What we particularly like is the 'attention to detail in the design' of the pet-friendly building.",
+   "features into account, such as using SPC flooring that is more resistant to moisture and scratches, and having more frequent railings than in regular buildings.",
+   "89 million baht for Simplex units and approximately 5 million baht for Loft units (the average price per square meter for the entire project is around 150,000 baht, which is quite high)."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:500446576",
+  "condo": "IDEO Q Victory, Bangkok",
+  "extraits": [
+   "Highrise condominium project Victory Monument Ideo Q Victory is a freehold project developed by Ananda Development.",
+   "The building is a 39-storey high building with a total area of 1-2-70.",
+   "The total number of units is 348 units.",
+   ") Ideo Q Victory is a project that is under construction and is expected to be completed in 2019."
+  ],
+  "verite": {
+   "nb_etages": 39,
+   "nb_lots": null,
+   "promoteur": "Ananda Development"
+  }
+ },
+ {
+  "id": "ddproperty:sale:11807230",
+  "condo": "Hyde Sukhumvit 11, Bangkok",
+  "extraits": [
+   "\"Space of Peace on Chaos\" Hyde Sukhumvit 11, a 39-storey, 478-unit high-rise condominium complex, offers the ultimate in lifestyle and lifestyle.",
+   "• Project Name: Hyde Sukhumvit 11 • Developer: Grande Asset - Grand Asset Hotels and Property Plc.",
+   "Project area: 2 rai 1 ngan 58 square wah The building is divided into 39 floors and 9 floors, including 478 units.",
+   "276 parking spaces (57%) Building A 1-3 floors.",
+   "Normal parking (4th floor)."
+  ],
+  "verite": {
+   "nb_etages": 39,
+   "nb_lots": 478,
+   "promoteur": "Grande Asset"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500402887",
+  "condo": "Culture Thonglor, Bangkok",
+  "extraits": [
+   "This project is developed by Ananda Development Public Company Limited, The total area is 3,025.",
+   "20 square metres, comprising 493 units with living spaces ranging from 26-70 square metres.",
+   "The unit types include studio, 2 bedrooms, and 1-2 bathrooms.",
+   "Completion of the entire project is expected in 2026, and held under a freehold ownership structure.",
+   "The interior atmosphere of the residential units emphasizes loft-style high ceilings of 4."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": 493,
+   "promoteur": "Ananda Development"
+  }
+ },
+ {
+  "id": "ddproperty:rent:11782849",
+  "condo": "Hyde Sukhumvit 13, Bangkok",
+  "extraits": [
+   "hyde sukhumvit 13 luxury condominium in the heart of Sukhumvit, 40 storeys high building, hyde sukhumvit 13 project emphasizes luxury, but also focus on privacy.",
+   "There will be a trendy building with convenience stores and many restaurants.",
+   "set - Grand Asset Hotels and Property LOCATION: Sukhumvit Soi 13, Sukhumvit Road, Klongtoey Nua Wattana Bangkok Project Type: High Rise Condo 40, 1st Floor, Building 454 Units Estimated Land: 2-1-76."
+  ],
+  "verite": {
+   "nb_etages": "ambigu",
+   "nb_lots": 454,
+   "promoteur": "Grande Asset"
+  }
+ },
+ {
+  "id": "ddproperty:rent:11614265",
+  "condo": "Four Seasons Private Residences, Bangkok",
+  "extraits": [
+   "The concept of building is to make every room a corner room.",
+   "All living rooms have a view of the river and the city of Bangkok, and one of the units is designed to provide a view of the river.",
+   "Project Name: Four Seasons Private Residences Bangkok Developer: Country Group - Country Group Development Plc.",
+   "Location : Soi Charoenkrung 64, Charoenkrung Road, Yannawa, Sathorn The 73-storey riverside residential building with 355 units valued at 19,000 million baht.",
+   "The parking lot is 600 units for the residences."
+  ],
+  "verite": {
+   "nb_etages": 73,
+   "nb_lots": 355,
+   "promoteur": "Country Group"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500461970",
+  "condo": "Lloyd Soonvijai-Thonglor, Bangkok",
+  "extraits": [
+   "Lloyd Soonvijai-Thonglor condominium is a distinguished freehold development located at Soi Phetchaburi 47, Phetchaburi Road, Bang Kapi, 10310, in Bangkok, Thailand.",
+   "Pieamsuk Property Development developed this project to offer modern living spaces and nature-inspired features.",
+   "Completed in 2021, it comprises 123 residential units spread across a low-rise, single tower.",
+   "The unit options range from one-bedroom to two-bedroom apartments, varying in size from 26."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": "Pieamsuk Property Development"
+  }
+ },
+ {
+  "id": "ddproperty:rent:500103500",
+  "condo": "BEATNIQ Sukhumvit 32, Bangkok",
+  "extraits": [
+   "It looks like a flat building.",
+   "It is seen from Facade of the BEATNIQ Sukhumvit 32 building which is connected between the steelwork and the glass."
+  ],
+  "verite": {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  }
+ },
+ {
+  "id": "ddproperty:sale:11755533",
+  "condo": "The Ritz-Carlton Residences, Bangkok",
+  "extraits": [
+   "The Ritz Carlton Residences is a 77 storey building built on 9 rai 1 ngan 49 sq.",
+   "The building is close to BTS Sky train station, Chong Nonsi BTS station.",
+   "It is the tallest building in Thailand.",
+   "Project Name: The Ritz Carlton Residences Project developer: Pace - Pace Development Corporation Plc.",
+   "com/about_th/developer/home Condo close to BTS: Chong Nonsi BTS."
+  ],
+  "verite": {
+   "nb_etages": 77,
+   "nb_lots": null,
+   "promoteur": "Pace Development"
+  }
+ }
+]

@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import psycopg
 from psycopg.types.json import Json
 
+from pipeline import details
 from store.base import BaseStore
 
 _COLS = (
@@ -21,7 +22,30 @@ _COLS = (
     "unit_key", "year_built", "photo_count", "photo_sizes",
     # provenance : qui publie, quand, et republication signalée par la source
     "agent_id", "agency_id", "posted_at", "is_auto_repost",
+    # descriptif libre (capturé depuis le 2026-07-31, non rétroactif) et TEXTE
+    # INTÉGRAL de la page, compressé — la matière première qui permet de REJOUER
+    # une extraction quand un motif se révèle faux, sans re-scraper.
+    "description", "page_text",
+    # détails extraits du descriptif — dérivés de details.COLONNES, jamais
+    # recopiés : trois listes tenues à la main, c'est trois façons de diverger.
+    *(c for c, _ in details.COLONNES),
 )
+
+
+#: Colonnes BOOLÉENNES côté Postgres. SQLite n'a pas de type booléen et y range
+#: des entiers 0/1 : les transférer tels quels casse l'écriture en ligne
+#: (« column d_animaux_ok is of type boolean but expression is of type smallint »).
+#: C'est la même famille de divergence entre les deux stores que `median_price`
+#: (moyenne en SQLite, médiane en Postgres) corrigée le 2026-07-28.
+#: La conversion est faite ICI plutôt que chez l'appelant : tout chemin d'écriture
+#: en profite, y compris `ops/remonter-local.py`.
+_BOOLEENNES = ("is_auto_repost", "d_animaux_ok", "d_livre")
+
+
+def _coerce(col: str, v):
+    if v is None or col not in _BOOLEENNES:
+        return v
+    return bool(v)
 
 
 def _now() -> str:
@@ -74,14 +98,14 @@ class SupabaseStore(BaseStore):
         # Revue = série d'absences interrompue : on remet le compteur à zéro.
         self._execute(
             "update listings set status='active', last_seen=%s,"
-            " missed_count=0, first_missed_at=null where id=%s",
+            " missed_count=0, first_missed_at=null,delisted_at=null where id=%s",
             (_now(), listing_id),
         )
 
     def upsert_listing(self, norm: dict, images: list[dict] | None) -> tuple[str, float | None]:
         existing = self.get_listing(norm["id"])
         now = _now()
-        vals = [norm.get(c) for c in _COLS]
+        vals = [_coerce(c, norm.get(c)) for c in _COLS]
 
         if existing is None:
             placeholders = ",".join(["%s"] * (len(_COLS) + 5))  # id + cols + status + 2 dates + raw_data
@@ -92,16 +116,20 @@ class SupabaseStore(BaseStore):
             )
             if norm.get("price") is not None:
                 self._add_price(norm["id"], norm["price"], now)
+            if norm.get("posted_at"):
+                self._add_posted_at(norm["id"], norm["posted_at"], now)
             self._set_images(norm["id"], images)
             self._set_amenities(norm["id"], norm.get("amenities", []))
             return "new", None
 
         old_price = existing["price"]
         new_price = norm.get("price")
+        # AVANT l'écrasement — cf. SqliteStore._track_posted_at pour le pourquoi.
+        self._track_posted_at(existing, norm.get("posted_at"), now)
         set_clause = ",".join(f"{c}=%s" for c in _COLS)
         self._execute(
             f"update listings set {set_clause},status='active',last_seen=%s,raw_data=%s,"
-            f"missed_count=0,first_missed_at=null where id=%s",
+            f"missed_count=0,first_missed_at=null,delisted_at=null where id=%s",
             (*vals, now, Json(norm.get("raw_data", {})), norm["id"]),
         )
         status = "unchanged"
@@ -117,6 +145,29 @@ class SupabaseStore(BaseStore):
             "insert into price_history (listing_id,price,observed_at) values (%s,%s,%s)",
             (listing_id, price, when),
         )
+
+    def _add_posted_at(self, listing_id: str, valeur, when: str) -> None:
+        self._execute(
+            "insert into posted_at_history (listing_id,posted_at,observed_at) "
+            "values (%s,%s,%s)", (listing_id, valeur, when),
+        )
+
+    def _track_posted_at(self, existing, nouveau, when: str) -> None:
+        """Historise `posted_at` quand il CHANGE — cf. SqliteStore._track_posted_at.
+
+        Tant que `posted_at_history` est vide, `posted_at` NE remplace PAS
+        `first_seen` dans le time-on-market : mesuré à -16 jours d'écart médian,
+        il se comporte comme une date de remontée, pas de publication.
+        """
+        if not nouveau:
+            return
+        try:
+            ancien = existing["posted_at"]
+        except (KeyError, IndexError):
+            return
+        if ancien and str(ancien) == str(nouveau):
+            return
+        self._add_posted_at(existing["id"], nouveau, when)
 
     def _set_images(self, listing_id: str, images: list[dict] | None) -> None:
         if images is None:

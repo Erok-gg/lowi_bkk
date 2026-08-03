@@ -92,19 +92,34 @@ def is_01(beds):
 
 # ───────────────────────── données ─────────────────────────
 def fetch_all():
+    """Lit `listings_sane`, PAS `listings`.
+
+    Corrigé le 2026-08-03. L'étude appliquait ses propres bornes depuis
+    `study/config.json` — une TROISIÈME définition, à côté de `lib/market-bounds.ts`
+    et de la vue `listings_sane`. CLAUDE.md exige une source unique ; il y en avait
+    trois, et celle de l'étude divergeait (loyer plafonné à 200 000 au lieu de
+    500 000, aucun plancher, aucune borne de surface).
+
+    ⚠ Mesuré avant de corriger, parce que l'ampleur importe autant que l'existence :
+    sur 36 quartiers, UN SEUL voit un chiffre bouger, de +0,5 %. La double médiane
+    par immeuble absorbe ces valeurs — c'est exactement ce pour quoi elle a été
+    choisie. La divergence était donc un piège de MAINTENANCE, pas une erreur de
+    publication : aucun chiffre déjà publié n'est invalidé.
+    """
     dsn = os.environ["SUPABASE_DB_URL"]
     win = CFG["tension"]["delisted_window_days"]
     with psycopg.connect(dsn, connect_timeout=30) as conn:
         cur = conn.execute("""
             SELECT id, source, source_url, title, deal_type, price, area_sqm, price_per_sqm,
                    bedrooms, bathrooms, condo_name, khet, lat, lng, first_seen::text
-            FROM listings WHERE status='active' AND price_per_sqm > 0 AND condo_name IS NOT NULL
+            FROM listings_sane WHERE status='active' AND price_per_sqm > 0
+              AND condo_name IS NOT NULL
         """)
         cols = [c.name for c in cur.description]
         actives = [dict(zip(cols, r)) for r in cur.fetchall()]
         cur = conn.execute(f"""
             SELECT source, khet, condo_name, bedrooms, price, first_seen::text, delisted_at::text
-            FROM listings
+            FROM listings_sane
             WHERE status='inactive' AND deal_type='sale'
               AND delisted_at >= now() - interval '{win} days'
         """)
@@ -147,11 +162,43 @@ def sale_ok(r):
 def rent_ok(r):
     return r["deal_type"] == "rent" and (r["price"] or 0) <= CFG["stats"]["rent_max_thb_month"]
 
+#: Les 50 quartiers de Bangkok, lus DEPUIS LE DÉCOUPAGE lui-même
+#: (public/data/bangkok-khet.geojson). Jamais recopiés : une liste tenue à la
+#: main finit par diverger de la carte qu'elle est censée décrire.
+def _khets_bangkok() -> set[str]:
+    p = os.path.join(ROOT, "public", "data", "bangkok-khet.geojson")
+    if not os.path.exists(p):
+        return set()
+    g = json.load(open(p, encoding="utf-8"))
+    return {(f.get("properties") or {}).get("name_en")
+            or (f.get("properties") or {}).get("name")
+            for f in g.get("features", [])} - {None}
+
+
+KHETS_BKK = _khets_bangkok()
+
+
 def khet_stats(actives, strata="0-1BR"):
-    """Double médiane par condo + rendement within-condo, par khet."""
+    """Double médiane par condo + rendement within-condo, par khet.
+
+    PÉRIMÈTRE. On ne retient que les 50 quartiers de Bangkok. Avant le
+    2026-08-03, toute chaîne présente dans `khet` produisait une ligne de
+    classement — y compris des annonces situées HORS de Bangkok :
+
+      · 27 annonces « Bang Na » à 13,6578/100,6029 — Sukhumvit 107, secteur
+        Bearing, en province de Samut Prakan. Elles produisaient une ligne
+        « Bang Na » à côté de « Bang Na District », visuellement identique
+        puisque l'affichage retire le suffixe, mais avec un rendement différent.
+      · 14 « Bang Phli », 3 « Pak Kret », 2 « Bang Sao Thong » — Samut Prakan
+        et Nonthaburi, correctement nommées par leurs sources.
+
+    Ces annonces ne sont pas fausses : elles sont hors sujet. Les compter dans un
+    classement des quartiers de Bangkok crée un quartier fantôme qu'un lecteur
+    ne peut pas interpréter.
+    """
     cs, cr = defaultdict(lambda: defaultdict(list)), defaultdict(lambda: defaultdict(list))
     for r in actives:
-        if not r["khet"]:
+        if not r["khet"] or (KHETS_BKK and r["khet"] not in KHETS_BKK):
             continue
         if strata == "0-1BR" and not is_01(r["bedrooms"]):
             continue
@@ -412,12 +459,70 @@ def load_snapshots():
     return snaps
 
 def evolution_md(snaps):
+    """Tables d'évolution — ou le refus explicite d'en produire.
+
+    Défaut corrigé le 2026-08-03. Les éditions du 6 et du 9 juillet portaient des
+    instantanés IDENTIQUES au chiffre près : mêmes totaux (18 429 actives,
+    8 847 ventes, 9 582 locations, 2 469 condos) et **48 quartiers sur 48
+    rigoureusement égaux**. Aucun scrap n'avait eu lieu entre les deux.
+
+    Le rapport affichait donc « Δ +0.0 % » sur chaque quartier — ce qui SE LIT
+    COMME UNE STABILITÉ DU MARCHÉ alors que c'est la même mesure présentée deux
+    fois. Un lecteur extérieur y voyait une information ; il n'y en avait aucune.
+
+    Une section d'évolution ne doit exister que si les données ont bougé. Quand
+    elles n'ont pas bougé, il faut le DIRE, pas produire un tableau de zéros.
+    """
     if len(snaps) < 2:
         return ("*Première édition snapshotée — les tables d'évolution apparaîtront "
                 "automatiquement à partir de la 2e édition.*\n")
+
+    # ─────────── artefacts de TRANSFERT, pas de marché ───────────
+    # Une remontée de données locales fait entrer des milliers d'annonces d'un
+    # coup. Les écarts entre éditions mélangent alors mouvement réel et effet de
+    # corpus, et rien ne les distingue à la lecture. Le 2026-08-03 : 18 429 →
+    # 27 380 actives, et Bang Na affichait −22,9 % sans qu'un seul prix ait bougé.
+    # Les remontées sont journalisées par ops/remonter-local.py.
+    avert = []
+    ev = os.path.join(ROOT, "study", "evenements", "remontees.jsonl")
+    if os.path.exists(ev):
+        for ligne in open(ev, encoding="utf-8"):
+            ligne = ligne.strip()
+            if not ligne:
+                continue
+            try:
+                e = json.loads(ligne)
+            except json.JSONDecodeError:
+                continue
+            d = (e.get("date") or "")[:10]
+            if snaps[-2]["date"] < d <= snaps[-1]["date"]:
+                avert.append(e)
+
+    a, b = snaps[-2], snaps[-1]
+    if a.get("totals") == b.get("totals") and a.get("khet_stats_01") == b.get("khet_stats_01"):
+        return (f"> ⚠ **Aucune évolution mesurable.** L'instantané du {b['date']} est "
+                f"identique à celui du {a['date']} — mêmes totaux, mêmes valeurs sur "
+                f"tous les quartiers. Aucun scrap n'a eu lieu entre les deux éditions.\n>\n"
+                f"> Les tables d'évolution ne sont pas affichées : elles ne montreraient "
+                f"que des « +0,0 % », ce qui se lirait à tort comme une stabilité du "
+                f"marché. Relancer un cycle de scraps avant la prochaine édition.\n")
+
     dates = [s["date"] for s in snaps]
-    out = [f"Éditions comparées : {', '.join(dates)} "
-           f"(versions de config : {', '.join(str(s['config_version']) for s in snaps)}).\n"]
+    out = []
+    if avert:
+        n = sum(e.get("annonces_transferees") or 0 for e in avert)
+        out.append(
+            "> ⚠ **Ces écarts ne sont pas que du marché.** "
+            f"{len(avert)} remontée(s) de données locales ont eu lieu depuis "
+            f"l'édition du {a['date']}, portant {n} annonces — le corpus passe de "
+            f"{a['totals']['actives']} à {b['totals']['actives']} actives. "
+            "Un écart de quelques pourcents relève ici du changement de composition "
+            "autant que du prix.\n>\n"
+            "> Ce qui reste lisible : le SENS et le CLASSEMENT relatif des quartiers. "
+            "Ce qui ne l'est pas : l'ampleur. La prochaine édition, sur corpus stable, "
+            "donnera la première évolution propre.\n")
+    out.append(f"Éditions comparées : {', '.join(dates)} "
+               f"(versions de config : {', '.join(str(s['config_version']) for s in snaps)}).\n")
     out.append("**Prix de vente /m² (0–1BR, double médiane) :**\n")
     header = "| Quartier | " + " | ".join(dates) + " | Δ dernière |"
     out.append(header)
@@ -679,15 +784,28 @@ def render(actives, D01, A, B, tens, snaps, db_start, demo=None, official=None):
                  f"{e['school']} ({e['school_m']}) | {metro} |")
 
     L.append(f"\n## 7. Tension — délistées des {t['delisted_window_days']} derniers jours\n")
+    cad = t.get("scan_cadence_days", 4)
     L.append("Rappel : délistage = vendu OU retiré OU artefact de fenêtre ; comparaisons entre "
              "quartiers/typologies valides, niveaux absolus non. Vies médianes plafonnées par l'âge de la base.\n")
+    L.append(f"\n> ⚠ **La vie médiane ne peut pas descendre sous {cad} jours**, qui est "
+             f"l'intervalle entre deux scraps. Une valeur égale à {cad} signifie « morte "
+             f"avant qu'on repasse », pas « vendue en {cad} jours » — la mesure ne résout "
+             f"rien en dessous de sa propre cadence. Ces lignes sont marquées `≤`.\n>\n"
+             f"> S'y ajoute la republication : un agent qui retire et repose son annonce "
+             f"crée une mort et une naissance sans qu'un lot change de main. C'est ce que "
+             f"les cohortes `unit_key` corrigent, et que cette section n'utilise pas encore.\n")
     L.append(f"\n**Par quartier (≥{t['min_delisted_per_khet']} délistées)** :\n")
     L.append("| Quartier | Délistées | Taux | Vie médiane (j) | Prix médian |")
     L.append("|---|---|---|---|---|")
     for r in tens["by_khet"]:
         if r["n_delisted"] >= t["min_delisted_per_khet"]:
+            vie = r["median_days_active"]
+            # `≤` plutôt qu'une valeur nue : le chiffre est un plancher de mesure,
+            # pas une observation. Le présenter nu invite à le lire comme un délai
+            # de vente réel.
+            vie_txt = f"≤ {cad}" if vie is not None and vie <= cad else f"{vie}"
             L.append(f"| {r['khet'].replace(' District', '')} | {r['n_delisted']} | {r['delist_rate_pct']} % | "
-                     f"{r['median_days_active']} | {thb(r['median_price'])} |")
+                     f"{vie_txt} | {thb(r['median_price'])} |")
     L.append("\n**Par typologie (churn = délistées / (délistées + stock actif des mêmes sources))** :\n")
     L.append("| Typologie | Délistées | Stock actif | Churn |")
     L.append("|---|---|---|---|")

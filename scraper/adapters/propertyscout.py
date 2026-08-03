@@ -15,6 +15,7 @@ from typing import Iterator
 from urllib.parse import urljoin
 
 from adapters.base import BaseAdapter
+from pipeline import description
 from pipeline.fetch import Fetcher
 
 NEXT_RE = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
@@ -165,6 +166,8 @@ class PropertyscoutAdapter(BaseAdapter):
         if not html:
             return
         data = _next_data(html)
+        rec["description"] = description.extract(html, data)
+        rec["page_text"] = description.texte_integral(html)
         p = ((data or {}).get("props") or {}).get("pageProps", {}).get("property")
         if not isinstance(p, dict):
             return

@@ -4,6 +4,10 @@
 >
 > **Flow complet du système (scrap → parsing → stockage → heuristiques → calculs) : [docs/pipeline.md](docs/pipeline.md)**
 >
+> **Système d'agents (12 bots orchestrés, étages T0/T1/T2) : [agents/README.md](agents/README.md)**
+>
+> **Présentation non technique — flux, méthode, valeur, limites : [docs/dossier-investisseur/](docs/dossier-investisseur/README.md)**
+>
 > **Décisions, méthodes et défauts corrigés : voir [docs/journal-technique.md](docs/journal-technique.md)**
 > (registre append-only — le *pourquoi* des choix, ce qui a été mesuré, ce qui
 > restait faux au moment de la décision, et la traçabilité de provenance).
@@ -64,16 +68,18 @@ On doit pouvoir changer **variables de scraping** et **présentation des donnée
 - **social_leads** : annonces réseaux sociaux, **table séparée à dessein** (déclaratif non vérifié → ne doit pas contaminer les stats de marché).
 - **Vues** : `khet_stats`, `street_stats`, `listings_sane` (périmètre assaini), `listing_benchmarks` + `opportunites` (cascade de comparaison), `cohort_tension`, `condos_age`.
 
-### Volumétrie (relevée le 2026-07-28 — à réactualiser, elle pilote les décisions)
+### Volumétrie (relevée le 2026-07-31 — elle pilote les décisions)
 | | |
 |---|---|
-| Annonces totales | 34 275 (48 Mo) |
-| **Actives** | **16 147** — vente 8 063 / location 8 084 |
-| Actives plausibles (`listings_sane`) | 15 875 |
+| Annonces totales | 35 779 |
+| **Actives** | **18 843** — fazwaz 9 847 / ddproperty 6 671 / propertyscout 1 520 / nestopa 805 |
 | Immeubles connus / avec annonce active | 4 514 / 2 897 |
 | `year_built` renseigné | **0** |
-| Quota étranger renseigné | **197** (1,2 %) |
-| Doublons exacts actifs | 1 399 (8,7 %), dont 1 326 intra-source |
+| Quota étranger renseigné | 197 (1,2 %) |
+| `agent_id` / `posted_at` renseignés | **1 294** — DDproperty **uniquement** |
+| `is_auto_repost` | 675 vrais / 619 faux — **vérité terrain fournie par la source** |
+| `description` | **0** — colonne créée le 31/07, capture branchée, **non rétroactive** |
+| Paires candidates de doublons | 38 355, dont **16 244 tranchées par SQL seul** (42 %) |
 
 > ⚠ Le projet est passé de ~1 000 à 16 000 actives. Les choix « on charge tout »
 > (pages en `force-dynamic` sans cache, tableaux sans virtualisation) datent de
@@ -168,7 +174,17 @@ Usage perso non-commercial. Fréquence ~hebdo (pas de boucle serrée). Respect r
 - [x] **Provenance des annonces + allègement des pages (2026-07-28 nuit)**
   - **Les « 1 399 doublons » n'en étaient pas.** Inspection : identifiants d'unité FazWaz *consécutifs* (u6548791…u6548800) = lots distincts versés en lot par une agence. Une dédup aurait effacé de l'offre réelle. Ces annonces sont de plus *simultanément* actives — rien à voir avec la republication séquentielle que traitent les cohortes.
   - **Ce qui rend la question décidable** : `agent_id`/`agency_id`, déjà présents dans le `__NEXT_DATA__` DDproperty et jusqu'ici ignorés (remplis 22/22 à la sonde). Vue `doublons_agent` fournie mais **non branchée** sur les stats : vide tant que le champ n'est pas collecté.
-  - **`posted_at`** (date de mise en ligne réelle, `postedOn.unix`) et **`is_auto_repost`** capturés. `posted_at` attaque la cause du problème d'absorption, dont le délai de grâce et `reliableDelistingSince` ne sont que des contournements → **à substituer à `first_seen` dans le time-on-market dès qu'il est peuplé**.
+  - **`posted_at`** (`postedOn.unix`) et **`is_auto_repost`** capturés. ⚠ **Ce n'est PAS une date de mise en ligne, et la substitution à `first_seen` annoncée ici est ANNULÉE** — mesure du 2026-08-02, détail dans [posted_at_history.sql](supabase/migrations/posted_at_history.sql) : écart médian `first_seen − posted_at` = **−16 j**, soit l'annonce vue seize jours *avant* sa publication déclarée. Le champ se comporte comme une date de **remontée en tête de liste** ; le substituer *raccourcirait* le time-on-market et mesurerait l'assiduité des agents à rafraîchir. S'ajoute que le champ n'existe que sur DDproperty, dont la part du stock actif va de **3 % à 89 % selon le quartier** : une métrique mixte varierait avec la composition des sources, pas avec le marché. **`first_seen` reste la base unique** (biais uniforme sur les 4 sources, donc comparable) ; le correctif de l'absorption reste les cohortes `unit_key`. Table `posted_at_history` branchée sur les 2 stores pour prouver ou démentir le mécanisme au prochain scrap.
   - **Poids des pages −80 %** : `/for-sale` 19,6 → **3,9 Mo** (3,7 s → **0,51 s** en cache), `/to-rent` 19,7 → 4,0 Mo, `/rendements` 13,4 → 3,2 Mo. Quatre causes : requêtes rejouées (mémoïsation `lib/cache.ts` — **pas `unstable_cache`**, plafonné à 2 Mo/entrée sur Vercel), appariement vente↔location déporté côté serveur, projections `ListingRow`/`YieldInput` au lieu de `Listing` complets, et rendu du tableau par tranches de 200.
+- [x] **Système d'agents — 12 bots orchestrés (2026-07-31)** — `agents/`, doc complète : [agents/README.md](agents/README.md).
+  - **Les 3 tâches Windows n'avaient JAMAIS tourné** depuis leur création (11/07) : guillemets échappés littéraux dans le XML (`-File \"C:\...\"`), insérés par le parsing de la chaîne `schtasks`. Preuve : `ops/logs/` n'existait pas. D'où aussi `docs/etudes/` figé au 09/07 sur des données du 29/07. Remplacées par **une seule** tâche `LowiBKK-Agents` (quotidienne 08:00 → `orchestrator.py --due`), enregistrée par `ops/install-agents-task.ps1` **qui relit le XML et refuse tout `\"`**. Vérifiée en exécution (`0x00041301`).
+  - **12 agents** alignés sur le deck : 4 extraction · 2 surveillance · 2 analyse · 1 organisation · 1 reporting · 1 stockage · 1 supervision. Chacun a son `agents/skills/<agent>/SKILL.md` (mission, procédure, **contrat de sortie** vérifié par l'overseer, bandes, escalade, modes de panne).
+  - **Trois étages** : **T0 déterministe** (8 agents — il leur manquait l'orchestration, pas l'intelligence) · **T1 local `qwen3:8b` en MODE EXTRACTION uniquement** · **T2 Claude** par file de tickets `agents/queue/` (pas de CLI ni de clé API sur la machine).
+  - **Ledger SQLite** (`agents/ledger.db`) : chaque run, chaque constat, chaque escalade. C'est lui qui rend l'overseer possible et qui calcule ce qui est dû (le rattrapage vient de la base, pas de `StartWhenAvailable`).
+  - **Ce que la mesure a imposé** (650+ appels sur paires réelles, détail au journal) : `/no_think` est **silencieusement ignoré** → sorties vides → **panne muette** (0/10) ; le paramètre natif `think` corrige (8/10). Raisonnement inutile ici (9/10 à 22 s contre 9/10 à 3,6 s). Prompt bref **92 %** vs procédure verbeuse **69 %**. Abstention forcée par prompt → **12/100**. **Mode extraction** (le modèle constate, le code décide) → **99 % et 77 % d'abstention** contre **0 %** d'abstention pour le verdict direct. Auto-cohérence sans effet. `confidence` auto-déclarée inutilisable comme seuil.
+  - **Garde-fou permanent** : `agents/tests/test_local_llm.py` — seuils **≥ 90/100** et **≥ 70 % d'abstention**, à ne pas relâcher pour faire passer le test.
+  - **Aucune fusion ni suppression d'annonce** : findings seulement. Les verdicts sur paires ambiguës vont en file de revue (`agents/state/organize/revue.jsonl`) et n'influencent aucune statistique.
+  - **Alertes** : `agents/audits/CHANGELOG.md` exhaustif + e-mail Gmail sur sévérité haute seulement. Claude écrit sur **branche**, jamais `main`.
+- [x] **Descriptifs capturés (2026-07-31)** — colonne `description` + `scraper/pipeline/description.py`, branchée sur les 4 adaptateurs. Aucun texte libre n'était stocké jusque-là (`raw_data ? 'description'` = 0 partout) : le « motif du vendeur » des case studies venait de l'audit humain, pas de la donnée. Deux pièges corrigés en testant sur de vraies pages : le `ld+json` FazWaz décrit **l'organisation** et non le bien ; le contenu des blocs `<style>` survivait au détaguage et arrivait en CSS. **Nestopa n'a rien d'exploitable** (champ absent ou redite des specs, pages détail en 403) — 0 % y est attendu. **Non rétroactif.**
 - [ ] **Suites identifiées (mesurées, non traitées)** : `/tension-table` pèse encore 8,6 Mo (sérialise les 34 275 annonces) ; dédup même-agent applicable au prochain scrape ; sonder PropertyScout pour l'agent ; empreinte photo inerte (0 ligne, `est_doublon` sans appelant) ; `year_built` à backfiller **côté serveur** ; quota étranger par immeuble ; logique métier dupliquée `study/run_study.py` ↔ `lib/yields.ts`.
 - [ ] **Idées plus tard** : jitter/mouvements aléatoires anti-ban ; heatmaps loyers & prix sur la carte (couche MapLibre pondérée).

@@ -17,6 +17,7 @@ from typing import Iterator
 
 from adapters.base import BaseAdapter
 from adapters.fazwaz import COMMON_AMENITIES
+from pipeline import description
 from pipeline.fetch import Fetcher
 
 NEXT_RE = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
@@ -234,6 +235,8 @@ class DdpropertyAdapter(BaseAdapter):
 
     def _enrich_from_detail(self, html: str, rec: dict) -> None:
         data = _next_data(html)
+        rec["description"] = description.extract(html, data)
+        rec["page_text"] = description.texte_integral(html)
         if data:
             # coordonnées précises
             center = _find_with_keys(data, {"lat", "lng"})

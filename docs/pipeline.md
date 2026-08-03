@@ -5,7 +5,12 @@
 > chaque choix et l'historique des défauts corrigés, voir
 > [journal-technique.md](journal-technique.md).
 >
-> État au 2026-07-28 : 34 275 annonces, 16 147 actives, 4 sources.
+> État au 2026-07-31 : 35 813 annonces, 18 879 actives, 4 sources.
+>
+> Depuis le 2026-07-31, le pipeline est **orchestré par 12 agents** avec journal
+> d'exécution et détection de panne : [agents/README.md](../agents/README.md).
+> Présentation non technique du même flux :
+> [dossier-investisseur/](dossier-investisseur/README.md).
 
 ---
 

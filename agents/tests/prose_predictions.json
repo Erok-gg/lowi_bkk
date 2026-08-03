@@ -1,0 +1,1006 @@
+{
+ "regex": [
+  {
+   "nb_etages": 31,
+   "nb_lots": 246,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 1332,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": "ambigu",
+   "promoteur": null
+  },
+  {
+   "nb_etages": 25,
+   "nb_lots": 274,
+   "promoteur": "Noble Development"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 29,
+   "nb_lots": 315,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 161,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 24,
+   "nb_lots": 597,
+   "promoteur": "AP Thailand"
+  },
+  {
+   "nb_etages": 40,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 294,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 180,
+   "promoteur": "Proud Real Estate"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 1400,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 64,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 34,
+   "nb_lots": 447,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 17,
+   "nb_lots": 158,
+   "promoteur": "PK - PK Global"
+  },
+  {
+   "nb_etages": 70,
+   "nb_lots": 379,
+   "promoteur": "ICONSIAM - The Icons Siam Residences"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 33,
+   "nb_lots": 235,
+   "promoteur": "Real asset Development"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 180,
+   "promoteur": "Proud Real Estate"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": "ambigu",
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 407,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 47,
+   "nb_lots": 53,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 611,
+   "promoteur": "Noble Development"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 910,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 36,
+   "nb_lots": 197,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 40,
+   "nb_lots": 361,
+   "promoteur": "Eastern Star - Eastern Star Real Estate"
+  },
+  {
+   "nb_etages": 38,
+   "nb_lots": "ambigu",
+   "promoteur": null
+  },
+  {
+   "nb_etages": 50,
+   "nb_lots": 147,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 8,
+   "nb_lots": 711,
+   "promoteur": "Pruksa - Pruksa Real Estate"
+  },
+  {
+   "nb_etages": 44,
+   "nb_lots": 1140,
+   "promoteur": "AP (Thailand)"
+  },
+  {
+   "nb_etages": 77,
+   "nb_lots": null,
+   "promoteur": "Pace - Pace Development Corporation"
+  },
+  {
+   "nb_etages": 25,
+   "nb_lots": 274,
+   "promoteur": "Noble Development"
+  },
+  {
+   "nb_etages": 8,
+   "nb_lots": 263,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 4,
+   "nb_lots": 1237,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 70,
+   "nb_lots": 379,
+   "promoteur": "ICONSIAM - The Icons Siam Residences"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": "Raimon Land - Raimon Land"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 664,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 61,
+   "nb_lots": 1182,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 33,
+   "nb_lots": 488,
+   "promoteur": "Original Property"
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 198,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 45,
+   "nb_lots": 127,
+   "promoteur": "Sansiri"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 292,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 25,
+   "nb_lots": 372,
+   "promoteur": "Cyada Asset"
+  },
+  {
+   "nb_etages": 41,
+   "nb_lots": 219,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 27,
+   "nb_lots": 148,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 80,
+   "promoteur": "Gaysorn - Gaysorn Property"
+  },
+  {
+   "nb_etages": 8,
+   "nb_lots": 270,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 22,
+   "nb_lots": 710,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 45,
+   "nb_lots": 623,
+   "promoteur": "Siam Nut"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 1615,
+   "promoteur": "AP - AP (Thailand)"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 32,
+   "nb_lots": 276,
+   "promoteur": "V property - V Property Development"
+  },
+  {
+   "nb_etages": 40,
+   "nb_lots": 1253,
+   "promoteur": "AP (Thailand)"
+  },
+  {
+   "nb_etages": 45,
+   "nb_lots": 211,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 34,
+   "nb_lots": 460,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 32,
+   "nb_lots": 276,
+   "promoteur": "V property - V Property Development"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 531,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 24,
+   "nb_lots": 269,
+   "promoteur": "Major Development"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 454,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 35,
+   "nb_lots": "ambigu",
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 367,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 446,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 33,
+   "nb_lots": 743,
+   "promoteur": "Narai Property- Narai Property"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 39,
+   "nb_lots": 348,
+   "promoteur": "Ananda Development"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 478,
+   "promoteur": "Grande Asset - Grand Asset Hotels and Property"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 493,
+   "promoteur": "Ananda Development"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 454,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 73,
+   "nb_lots": "ambigu",
+   "promoteur": "Country Group - Country Group Development"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 123,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 77,
+   "nb_lots": null,
+   "promoteur": "Pace - Pace Development Corporation"
+  }
+ ],
+ "ia": [
+  {
+   "nb_etages": 31,
+   "nb_lots": 246,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 1332,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 300,
+   "promoteur": "Siam Development Co., Ltd"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": "ambigu",
+   "promoteur": null
+  },
+  {
+   "nb_etages": 25,
+   "nb_lots": 274,
+   "promoteur": "Noble Development Public Company Limited"
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 300,
+   "promoteur": "Siam Development Co., Ltd"
+  },
+  {
+   "nb_etages": 29,
+   "nb_lots": 315,
+   "promoteur": "hewathai plc"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": null,
+   "promoteur": "aspire sukhumvit 48"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 161,
+   "promoteur": "ROYCE PRIVATE"
+  },
+  {
+   "nb_etages": 7,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 56,
+   "promoteur": "Crest Collection"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 597,
+   "promoteur": "AP Thailand"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 294,
+   "promoteur": "EASTERN STAR - Eastern Star Real Estate Plc"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 180,
+   "promoteur": "Proud Real Estate Public Company Limited"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 1400,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 64,
+   "promoteur": "The Next Real Estate"
+  },
+  {
+   "nb_etages": 34,
+   "nb_lots": 447,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 17,
+   "nb_lots": 158,
+   "promoteur": "PK - PK Global Ltd"
+  },
+  {
+   "nb_etages": 70,
+   "nb_lots": 379,
+   "promoteur": "ICONSIA - The Icons Siam Residences Co. esidences-iconsiam/review"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 33,
+   "nb_lots": 235,
+   "promoteur": "Real asset Development"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 180,
+   "promoteur": "Proud Real Estate Public Company Limited"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": "ambigu",
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": null,
+   "promoteur": "PTF Realty: PT Realty Co"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 407,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 300,
+   "promoteur": "Siam Development Co., Ltd"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 300,
+   "promoteur": "Siam Development Co., Ltd"
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 300,
+   "promoteur": "Siam Development Co., Ltd"
+  },
+  {
+   "nb_etages": 47,
+   "nb_lots": 53,
+   "promoteur": "Regis"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 490,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 611,
+   "promoteur": "Noble Development Public Company Limited"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 910,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 36,
+   "nb_lots": 197,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 40,
+   "nb_lots": 361,
+   "promoteur": "Eastern Star - Eastern Star Real Estate Co"
+  },
+  {
+   "nb_etages": 38,
+   "nb_lots": 885,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 50,
+   "nb_lots": 147,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 8,
+   "nb_lots": 711,
+   "promoteur": "Pruksa - Pruksa Real Estate Co"
+  },
+  {
+   "nb_etages": 44,
+   "nb_lots": 1140,
+   "promoteur": "AP (Thailand) Public Company Limited"
+  },
+  {
+   "nb_etages": 77,
+   "nb_lots": null,
+   "promoteur": "Pace - Pace Development Corporation Plc. com/about_th/developer/home"
+  },
+  {
+   "nb_etages": 25,
+   "nb_lots": 274,
+   "promoteur": "Noble Development Public Company Limited"
+  },
+  {
+   "nb_etages": 8,
+   "nb_lots": 263,
+   "promoteur": "FYNN Asoke"
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 300,
+   "promoteur": "Siam Development Co., Ltd"
+  },
+  {
+   "nb_etages": 4,
+   "nb_lots": 1237,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 70,
+   "nb_lots": 379,
+   "promoteur": "ICONSIA - The Icons Siam Residences Co. esidences-iconsiam/review"
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 300,
+   "promoteur": "Siam Development Co., Ltd"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": "Raimon Land - Raimon Land Plc"
+  },
+  {
+   "nb_etages": 3,
+   "nb_lots": 664,
+   "promoteur": "Whizdom Essence Sukhumvit"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 61,
+   "nb_lots": 1182,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 300,
+   "promoteur": "Siam Development Co., Ltd"
+  },
+  {
+   "nb_etages": 33,
+   "nb_lots": 488,
+   "promoteur": "Original Property Company Limited"
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 198,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 45,
+   "nb_lots": 127,
+   "promoteur": "Sansiri Public Company Limited"
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 300,
+   "promoteur": "Siam Development Co., Ltd"
+  },
+  {
+   "nb_etages": 36,
+   "nb_lots": 292,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 25,
+   "nb_lots": 372,
+   "promoteur": "Cyada Asset Co"
+  },
+  {
+   "nb_etages": 41,
+   "nb_lots": 219,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 148,
+   "promoteur": "Company Limited"
+  },
+  {
+   "nb_etages": 25,
+   "nb_lots": 132,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 300,
+   "promoteur": "Siam Development Co., Ltd"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 80,
+   "promoteur": "Gaysorn - Gaysorn Property Co"
+  },
+  {
+   "nb_etages": 8,
+   "nb_lots": 270,
+   "promoteur": "aspire"
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 300,
+   "promoteur": "Siam Development Co., Ltd"
+  },
+  {
+   "nb_etages": 22,
+   "nb_lots": 710,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": "บริษัท แอล"
+  },
+  {
+   "nb_etages": 45,
+   "nb_lots": 623,
+   "promoteur": "Siam Nut Co. (Soi Petchaburi 20)"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 1615,
+   "promoteur": "AP - AP (Thailand) Public Company Limited"
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 300,
+   "promoteur": "Siam Development Co., Ltd"
+  },
+  {
+   "nb_etages": 32,
+   "nb_lots": 276,
+   "promoteur": "V property - V Property Development Co. com"
+  },
+  {
+   "nb_etages": 40,
+   "nb_lots": 1253,
+   "promoteur": "AP (Thailand) Public Company Limited"
+  },
+  {
+   "nb_etages": 45,
+   "nb_lots": 211,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 6,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 34,
+   "nb_lots": 460,
+   "promoteur": "Sansiri"
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 300,
+   "promoteur": "Siam Development Co., Ltd"
+  },
+  {
+   "nb_etages": 32,
+   "nb_lots": 276,
+   "promoteur": "V property - V Property Development Co. com"
+  },
+  {
+   "nb_etages": 31,
+   "nb_lots": 531,
+   "promoteur": null
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": "28 Chidlom"
+  },
+  {
+   "nb_etages": 24,
+   "nb_lots": 269,
+   "promoteur": "Major Development"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 454,
+   "promoteur": "Grand Asset Hotels and Property"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": "ambigu",
+   "promoteur": null
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 367,
+   "promoteur": "Orin Property"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 446,
+   "promoteur": "Sansiri"
+  },
+  {
+   "nb_etages": 33,
+   "nb_lots": 743,
+   "promoteur": "Narai Property Co"
+  },
+  {
+   "nb_etages": 30,
+   "nb_lots": 300,
+   "promoteur": "Siam Development Co., Ltd"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 39,
+   "nb_lots": 348,
+   "promoteur": "Ananda Development"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 478,
+   "promoteur": "Grande Asset - Grand Asset Hotels and Property Plc"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": 493,
+   "promoteur": "Ananda Development Public Company Limited"
+  },
+  {
+   "nb_etages": "ambigu",
+   "nb_lots": 454,
+   "promoteur": "Grand Asset Hotels and Property"
+  },
+  {
+   "nb_etages": 73,
+   "nb_lots": 355,
+   "promoteur": "Country Group - Country Group Development Plc"
+  },
+  {
+   "nb_etages": 1,
+   "nb_lots": 123,
+   "promoteur": "Pieamsuk Property Development"
+  },
+  {
+   "nb_etages": null,
+   "nb_lots": null,
+   "promoteur": null
+  },
+  {
+   "nb_etages": 77,
+   "nb_lots": null,
+   "promoteur": "Pace - Pace Development Corporation Plc. com/about_th/developer/home"
+  }
+ ]
+}

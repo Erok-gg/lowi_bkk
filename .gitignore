@@ -48,3 +48,14 @@ tsconfig.tsbuildinfo
 # Le dépôt est public : les versionner ici les publierait, et git n'oublie pas.
 lowi_pitch_deck*.html
 pitch-assets/
+
+# système d'agents : état d'exécution local, pas du code
+agents/ledger.db
+agents/logs/
+agents/audits/
+agents/state/
+agents/queue/
+ops/logs/
+ops/taches-supprimees/
+tests-scrap/
+verif_tooltip.ts

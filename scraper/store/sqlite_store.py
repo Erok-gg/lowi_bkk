@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 
+from pipeline import details
 from store.base import BaseStore
 
 _SCHEMA = """
@@ -41,6 +43,14 @@ create table if not exists price_history (
   id integer primary key autoincrement, listing_id text not null,
   price real not null, observed_at text not null
 );
+-- Évolution de `posted_at` pour une MÊME annonce. Sert à trancher si le champ
+-- est une date de publication (stable) ou de remontée en tête de liste (mobile).
+-- Cf. SqliteStore._track_posted_at.
+create table if not exists posted_at_history (
+  id integer primary key autoincrement, listing_id text not null,
+  posted_at text not null, observed_at text not null
+);
+create index if not exists idx_posted_hist on posted_at_history(listing_id);
 create table if not exists scan_runs (
   id integer primary key autoincrement, started_at text not null, finished_at text,
   source text not null, scanned_count integer, new_count integer,
@@ -89,6 +99,39 @@ class SqliteStore(BaseStore):
         """SQLite n'a pas de type tableau : photo_sizes est stocké en JSON."""
         return json.dumps(v, ensure_ascii=False) if isinstance(v, (list, tuple)) else v
 
+    @classmethod
+    def _valeur(cls, col: str, norm: dict):
+        """Valeur prête à lier, par colonne.
+
+        `page_text` passe par zlib. Sans ce détour la colonne était déclarée
+        `blob` mais recevait la chaîne telle quelle — `compresser()` existait
+        et n'était appelée nulle part, donc le gain annoncé n'était pas réalisé.
+        Sur un texte de page réel : ~78 % de gain.
+        """
+        v = norm.get(col)
+        return cls.compresser(v) if col == "page_text" else cls._bind_value(v)
+
+    @staticmethod
+    def compresser(texte: str | None) -> bytes | None:
+        """Texte de page → BLOB zlib. ~50 % de gain mesuré, et le texte intégral
+        de 15 000 pages tient alors dans ~34 Mo."""
+        if not texte:
+            return None
+        return zlib.compress(texte.encode("utf-8"), 6)
+
+    @staticmethod
+    def decompresser(blob) -> str | None:
+        """Rend le texte archivé. Tolère un texte stocké en clair (bases créées
+        avant la compression) pour ne jamais faire échouer une relecture."""
+        if blob is None:
+            return None
+        if isinstance(blob, str):
+            return blob
+        try:
+            return zlib.decompress(blob).decode("utf-8")
+        except (zlib.error, UnicodeDecodeError):
+            return None
+
     def _migrate(self) -> None:
         """Migrations légères pour les bases créées avant un ajout de colonne."""
         cols = {r["name"] for r in self.db.execute("pragma table_info(khet_snapshots)")}
@@ -106,7 +149,16 @@ class SqliteStore(BaseStore):
                          ("repost_of", "text"), ("repost_reason", "text"),
                          # provenance (cf. provenance_annonce.sql)
                          ("agent_id", "text"), ("agency_id", "text"),
-                         ("posted_at", "text"), ("is_auto_repost", "integer")):
+                         ("posted_at", "text"), ("is_auto_repost", "integer"),
+                         # descriptif libre — seule matière textuelle de la base
+                         ("description", "text"),
+                         # MATIERE PREMIERE : texte integral compresse (zlib)
+                         ("page_text", "blob"),
+                         # détails extraits du descriptif (préfixe d_ pour les
+                         # distinguer des champs de la source). Types déclarés
+                         # dans details.COLONNES et JAMAIS recopiés ici : une
+                         # liste tenue à la main en double finit par diverger.
+                         *details.COLONNES):
             if col not in lcols:
                 self.db.execute(f"alter table listings add column {col} {typ}")
         self.db.execute("create index if not exists idx_listings_unit on listings (unit_key)")
@@ -168,7 +220,7 @@ class SqliteStore(BaseStore):
         # Revue = série d'absences interrompue : on remet le compteur à zéro.
         self.db.execute(
             "update listings set status='active', last_seen=?,"
-            " missed_count=0, first_missed_at=null where id=?",
+            " missed_count=0, first_missed_at=null,delisted_at=null where id=?",
             (_now(), listing_id),
         )
         self.db.commit()
@@ -184,17 +236,23 @@ class SqliteStore(BaseStore):
             "unit_key", "year_built", "photo_count", "photo_sizes",
             # provenance : qui publie, quand, et republication signalée par la source
             "agent_id", "agency_id", "posted_at", "is_auto_repost",
+            # descriptif libre (capturé depuis le 2026-07-31, non rétroactif)
+            "description", "page_text",
+            # détails extraits du descriptif (cf. pipeline/details.py)
+            *(c for c, _ in details.COLONNES),
         )
 
         if existing is None:
             self.db.execute(
                 f"insert into listings (id,{','.join(cols)},status,first_seen,last_seen,raw_data) "
                 f"values (?,{','.join('?' for _ in cols)},'active',?,?,?)",
-                (norm["id"], *[self._bind_value(norm.get(c)) for c in cols], now, now,
+                (norm["id"], *[self._valeur(c, norm) for c in cols], now, now,
                  json.dumps(norm.get("raw_data", {}), ensure_ascii=False)),
             )
             if norm.get("price") is not None:
                 self._add_price(norm["id"], norm["price"], now)
+            if norm.get("posted_at"):
+                self._add_posted_at(norm["id"], norm["posted_at"], now)
             self._set_images(norm["id"], images)
             self._set_amenities(norm["id"], norm.get("amenities", []))
             self.db.commit()
@@ -202,11 +260,15 @@ class SqliteStore(BaseStore):
 
         old_price = existing["price"]
         new_price = norm.get("price")
+        # AVANT l'écrasement : `posted_at` change-t-il pour une MÊME annonce ?
+        # C'est la seule façon de le prouver — l'update ci-dessous détruit
+        # l'ancienne valeur, et un instantané ne dit rien d'une évolution.
+        self._track_posted_at(existing, norm.get("posted_at"), now)
         self.db.execute(
             f"update listings set {','.join(c+'=?' for c in cols)},"
             f"status='active',last_seen=?,raw_data=?,"
-            f"missed_count=0,first_missed_at=null where id=?",
-            (*[self._bind_value(norm.get(c)) for c in cols], now,
+            f"missed_count=0,first_missed_at=null,delisted_at=null where id=?",
+            (*[self._valeur(c, norm) for c in cols], now,
              json.dumps(norm.get("raw_data", {}), ensure_ascii=False), norm["id"]),
         )
         status = "unchanged"
@@ -223,6 +285,41 @@ class SqliteStore(BaseStore):
             "insert into price_history (listing_id,price,observed_at) values (?,?,?)",
             (listing_id, price, when),
         )
+
+    def _add_posted_at(self, listing_id: str, valeur: str, when: str) -> None:
+        self.db.execute(
+            "insert into posted_at_history (listing_id,posted_at,observed_at) values (?,?,?)",
+            (listing_id, valeur, when),
+        )
+
+    def _track_posted_at(self, existing, nouveau: str | None, when: str) -> None:
+        """Historise `posted_at` quand il CHANGE pour une annonce déjà connue.
+
+        Mesuré sur la production le 2026-08-02 : l'écart médian
+        `first_seen - posted_at` vaut **-16 jours** — on a vu l'annonce seize
+        jours AVANT sa date de publication déclarée. Une date de mise en ligne
+        ne peut pas être postérieure à notre propre observation : le champ
+        avance donc dans le temps, et DDproperty y écrit vraisemblablement la
+        date de dernière REMONTÉE en tête de liste, pas celle de publication.
+
+        « Vraisemblablement » : on écrasait la valeur à chaque scan, donc on ne
+        pouvait pas voir un identifiant donné changer. Cette table le prouvera
+        — ou la démentira. Tant qu'elle est vide, la substitution de `posted_at`
+        à `first_seen` dans le time-on-market reste PROSCRITE : elle
+        raccourcirait la durée au lieu de l'allonger, et mesurerait l'assiduité
+        des agents à rafraîchir plutôt que l'absorption du marché.
+
+        Même forme que `price_history` : on n'écrit que sur changement réel.
+        """
+        if not nouveau:
+            return
+        try:
+            ancien = existing["posted_at"]
+        except (KeyError, IndexError):
+            return                       # base créée avant la colonne
+        if ancien and str(ancien) == str(nouveau):
+            return
+        self._add_posted_at(existing["id"], nouveau, when)
 
     def _set_images(self, listing_id: str, images: list[dict] | None) -> None:
         if images is None:

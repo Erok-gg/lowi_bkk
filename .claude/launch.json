@@ -4,13 +4,28 @@
     {
       "name": "bangkok-map",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 3000
     },
     {
       "name": "bangkok-map-prod",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "start"],
+      "runtimeArgs": [
+        "run",
+        "start"
+      ],
+      "port": 3000
+    },
+    {
+      "name": "bangkok-map-test",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:test"
+      ],
       "port": 3000
     }
   ]

@@ -613,3 +613,747 @@ Trois causes distinctes, trois correctifs :
   dès qu'il sera peuplé. C'est la vraie sortie du problème d'absorption.
 - Les trois autres adaptateurs n'exposent pas d'agent aussi clairement.
   PropertyScout mérite une sonde équivalente.
+
+---
+
+## 2026-07-31 · Les agents : trois tâches mortes, et ce que la mesure a imposé au modèle local
+
+### Le défaut qui rendait tout le reste inopérant
+
+Les trois tâches Windows créées le 2026-07-11 — `LowiBKK-ScrapVente`,
+`LowiBKK-ScrapLocation`, `LowiBKK-ArchiveSync` — **n'ont jamais tourné une seule
+fois**. Leur XML enregistré contenait des guillemets échappés littéraux :
+
+```xml
+<Arguments>-NoProfile -ExecutionPolicy Bypass -File \"C:\...\scrap-vente.ps1\"</Arguments>
+```
+
+PowerShell recevait un chemin introuvable et sortait avant la première ligne.
+Preuve matérielle, décisive : **`ops/logs/` n'existe pas**, alors que chaque
+wrapper le crée en première instruction. Les trois remontaient
+`LastTaskResult = 0xFFFD0000`.
+
+Cause : l'enregistrement passait par la **chaîne** `schtasks`, dont le parsing a
+inséré les backslashes. Les cmdlets `New-ScheduledTaskAction` /
+`Register-ScheduledTask` prennent les arguments comme des données et n'ont pas ce
+défaut.
+
+Deux conséquences en cascade : tous les scraps observés (24/07, 29/07) avaient été
+lancés à la main via les `.bat` ; et `run_study.py`, appelé uniquement par
+`scrap-location.ps1`, n'a plus jamais tourné — d'où `docs/etudes/` arrêté au
+**09/07 sur des données du 29/07**.
+
+**Leçon de méthode.** Le défaut n'était pas d'avoir mal enregistré une tâche :
+c'était de ne pas avoir relu ce qui avait été enregistré. Trois semaines de
+silence ressemblaient exactement à trois semaines de bon fonctionnement.
+`ops/install-agents-task.ps1` relit désormais le XML et refuse tout `\"` ; et
+l'agent `overseer` traite un **agent muet** comme plus grave qu'un agent en erreur.
+
+### Campagne de mesure sur le modèle local — 650+ appels, données réelles
+
+Question posée : *un skillset bien écrit suffit-il à rendre qwen3:8b utilisable
+pour de l'arbitrage ?* Jeu de test : 38 338 paires candidates réelles extraites
+de la base, 120 étiquetées par règle experte (60/60), 30 ambiguës où la règle
+refuse de trancher.
+
+**1. La panne dominante est le client, pas le prompt.** Cette version d'Ollama
+renvoie le raisonnement dans un champ **`thinking` séparé** ; `message.content`
+reste **vide** si `num_predict` s'épuise avant la fin du raisonnement. Le token
+`/no_think` est **silencieusement ignoré** — seul le paramètre natif `think`
+fonctionne.
+
+| | Justesse |
+|---|---|
+| Client avec `/no_think` | **0/10 — dix sorties vides** |
+| `think:false` natif, prompt identique | **8/10** |
+
+C'est une panne **muette** : sans détection, on écrit des `null` en base sans
+aucun bruit. C'est le mode de défaillance le plus dangereux du dispositif.
+
+**2. Le raisonnement ne sert à rien ici, et nuit.** 9/10 sans (3,6 s/paire) contre
+9/10 avec (22,5 s/paire) — et la configuration raisonnante a produit une sortie
+vide malgré 2 500 tokens de budget. *(Ma conclusion initiale « le raisonnement est
+indispensable, 0/6 contre 4/6 » était un artefact du client cassé. Consignée ici
+parce qu'elle a orienté à tort le dimensionnement matériel pendant une heure.)*
+
+**3. Le prompt le plus détaillé est le pire.** Sur 100 paires, à modèle égal :
+règles courtes ordonnées **92 %**, procédure numérotée verbeuse **69 %**.
+Invisible sur 10 paires (9/10 pour les deux) — **un jeu de 10 ne départage rien**.
+
+**4. Forcer l'abstention par le prompt détruit le modèle : 12/100.** À trop lui
+demander de douter, il doute de tout.
+
+**5. L'auto-cohérence à 3 votes n'apporte rien** : même matrice, mêmes 8 erreurs,
+3× le coût. Les erreurs sont déterministes, pas bruitées.
+
+**6. Le mode EXTRACTION est la bonne architecture.** C'est le résultat central.
+
+| Approche | Justesse /100 | Abstention sur ambiguës |
+|---|---|---|
+| Verdict direct | 92 % | **0 %** |
+| Abstention forcée par prompt | 12 % | 40 % |
+| **Extraction de faits + décision par code** | **91 %** | **77 %** |
+
+Le modèle ne rend plus de verdict : il constate six faits (`a_active`,
+`b_apres_a`, `ecart_prix_pct`…) et une fonction Python de trois lignes décide.
+L'abstention vient du **code**, pas du modèle — c'est pourquoi elle est fiable.
+Bénéfice secondaire : chaque erreur devient attribuable à un fait précis au lieu
+d'être noyée dans un verdict opaque.
+
+**7. Profil d'erreur.** qwen3:8b : 92/100, et surtout **0 faux `same_unit` sur
+52** — il rate des republications, il n'en invente jamais. C'est le bon sens de
+l'erreur ici : la faute coûteuse du 28/07 est de fusionner à tort. hermes3 se
+trompe dans les deux sens (11 et 7) : plus faible **et** dangereux. qwen2.5:7b
+rendait `confidence: 0.9` sur **toutes** ses réponses, y compris les fausses — la
+confiance auto-déclarée d'un 7B ne vaut rien comme seuil.
+
+> **Réponse à la question posée : non, un skillset ne suffit pas.** Le prompt vaut
+> ~10 points, le client durci ~90, et l'architecture (extraction plutôt que
+> verdict) fait la différence entre un étage utilisable et un étage qui fabrique
+> 28 000 certitudes d'apparence propre.
+
+Seuils gelés en test de non-régression (`agents/tests/test_local_llm.py`) :
+**≥ 90/100** de justesse, **≥ 70 %** d'abstention.
+
+### Descriptifs : la matière qui manquait
+
+Sondé et confirmé : `count(*) filter (where raw_data ? 'description') = 0` sur
+les quatre sources. Aucun texte libre n'était stocké — le « motif du vendeur » des
+études de cas venait entièrement de l'audit humain. Un modèle qui ne voit que des
+nombres ne fait que refaire du SQL, en moins fiable.
+
+Colonne `description` ajoutée, capture branchée sur les 4 adaptateurs. Deux
+défauts trouvés **en testant sur de vraies pages**, qui seraient passés inaperçus
+sans ça :
+
+- **FazWaz** : le `ld+json` de la fiche décrit **l'organisation**
+  (« The most popular property website about condo… »), pas le bien. Capturer ça
+  aurait rempli 20 000 lignes d'un texte de marque identique — pire que du vide,
+  parce qu'indiscernable d'une vraie couverture. Corrigé en ignorant les
+  sous-arbres dont `@type` est `Organization`/`WebSite`/`RealEstateAgent`. Le vrai
+  texte est sous l'intertitre « About This Condo ».
+- Retirer les balises ne suffit pas : le **contenu** des blocs `<style>` restait
+  et arrivait dans le descriptif sous forme de CSS. Ces blocs se suppriment en
+  entier, et un descriptif qui ressemble à du code est rejeté.
+
+Couverture après correction : ddproperty ✓, fazwaz ✓, propertyscout ✓.
+**Nestopa n'a rien d'exploitable** — champ absent la plupart du temps, et quand il
+est là, c'est une redite des specs en thaï ; pages détail en 403. Une couverture
+proche de 0 % sur cette source est attendue, pas une panne.
+
+**Non rétroactif** : les ~35 800 annonces déjà en base resteront à NULL.
+
+### Ce qui reste ouvert
+
+- Le pré-filtre SQL tranche 10 254 des 38 338 paires gratuitement et sans erreur.
+  Les 28 084 ambiguës ne sont traitées que par lots de 300 par cycle
+  (≈ 28 h en flux unique sinon).
+- Les ~23 % de paires ambiguës recevant malgré tout un verdict vont en **file de
+  revue** et n'influencent aucune statistique tant qu'elles ne sont pas validées.
+- `Stop-ScheduledTask` n'arrête **pas** les petits-fils : un `run.py` lancé par
+  l'orchestrateur survit à l'arrêt de la tâche, orphelin et non tracé. Vérifié.
+- La divergence `lib/condo-name.ts` ↔ `_norm_condo` (Python) subsiste : signalée
+  par `organize`, non corrigée.
+
+### Le test de non-régression trouve un défaut dans son propre jeu d'étiquettes
+
+Premier passage de `agents/tests/test_local_llm.py` : les seuils du modèle sont
+tenus (**91/100**, **77 % d'abstention**, 0 panne) mais le test échoue sur un
+contrôle auquel je ne m'attendais pas — *« le pré-filtre SQL contredit 10
+étiquettes »*.
+
+Cause : le jeu d'étiquettes avait été construit en testant « republication
+séquentielle » **avant** « les deux annonces actives ». La production fait
+l'inverse. Or **une annonce peut porter une `delisted_at` passée tout en étant
+ACTIVE aujourd'hui** — c'est précisément ce que produisent les passes de
+restauration couloirs, qui repassent en `active` des annonces que la fenêtre 150
+pages du scan global avait délistées à tort.
+
+Quand les deux sont actives simultanément, ce sont deux **lots distincts** : c'est
+le constat du 28/07, et la précédence de la production est la bonne. **Mes
+étiquettes étaient fausses sur 10 paires (8 %), pas le pré-filtre.** Corrigées par
+`agents/tests/relabel.py`, qui prend `prefiltre_sql` — la fonction de production —
+comme unique arbitre.
+
+Deux enseignements. D'abord, le chiffre de 91 % annoncé plus haut était mesuré
+contre un jeu partiellement faux : une mesure n'est jamais meilleure que son
+étiquetage, et un jeu « silver » construit à la main mérite le même scepticisme
+qu'un modèle. Ensuite, le contrôle qui a levé le lièvre n'était pas celui que
+j'avais écrit pour surveiller le modèle : c'était un contrôle de cohérence
+interne, ajouté par prudence. Il a rapporté plus que le contrôle principal.
+
+**Chiffre corrigé.** Après réétiquetage : **99/100** (contre 91 annoncé plus
+haut), pré-filtre 120/120, abstention 77 %, 0 panne. Le modèle avait **raison**
+sur les 10 paires litigieuses — c'est mon étiquetage qui le pénalisait. Les
+mesures comparatives antérieures (92 % verdict direct, 91 % extraction) portaient
+elles aussi ce biais et sont donc sous-estimées ; leur écart relatif reste valide.
+
+Ce que le réétiquetage ne change PAS : l'abstention se mesure sur les 30 paires
+**ambiguës, qui n'ont pas d'étiquette**. Le résultat central — 0 % d'abstention en
+verdict direct contre 77 % en mode extraction — est indépendant de ce défaut.
+
+### Dossier de présentation externe
+
+Créé `docs/dossier-investisseur/` — quatre documents décrivant le flux, la
+méthode, la valeur et **les limites**, pour un lecteur non technique. Il ne
+duplique pas ce journal : l'historique de développement reste ici, et le dossier
+y renvoie.
+
+Trois points ont été énoncés dans le dossier parce qu'ils sortiraient de toute
+façon en due diligence, et qu'il vaut mieux les poser soi-même :
+
+- **Les annonces brutes ne sont pas revendables.** Conditions d'utilisation des
+  sources, et posture écrite du projet depuis l'origine. Ce qui est vendable est
+  l'agrégat dérivé — non substituable à la source — la méthode, et l'outil.
+  Le produit le plus propre juridiquement est la licence du pipeline à un
+  opérateur qui collecte **ses propres** sources sur un autre marché.
+- **La série n'a que six semaines.** Elle ne soutient aucune affirmation de
+  tendance. Sa valeur croît d'un jour par jour et ne se rattrape pas
+  rétroactivement — c'est la barrière à l'entrée réelle, mais elle joue contre
+  nous aujourd'hui autant qu'elle jouera pour nous plus tard.
+- **La durée moyenne de 11,0 jours entre première observation et délistage n'est
+  pas un time-on-market** et ne doit jamais être présentée comme tel : elle est
+  bornée par notre cadence de scan, pas par le marché. Consigné explicitement
+  pour éviter qu'un chiffre commode soit repris de bonne foi.
+
+Deux formulations à ne pas employer, parce qu'elles sont vérifiables en dix
+minutes sur le dépôt et que leur chute emporterait le reste : « temps réel »
+(la cadence est de 4 jours, par choix) et « piloté par l'IA » (l'IA occupe un
+périmètre étroit, mesuré, et volontairement tenu à l'écart des 8 agents T0).
+
+### Validation du nouveau code par scrap isolé (500 annonces)
+
+Avant le premier cycle complet, session de test **entièrement isolée** de la
+production : sortie redirigée par `LOWI_OUTPUT_DIR` (variable ajoutée à `run.py`
+à cette occasion), store SQLite, et **pas de `--full`** — donc aucun délistage
+possible. Rien n'a touché Supabase.
+
+500 annonces demandées sur DDproperty location, **474 collectées en 46 min**
+(24 écartées par `config/exclude.json`, 2 dédupliquées), **0 erreur, 0 traceback**.
+
+Verdict de `ops/juge-test.py`, dont les seuils ont été écrits **avant** de voir
+les résultats :
+
+| Contrôle | Résultat | Seuil |
+|---|---|---|
+| prix / chambres / quartier / coordonnées / immeuble | **100 %** | 90-99 % |
+| surface | 99,8 % | 90 % |
+| **descriptif** | **99,8 %** | 70 % |
+| provenance (`agent_id`) et date de mise en ligne | **100 %** | 70 % |
+| plausibilité marché | 99,8 % | 90 % |
+| identifiants en collision | 0 | 0 |
+
+Ce qui était réellement en jeu : **la capture des descriptifs n'avait jamais
+tourné en collecte réelle**. Résultat — 473 descriptifs, 3 102 caractères en
+moyenne (min 375, max 4 000), et **aucun texte pollué** par du CSS ou du texte de
+marque, les deux défauts trouvés en sondant des pages à la main plus tôt dans la
+journée. Le contrôle anti-pollution du juge est resté en place comme garde-fou.
+
+Second enseignement, non anticipé : `agent_id` et `posted_at` sont remplis à
+**100 %** sur ce lot, alors qu'ils ne couvrent que 7 % de la base historique. Ces
+champs n'étaient pas absents de la source — ils n'étaient pas collectés. La
+question du doublon même-agent devient donc décidable sur tout le flux à venir,
+pas seulement sur un échantillon.
+
+Deux défauts corrigés en chemin, tous deux dans l'outillage de test lui-même :
+un caractère non-ASCII dans un script PowerShell casse son **parsing** avant toute
+exécution (les fichiers `ops/*.ps1` sont désormais en ASCII strict, et validés par
+`[Parser]::ParseFile` avant usage) ; et un déballage de tuple erroné dans le juge.
+
+### Mode local pour l'orchestrateur — valider un cycle complet sans écrire en ligne
+
+Ajout de `orchestrator.py --local <dossier>`. Trois effets :
+
+1. toute commande `--store supabase` devient `--store sqlite` ;
+2. `LOWI_OUTPUT_DIR` redirige base, images et fiches vers le dossier de test ;
+3. les agents marqués `needs_supabase` dans `agents.json` sont **sautés** —
+   `analyze-sale`, `analyze-rent`, `organize`, `report`, `storage`.
+
+Le point 3 est le moins évident et le plus important. Ces agents *lisent*
+Supabase : en mode local ils tourneraient sur la production pendant qu'on teste
+autre chose, et produiraient des constats sans rapport avec le scrap en cours.
+Les laisser tourner aurait donné une illusion de cycle complet. Les sauter et
+l'afficher est la seule lecture honnête.
+
+**Remontée** (`ops/remonter-local.py`) : un cycle complet dure 6 à 10 heures ; le
+refaire en ligne après validation gaspillerait ce temps et solliciterait les
+sources une seconde fois sans raison. Le script réutilise
+`SupabaseStore.upsert_listing`, c'est-à-dire **le même chemin d'écriture** que le
+scraper — rien n'est réinventé. Il convertit ce que SQLite et Postgres ne stockent
+pas pareil (`raw_data` texte → jsonb, `is_auto_repost` entier → booléen,
+`photo_sizes` texte → tableau).
+
+Il **ne délistera jamais** : un transfert n'est pas un scan, il ne peut pas
+conclure qu'une annonce absente a disparu du marché. C'est la même prudence que
+le garde-fou des 50 % sur les scans partiels.
+
+---
+
+## 2026-07-31 (nuit) · Premier cycle local complet — comparaison à la production
+
+**Contexte.** Premier lancement de `LowiBKK-LancementComplet -Local` (portée
+« tout », store SQLite isolé `tests-scrap/2026-07-31-1900-FULL-LOCAL/`, aucune
+écriture Supabase). Démarré 19h00, arrêté manuellement ~3h16 plus tard — avant
+la fin des 6-10 h attendues, et avant que ddproperty/propertyscout/nestopa
+n'aient committé la moindre ligne (`scan_runs` vide sur ce store).
+
+**Mesure.** Seul fazwaz sale a produit des données (2 066 annonces actives).
+Comparaison à périmètre identique (`listings_sane`, fazwaz, sale, actif) entre
+ce sous-échantillon et la production Supabase (4 732 annonces) :
+
+- **Qualité brute** : khet / lat-lng / condo_name renseignés à 100 %
+  (2 066/2 066), tenure = freehold à 100 % (cohérent avec la règle
+  freehold-only). Les valeurs hors plausibilité (max observé 13,5 Md THB) sont
+  filtrées par `listings_sane` comme en prod.
+- **Couverture** : 2 066/4 732 = 43,7 % du volume prod — cohérent avec un arrêt
+  à mi-parcours, pas un signe de sous-collecte.
+- **Représentativité géographique** : proportions par khet quasi identiques
+  (Vadhana 17,9 % local vs 20,6 % prod, Khlong Toei 14,3 % vs 14,5 %, Huai
+  Khwang 7,2 % vs 7,1 %, Chatuchak 5,1 % vs 5,2 %) — pas de biais de
+  pagination vers un sous-ensemble de quartiers.
+- **Prix/m² médian par khet** (double médiane par condo, `n_condos >= 5`) :
+  classement des 6 premiers quartiers identique entre local et prod (Pathum
+  Wan > Bang Rak > Ratchathewi > Sathon > Khlong Toei > Vadhana). Écarts de
+  -11 % à +21 % sur les 31 khets qualifiés, concentrés sur les quartiers à
+  faible `n_condos` (< 15, bruit d'échantillonnage attendu) ; écart médian
+  ≈ 5 % sur l'ensemble.
+
+**Verdict.** Rien dans cet échantillon ne suggère que le pipeline agent
+(`extract-fazwaz` orchestré) dégrade la qualité ou introduit un biais par
+rapport à l'exécution directe de `scraper/run.py` qui alimente la production.
+
+**Limite connue.** Comparaison sur une seule source (fazwaz) et un seul
+`deal_type` (sale) : le cycle n'étant pas allé à son terme, aucun jugement
+possible sur ddproperty/propertyscout/nestopa ni sur la lane location — à
+refaire dès qu'un cycle local ira jusqu'au bout. Par ailleurs
+`ops/logs/lancement-complet-2026-07-31-1900.log` ne contient que la ligne
+d'en-tête : le suivi live du log ne reflète pas l'avancement réel du process,
+seule l'inspection directe du SQLite (`bangkok.db`) l'a révélé.
+
+## 2026-08-01 · Une coupure réseau ressemblait à un scan réussi
+
+Coupure internet pendant le cycle complet. Les quatre scrapers sont morts. Les
+données étaient sauves — l'écriture se fait annonce par annonce, 1 740 lignes
+conservées — mais deux défauts sont apparus.
+
+**Le premier, bénin** : personne ne les relançait.
+
+**Le second, grave** : `run.py` avait enregistré un `scan_run` marqué **`notes:'full'`**
+alors qu'il venait d'être interrompu à **928 annonces sur ~5 000**. Le parsing
+attrape l'exception réseau, sort proprement de sa boucle, et consigne un scan
+complet. Autrement dit : **une perte de réseau est indiscernable d'une fin de
+scan réussie**, et un scan partiel pris pour complet peut déclencher un
+délistage à tort. Seul le garde-fou des 50 % nous protégeait, par chance.
+
+### `ops/superviseur.py`
+
+Ne fait donc PAS confiance au code retour. « Terminé » exige **trois** conditions
+simultanées : code retour 0, **et** volume ramené ≥ un plancher déclaré par
+source, **et** absence de traces d'échec réseau dans le log (au moins trois
+occurrences de `échec GET`, `Max retries`, `getaddrinfo failed`…).
+
+Le reste des garanties :
+
+- **état sur disque écrit à chaque transition, de façon atomique** (`os.replace`
+  après `fsync`) : une coupure de courant au milieu d'une écriture ne laisse pas
+  un fichier tronqué ;
+- **vérification toutes les 30 s** : internet, processus vivants, avancement ;
+- la sonde internet vise **les sources elles-mêmes**, pas un serveur tiers — ce
+  qui compte n'est pas d'avoir une route, c'est que les sites répondent ;
+- **aucune relance tant qu'internet n'est pas revenu**, pour ne pas brûler le
+  compteur de tentatives (plafond 12, puis abandon signalé) ;
+- **détection de processus figé** : plus aucune annonce nouvelle depuis 10 min →
+  le processus est tué et repris ;
+- une seule tâche par SOURCE à la fois (même domaine = même cadence), mais les
+  quatre sources en parallèle (domaines distincts).
+
+`ops/install-superviseur.ps1` enregistre la reprise automatique : à l'ouverture
+de session (retour de courant), et une répétition de sécurité toutes les 30 min.
+`RestartCount=3` relance la tâche si elle meurt elle-même. Le script **relit le
+XML enregistré et refuse tout `\"`** — le défaut de juillet.
+
+Vérifié en conditions réelles : après le retour d'internet, le superviseur a
+relancé les quatre sources en 12 secondes, sans intervention.
+
+## 2026-08-02 · Les descriptifs contenaient un tableau de specs, pas de la prose
+
+Analyse de **500 descriptifs réels** tirés au hasard du scrap complet, pour
+décider ce que l'IA locale devait y chercher. Le constat a renversé la question.
+
+### Ce que contiennent réellement les descriptifs
+
+Chez **FazWaz (63 %)** et **PropertyScout (9 %)**, le descriptif n'est pas de la
+prose : c'est un **tableau clés/valeurs rendu en texte** — `Floor 41`,
+`CAM Fee … ฿2,160/mo`, `Thai Quota`, `Listed By Private Owner`,
+`Construction: Completed (Dec 2013)`. **DDproperty (28 %)** décrit le *projet*
+et non le lot, souvent en thaï : quasi rien d'exploitable à la maille unité.
+
+Douze champs en sortent (`scraper/pipeline/details.py`), dont trois qui comblent
+des trous nommés dans le dossier investisseur :
+
+| champ | couverture (14 204 annonces) | état de la base |
+|---|---|---|
+| `d_annee_construction` | **78 %** | était à **0 %** |
+| `d_publie_par` | 59 % | absent — propriétaire vs agence |
+| `d_quota` | 24 % | était à **1,2 %** |
+| `d_cam_fee_thb` | 24 % | absent — charges de copropriété |
+
+### IA locale contre regex, sur les mêmes 500
+
+| champ | accord |
+|---|---|
+| cam_fee, meublé, animaux, publié_par, année | **100 %** |
+| vues | 98 % |
+| étage | 97 % |
+| **quota** | **19 %** |
+
+Et surtout : sur les **288** cas où le modèle répondait là où la regex se taisait,
+**266 étaient des inventions** (92 %). Le pire : `publie_par`, 129 réponses alors
+que le libellé « Listed By » est **absent du texte** dans les 129. `Pets N/A`
+devenait « interdit », `Furniture N/A` devenait « meublé ».
+
+**Décision : extraction déterministe.** 6 s/annonce et 25 h de GPU sur le stock
+pour un résultat inférieur — l'arbitrage ne se discute pas.
+
+**Ce à quoi le modèle a servi** : de *détecteur d'angles morts*. Ses 22 gains
+réels ont révélé des formulations que la regex ratait — « Pets All Kind of Pets
+Allowed » au lieu de « Pets Allowed » (+3 points après correction). C'est un rôle
+de fuzzer, pas d'extracteur.
+
+### Trois défauts, tous dans mon propre code
+
+**Faux positif sur l'étage.** « Floor **2-Bedroom** Condo at… » : le libellé
+`Floor` était suivi d'un TITRE, et je capturais le 2 de « 2-Bedroom ». Le tiret
+discrimine — « Floor 7 Bedroom Studio » est légitime.
+
+**Des octets invisibles dans mes regex.** Un heredoc bash a converti mes `\b` en
+véritables caractères *backspace* (0x08). Symptôme incompréhensible : le motif
+identique fonctionnait en ligne de commande et jamais dans le fichier. Les tests
+sont désormais écrits en FICHIER (`scraper/tests_details.py`), plus en `-c`.
+
+**Et surtout : ma référence sur le quota était fausse.** Toutes les fiches FazWaz
+portent une phrase légale — « Units that are part of the Thai quota or are being
+leased for 30 years… ». Ma recherche insensible à la casse la confondait avec le
+libellé. Sur 315 fiches : **123 vrais libellés, 155 phrases légales**, soit ~32
+faux positifs. J'ai accusé le modèle de se tromper avant de découvrir que ma
+mesure l'était. **Troisième fois dans cette campagne** que la référence, et non
+le modèle, était en cause.
+
+### Mise en place
+
+Extraction branchée dans `normalize.py` — **un seul point** plutôt que quatre
+adaptateurs. 12 colonnes préfixées `d_` en SQLite ; migration Postgres écrite
+mais **NON appliquée** : les données restent dans la base de test le temps d'être
+éprouvées. `supabase_store._COLS` reste inchangé — les deux vont ensemble à la
+réconciliation, sinon le prochain scrap en ligne échoue sur colonne inconnue.
+
+Les deux lectures (Postgres et SQLite) **détectent la présence des colonnes**
+avant de les sélectionner : la page fonctionne avant comme après la migration.
+
+`LOWI_SQLITE_DB` force la lecture d'un fichier SQLite précis et prime sur
+Supabase (`npm run dev:test`). Sans ce drapeau explicite, prévisualiser un scrap
+isolé imposait de neutraliser `SUPABASE_DB_URL` par le shell — or sous cmd
+`set VAR=` **supprime** la variable, Next recharge alors `.env.local` et repart
+sur la production. Vérifié : l'API servait 18 989 annonces au lieu de 14 899.
+
+---
+
+## 2026-08-02 — Détails du descriptif : six champs de plus, et trois erreurs de ma part
+
+### Ce que la relecture du descriptif a rendu
+
+Six champs ajoutés aux treize existants, tous mesurés sur les 14 204 descriptifs
+de `tests-scrap/2026-08-01-COMPLET` : `d_livre` (**84 %** — meilleure couverture
+de tous les champs), `d_vues_n` (52 %), `d_tarif_regime` (11 %), `d_batiment`
+(6 %), `d_elec_kwh` et `d_eau_m3` (<1 %).
+
+**Une seule colonne de régime pour l'eau ET l'électricité.** Sur 1 451 annonces
+qui renseignent les deux, elles indiquent le même régime dans **1 445 cas**.
+Deux colonnes auraient coûté le double pour distinguer six annonces. Quand les
+deux divergent, on retient `private` : classer « government » une fiche qui
+facture ฿6,00/kWh masquerait la marge sur le poste le plus lourd.
+
+**`Unit Type` écarté après mesure** : 4 244 mentions, valeur « N/A » quasi
+partout. En revanche `Building` (« Building A », « Building 2 ») était juste à
+côté et n'avait jamais été vu — c'est un discriminant SÛR de doublon : même
+résidence, tours différentes = lots forcément distincts.
+
+### La prose ment sur la livraison, dans les deux sens
+
+`d_livre` a d'abord produit 84 lots « livrés » avec une année 2027-2029, et 233
+« non livrés » avec une année antérieure à 2024. Deux gabarits opposés :
+
+- PropertyScout écrit « Building completed in **2027** » — au passé, pour une
+  livraison à venir.
+- DDproperty laisse traîner « the project is under construction and is expected
+  to be completed in **2019** », texte rédigé en 2017 et jamais réécrit, alors
+  que l'immeuble est debout depuis des années.
+- « under construction » qualifie très souvent le **métro** voisin
+  (« Opposite MRT Orange Line (under construction) »), pas l'immeuble.
+
+Priorité inversée : champ structuré, puis **année**, la prose en dernier recours.
+Les trois compteurs d'incohérence sont tombés à zéro.
+
+### Trois erreurs de ma part, corrigées par la mesure ou par toi
+
+**1. « Un particulier ne possède pas 54 lots. »** Faux — des propriétaires thaï
+en détiennent plus de cent. J'en avais tiré que « Private Owner » *disqualifie*
+un doublon ; ce raisonnement tombe. Ce que la mesure établit vraiment est plus
+étroit : à effectif égal (200 tirages), les identifiants d'unité FazWaz forment
+une grappe dans **4,3 %** des cas pour « Private Owner » contre **18,2 %** pour
+« agent ». Le champ dit « pas un dépôt groupé d'agence » — rien de plus. Il ne
+tranche pas un doublon seul, et il n'existe que sur FazWaz.
+
+**2. « Min. Rental Duration à 12 mois sent la valeur par défaut. »** Faux aussi,
+et pour une raison métier que je n'avais pas : la location courte durée est
+interdite en copropriété en Thaïlande, donc le bail annuel EST la norme. 4 044
+cas à 12 mois ne sont pas un artefact d'affichage.
+
+**3. Le facteur 14 sur `num_ctx` est confondu.** Voir plus bas.
+
+### `posted_at` n'est pas une date de publication — substitution ANNULÉE
+
+`CLAUDE.md` annonçait de substituer `posted_at` à `first_seen` dans le
+time-on-market. Mesure sur les 1 294 annonces qui le portent :
+
+| écart `first_seen − posted_at` | p25 | médiane | p75 | p90 |
+|---|---|---|---|---|
+| | **−25 j** | **−16 j** | +1 j | +4 j |
+
+L'écart médian est **négatif** : l'annonce vue seize jours *avant* sa publication
+déclarée. Une date de mise en ligne ne peut pas être postérieure à notre
+observation — le champ avance dans le temps. La coupure par `is_auto_repost`
+le confirme : les republiées ont un `posted_at` du 02/07 au 29/07 (jamais plus
+d'un mois), les autres du 23/11/2025 au 29/07.
+
+Substituer ce champ **raccourcirait** la durée au lieu de l'allonger, et
+mesurerait l'assiduité des agents à remonter leurs annonces.
+
+**Deuxième raison, indépendante de la première** : le champ n'existe que sur
+DDproperty, dont la part du stock actif va de **3 % (Phra Khanong) à 89 %
+(Bangkok Noi)**. Une métrique mixte ferait varier l'ancienneté avec la
+composition des sources, pas avec le marché — même famille d'erreur que le
+dénominateur de tension corrigé le 2026-07-28. `first_seen` reste la base
+unique : son biais est au moins **uniforme sur les quatre sources**, et un biais
+partagé se compare.
+
+Table `posted_at_history` créée et branchée sur les deux stores (écriture sur
+changement réel uniquement, amorcée sur les 1 294 valeurs courantes). Elle
+prouvera ou démentira le mécanisme au prochain scrap : jusque-là, « date de
+remontée » reste une déduction, parce qu'on écrasait la valeur à chaque passage.
+
+### `compresser()` était du code mort
+
+La colonne `page_text` était déclarée `blob` et recevait la chaîne telle quelle :
+`SqliteStore.compresser()` existait depuis le 2026-07-31 et **n'était appelée
+nulle part**. Le gain annoncé dans sa docstring n'était pas réalisé. Branchée
+via `_valeur()`. La colonne n'existait pas encore dans la base de test — le scrap
+a précédé son ajout — donc `page_text` n'a toujours pas été éprouvé de bout en
+bout ; il le sera au prochain scrap.
+
+### `num_ctx` non fixé : dégradation silencieuse du client local
+
+Le client durci ne fixait pas `num_ctx`. Ollama dimensionne alors un grand
+contexte, le cache d'attention porte l'empreinte à **8,1 Go** — au-delà des 8 Go
+de VRAM de la 4070 Laptop — et **24 % des couches basculent sur le CPU**. Avec
+`num_ctx=2048` : **5,1 Go, 100 % sur GPU**, pour des prompts de ~250 jetons.
+
+**J'ai d'abord annoncé un « facteur 14 » (49 s contre 3,4 s). C'était faux, et
+massivement.** Un jeu tournait sur la même carte pendant la mesure, et je ne
+l'avais pas vérifié. Reprise sur GPU libre, 5 appels par configuration,
+modèle déchargé entre les deux :
+
+| | temps/appel | empreinte | sur GPU |
+|---|---|---|---|
+| `num_ctx=2048` | **3,2 s** | 5,1 Go | 100 % |
+| non fixé (défaut Ollama) | **3,9 s** | 8,1 Go | 76 % |
+
+**22 %, pas un facteur 14.** La règle reste bonne — 3 Go de VRAM libérés sans
+contrepartie, et sous pression mémoire c'est la différence entre tenir et
+déborder — mais son gain propre est modeste. Quatrième fois dans ces campagnes
+que ma mesure, et non le système mesuré, était en cause : ici je n'avais pas
+vérifié ce qui d'autre occupait la carte.
+
+**Et une cinquième dans la foulée.** J'ai cru voir « deux exemplaires du test en
+concurrence » dans la liste des processus. C'était une CHAÎNE lanceur/interpréteur :
+le shim `python.exe` du venv et le vrai interpréteur `uv` portent la même ligne de
+commande et apparaissent comme deux entrées. Vérification par `ParentProcessId` :
+l'un est le père de l'autre. **Il n'y a jamais eu de doublon.** Le ralentissement
+s'explique entièrement par le jeu et par `num_ctx`.
+
+Enseignement distinct, et celui-là tient : l'exigence opérationnelle déjà posée
+mais non honorée — **l'analyse locale doit céder le GPU** quand une autre
+application le réclame. Aujourd'hui elle le prend sans rien demander.
+
+### L'IA locale sur la prose DDproperty : elle lit bien, elle ne sait pas se taire
+
+Jeu monté pour la question : le descriptif DDproperty peut-il alimenter le
+référentiel `condos` ? 100 annonces étiquetées à la main, avec **trois**
+étiquettes — une valeur, `null` (fait absent), `ambigu` (fait présent mais texte
+contradictoire). C'est la troisième qui rend le test discriminant : cette prose
+est traduite automatiquement du thaï et souvent cassée (« The Breeze Narathiwas
+is a **374-storey** high-rise », « 36 story 1 storey building »), ou décrit deux
+tours de hauteurs différentes. Il n'existe alors **pas** de valeur juste.
+
+| sur 100 annonces | regex | IA locale |
+|---|---|---|
+| juste (fait présent) — étages / lots / promoteur | 87 / 89 / 77 % | **89 / 98 / 100 %** |
+| abstention (texte contradictoire) — étages | 93 % | **100 %** |
+| silence (fait absent) — étages / lots / promoteur | **95 / 79 / 94 %** | 50 / 47 / 54 % |
+
+313 s pour 100 annonces, 3,1 s chacune, **zéro panne**. Le mode extraction
+fonctionne comme prévu : sur « with 22 and 24 floors » le modèle rend `[22, 24]`
+et refuse de choisir — 100 % d'abstention sur les textes contradictoires, contre
+93 % pour la regex.
+
+**Mais les deux mesures qui décident vont dans l'autre sens.**
+
+*Là où la regex parle et qu'une vérité existe* : regex **100 % sur les trois
+champs**, IA 92 / 100 / 100 %. La regex ne se trompe JAMAIS quand elle parle —
+ses 87 / 89 / 77 % ne sont pas des erreurs, ce sont des silences. L'IA ne la bat
+nulle part, et fait moins bien sur les étages.
+
+*Là où la regex se tait* : l'IA ose une valeur dans ~50 % des cas et **se trompe
+dans 76 à 94 %**. Reproduction quasi exacte des 92 % du 2026-07-31, sur un jeu
+entièrement différent et sur d'autres champs. Ce n'est donc pas un accident de
+protocole : **le modèle ne supporte pas le vide.**
+
+Le détail est plus dur encore que la moyenne. Sur le promoteur, l'IA récupère
+**8 noms réels que la regex a manqués** — valeur authentique — mais produit
+**26 inventions** pour les obtenir. Un gain pour trois erreurs, et aucun signal
+pour les séparer : la `confidence` auto-déclarée est inutilisable (règle 5).
+
+**Le recoupement par accord entre annonces est impossible ici** : le descriptif
+DDproperty est du texte de PROJET, répété à l'identique. 3 625 annonces
+d'immeubles multi-annonces se réduisent à **838 textes distincts** (37 annonces
+de Belle Grand Rama 9 partagent UN texte). S'accorder avec soi-même sur le même
+texte ne prouve rien.
+
+**Verdict : l'IA locale n'est pas utilisable pour ce champ.** Non parce qu'elle
+lit mal — elle lit mieux que la regex — mais parce qu'elle ne distingue pas
+« j'ai trouvé » de « j'ai inventé ». Son seul emploi mesuré reste l'arbitrage
+des doublons ambigus en mode extraction.
+
+**Ce que l'exercice rapporte quand même**, et ce n'est pas rien : la regex écrite
+comme référence du test alimente le référentiel `condos` **gratuitement et sans
+erreur mesurée** — 1 045 immeubles vus, dont **512 avec la hauteur, 581 avec le
+nombre de lots, 514 avec le promoteur**, et **zéro désaccord** entre textes d'un
+même immeuble. À rapprocher des 3 551 immeubles du référentiel et du `year_built`
+toujours à 0 côté serveur.
+
+Corollaire de rangement : ce descriptif décrit le PROJET, pas le lot. Le stocker
+par annonce le duplique 4,3 fois. Sa place est dans `condos`.
+
+---
+
+## 2026-08-03 — Ce qu'une capture d'écran a montré que les chiffres cachaient
+
+### Le point de départ : une image, pas une requête
+
+Demande d'une série d'images datées des cartes, une par édition mensuelle, pour
+voir le **déplacement géographique** des tensions et des rendements — ce
+qu'aucune colonne ne montre.
+
+La capture sans écran fonctionne pour les **tableaux** (1920×1080, lisibles) et
+**échoue pour les cartes** : MapLibre est en WebGL, et Chrome sans interface rend
+un cadre vide — en-tête et panneau de calques dessinés, carte noire. Vérifié que
+ce n'est pas le réseau : le serveur de tuiles répond en 0,28 s.
+`--virtual-time-budget` fait avancer une horloge *virtuelle* qui dépasse les
+téléchargements réels ; un budget plus long fait sortir Chrome sans rien produire.
+La solution est Playwright, qui sait attendre l'événement `idle` de MapLibre —
+**non installé, proposé, pas décidé**.
+
+`ops/captures-carte.py` refuse et supprime toute image implausible : sans ce
+garde-fou la série se remplirait d'images blanches en silence. Il n'a d'ailleurs
+pas suffi — il a laissé passer une carte vide de 43 Ko, que seul un examen
+visuel a démasquée. **Un seuil de taille ne remplace pas un regard.**
+
+### Ce que l'image a révélé, et que j'ai d'abord mal interprété
+
+Sur la capture du tableau des rendements, **« Bang Na » figurait deux fois** :
+6,1 % sur 3 immeubles, 5,6 % sur 45. L'affichage retire le suffixe « District »,
+donc les deux lignes sont identiques à l'œil.
+
+**J'ai conclu à un doublon de nom. C'était faux.** Les coordonnées le prouvent :
+les 27 annonces « Bang Na » sont toutes à **13,6578 / 100,6029 — Sukhumvit 107,
+secteur Bearing**, en province de **Samut Prakan**, au-delà de la limite de
+Bangkok. Elles ne sont pas mal nommées : elles sont **hors périmètre**, et leurs
+sources les nomment correctement. Idem pour « Bang Phli » (14), « Pak Kret » (3),
+« Bang Sao Thong » (2) et « Bearing » (1, même immeuble que les 27).
+
+Le vrai défaut est donc autre, et plus gênant : **ni `study/run_study.py` ni
+`lib/yields.ts` ne restreignent le classement aux 50 quartiers**. Toute chaîne
+présente dans `khet` produit une ligne. Des annonces qui ne sont pas à Bangkok
+apparaissaient dans un classement des quartiers de Bangkok, sous un libellé
+visuellement confondu avec un vrai quartier.
+
+Septième fois cette semaine que ma conclusion précédait ma mesure.
+
+### Ce qui a été corrigé
+
+**À l'écriture** — `KhetMatcher.canoniser()` : quand le point-dans-polygone
+échoue, le libellé de la source est confronté aux 50 noms de référence au lieu
+de passer tel quel. C'est ce passage sans contrôle qui créait les vraies
+variantes de suffixe. Sans lui le défaut se reproduirait : une variante
+« Huai Khwang » a encore été écrite le jour même.
+
+**Sur l'existant** — `ops/corriger-khet.py`, où **les coordonnées tranchent, pas
+le texte** : on recalcule le point-dans-polygone et on ne renomme que si le point
+désigne effectivement un quartier. Résultat : **6 corrections réelles**, 48
+annonces reconnues hors Bangkok et laissées intactes, 4 sans coordonnées
+signalées sans être touchées. Une correspondance de chaînes n'est pas une preuve
+— c'est elle qui avait créé le problème.
+
+**Dans l'étude** — filtre de périmètre sur les 50 quartiers, lus **depuis le
+GeoJSON** et non recopiés.
+
+### Trois corrections de `study/run_study.py`
+
+1. **Lecture de `listings_sane`** au lieu de `listings` brut. L'étude portait une
+   TROISIÈME définition des bornes (loyer plafonné à 200 000 au lieu de 500 000,
+   aucun plancher, aucune borne de surface). ⚠ Mesuré avant de corriger : sur
+   36 quartiers, **un seul** bouge, de **+0,5 %**. La double médiane par immeuble
+   absorbe ces valeurs. C'était un piège de maintenance, **pas** une erreur de
+   publication — j'avais d'abord annoncé un biais « là où c'est le plus scruté »,
+   sans l'avoir mesuré.
+
+2. **Refus de produire une évolution vide.** Les éditions du 6 et du 9 juillet
+   portaient des instantanés **identiques au chiffre près** — mêmes totaux,
+   48 quartiers sur 48 égaux. Aucun scrap entre les deux. Le rapport affichait
+   « Δ +0.0 % » partout, ce qui se lit comme une stabilité du marché. La section
+   rend désormais un avertissement explicite.
+
+3. **Vie médiane plafonnée à la cadence.** Six quartiers sur huit affichaient
+   exactement **4 jours** — l'intervalle entre deux scraps. La mesure ne résout
+   rien sous sa propre cadence ; elle s'affiche maintenant `≤ 4` avec l'explication.
+
+`config_version` passe de 1 à **2** : c'est ce qui tracera la rupture de série.
+
+### L'incident que j'avais qualifié d'hypothétique s'est produit — et je l'ai causé
+
+Hier soir j'ai écrit un verrou d'instance unique (`agents/core/gpu.Verrou`) en le
+documentant comme **« une précaution, pas la correction d'un incident »** : j'avais
+d'abord cru observer deux exemplaires d'un test en concurrence, c'était en réalité
+la chaîne lanceur/interpréteur du venv.
+
+Le 2026-08-03, l'incident a eu lieu pour de bon. Après avoir corrigé un conflit de
+type (SQLite range 0/1 là où Postgres attend un booléen), j'ai relancé
+`ops/remonter-local.py` **sans arrêter le premier exemplaire**. Les deux ont écrit
+en concurrence sur la production :
+
+    essai 1 : 4 866 créations, 850 mises à jour, 16 990 ERREURS
+    essai 2 : reprend l'intégralité des 19 904 annonces, correctement
+
+Pas de dommage durable — les deux écrivaient par `upsert`, et le second passage
+réécrit tout avec les bonnes valeurs. Le coût est 16 990 écritures perdues et une
+charge inutile sur Supabase. Mais **rien ne l'empêchait**, et c'est le point : le
+verrou existait déjà, il n'était simplement pas branché là.
+
+Corrigé — `remonter-local.py` prend `Verrou("remonter-local")` avant la première
+écriture, après la sortie du mode à blanc (qui n'écrit rien et n'a pas à être
+bloqué). Pas de `with` : le verrou est posé par le système sur un descripteur
+ouvert, donc il se relâche seul à la mort du processus, plantage compris.
+
+Enseignement : un garde-fou écrit et non branché ne protège de rien. J'avais
+identifié le risque, construit l'outil, et omis de l'appliquer au seul endroit qui
+allait en avoir besoin dans les vingt-quatre heures.

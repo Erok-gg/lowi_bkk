@@ -15,6 +15,7 @@ from typing import Iterator
 from urllib.parse import urljoin
 
 from adapters.base import BaseAdapter
+from pipeline import description
 from pipeline.fetch import Fetcher
 
 LD_RE = re.compile(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', re.S)
@@ -154,6 +155,9 @@ class NestopaAdapter(BaseAdapter):
                         "lng": None,
                         "condo_name": clean_condo_name(name) or name,
                         "raw_title": name,
+                        # Nestopa ne visite pas de page détail : le descriptif ne
+                        # peut venir que du Product ld+json du flux.
+                        "description": description.clean(p.get("description")),
                         "district": self._match_khet(loc_slug),
                         "image_urls": [img] if img else [],
                     }
@@ -167,6 +171,7 @@ class NestopaAdapter(BaseAdapter):
         rec["currency"] = "THB"
         rec["amenities"] = []
         rec["title"] = stub.get("raw_title") or stub.get("condo_name") or "Condo"
+        rec["description"] = stub.get("description")
         rec["raw_data"] = {k: stub.get(k) for k in
                            ("condo_name", "bedrooms", "area_sqm", "district", "price")}
         return rec

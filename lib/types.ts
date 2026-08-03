@@ -52,6 +52,51 @@ export interface Listing {
   images: ListingImage[];
   proximity?: Proximity;
   rawData?: Record<string, unknown>;
+  /** Attributs lus dans le DESCRIPTIF de l'annonce (cf. scraper/pipeline/details.py).
+   *  Absent tant que la source n'a pas été re-scrapée : toujours tester la valeur. */
+  details?: ListingDetails;
+}
+
+/**
+ * Détails extraits du descriptif. Tous optionnels — la couverture va de 24 %
+ * (charges) à 78 % (année de construction), et DDproperty n'en fournit presque
+ * aucun (son descriptif parle du projet, pas du lot).
+ */
+export interface ListingDetails {
+  floor?: number | null;
+  camFeeThb?: number | null;
+  furnished?: string | null;
+  views?: string[] | null;
+  /** NOMBRE de vues dégagées. « Blocked View » est une anti-vue : conservée dans
+   *  `views` pour l'information, mais exclue de ce décompte (284 annonces). */
+  viewCount?: number | null;
+  /** Tour au sein de la résidence (« A », « B », « 2 »). Deux annonces d'un même
+   *  ensemble mais de tours différentes sont des lots forcément distincts. */
+  building?: string | null;
+  /** Électricité refacturée, THB/kWh. Renseigné seulement quand le bailleur
+   *  applique son propre tarif — voir `utilityRate`. */
+  elecThbKwh?: number | null;
+  /** Eau refacturée, THB/m³. */
+  waterThbM3?: number | null;
+  /** `government` = tarif public sans marge ; `private` = tarif du bailleur.
+   *  UNE colonne pour l'eau ET l'électricité : sur 1 451 annonces qui donnent les
+   *  deux, le régime est identique dans 1 445 cas. */
+  utilityRate?: "government" | "private" | null;
+  quota?: string | null;
+  /** Nationalite/structure du VENDEUR — distincte du quota du lot. */
+  ownerNationality?: string | null;
+  petsAllowed?: boolean | null;
+  listedBy?: string | null;
+  yearBuilt?: number | null;
+  /** L'immeuble est-il LIVRÉ ? Lu du statut annoncé par la source, sinon déduit
+   *  de l'année. La prose est ignorée quand une année existe : « Building
+   *  completed in 2027 » est un gabarit au passé pour une livraison à venir. */
+  delivered?: boolean | null;
+  developer?: string | null;
+  minRentalMonths?: number | null;
+  /** [nom du point de repère, distance en km] */
+  landmark?: [string, number] | null;
+  unitRef?: string | null;
 }
 
 /** Stats agrégées (vues khet_stats / street_stats). */

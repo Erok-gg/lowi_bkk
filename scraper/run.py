@@ -43,7 +43,10 @@ ADAPTERS = {
 }
 ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "config"
-OUTPUT_DIR = ROOT / "output"
+# Surcharge par LOWI_OUTPUT_DIR : permet d'isoler entièrement un scrap de test
+# (base SQLite, images, fiches) dans un dossier dédié, sans toucher à la
+# production. Sans la variable, comportement inchangé.
+OUTPUT_DIR = Path(os.environ.get("LOWI_OUTPUT_DIR") or (ROOT / "output"))
 
 # Garde-fou --full : on n'autorise le délistage que si le scan a vu au moins
 # cette fraction des annonces actives déjà en base (sinon : site en panne/scan
@@ -208,8 +211,13 @@ def main() -> None:
                 n_excluded += 1
                 seen_ids.discard(lid)
                 continue
-            # matching khet par lat/lng (sinon district texte du JSON-LD)
-            khet = matcher.match(norm.get("lat"), norm.get("lng"))
+            # matching khet par lat/lng ; à défaut, on CANONISE le district
+            # texte de la source au lieu de le prendre tel quel — sinon
+            # « Bang Na » et « Bang Na District » cohabitent en base et le
+            # quartier apparaît deux fois dans les classements (cf.
+            # KhetMatcher.canoniser).
+            khet = matcher.match(norm.get("lat"), norm.get("lng")) \
+                or matcher.canoniser(norm.get("khet"))
             if khet:
                 norm["khet"] = khet
 

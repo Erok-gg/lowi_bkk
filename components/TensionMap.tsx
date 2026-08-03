@@ -104,6 +104,12 @@ export default function TensionMap({
       attributionControl: { compact: true },
     });
     mapRef.current = map;
+
+    // Même repère que MapView : `window.__map` permet d'inspecter la carte
+    // en console, et surtout à `ops/captures-carte.py` d'attendre l'événement
+    // `idle` avant de déclencher. Sans lui, la capture rend un cadre VIDE
+    // sans erreur — constaté le 2026-08-03.
+    (window as unknown as { __map?: maplibregl.Map }).__map = map;
     (window as unknown as { __tensionMap?: maplibregl.Map }).__tensionMap = map;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 

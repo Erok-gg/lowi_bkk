@@ -19,6 +19,7 @@ from urllib.parse import quote, urljoin
 from bs4 import BeautifulSoup
 
 from adapters.base import BaseAdapter
+from pipeline import description
 from pipeline.fetch import Fetcher
 
 ID_RE = re.compile(r"-u(\d+)(?:[/?#]|$)")
@@ -166,6 +167,8 @@ class FazwazAdapter(BaseAdapter):
         html = fetcher.get_text(rec["source_url"], referer=self.config["base_url"])
         if not html:
             return
+        rec["description"] = description.extract(html)
+        rec["page_text"] = description.texte_integral(html)
         # tenure + quota depuis le code d'ownership de l'unité
         m = OWNERSHIP_RE.search(unescape(html))
         code = int(m.group(1)) if m else None
