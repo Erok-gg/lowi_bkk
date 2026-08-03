@@ -22,6 +22,8 @@ _COLS = (
     "unit_key", "year_built", "photo_count", "photo_sizes",
     # provenance : qui publie, quand, et republication signalée par la source
     "agent_id", "agency_id", "posted_at", "is_auto_repost",
+    # vendu/loue dit par la source, avant disparition (cf. fazwaz.statut_marche)
+    "market_status",
     # descriptif libre (capturé depuis le 2026-07-31, non rétroactif) et TEXTE
     # INTÉGRAL de la page, compressé — la matière première qui permet de REJOUER
     # une extraction quand un motif se révèle faux, sans re-scraper.
@@ -46,6 +48,17 @@ def _coerce(col: str, v):
     if v is None or col not in _BOOLEENNES:
         return v
     return bool(v)
+
+
+#: Jours pendant lesquels une annonce doit rester marquee vendue avant de
+#: quitter le stock actif. Decide le 2026-08-03.
+#:
+#: Le delai n'est pas de la prudence de facade : un badge « Sold » peut etre
+#: transitoire — vente qui capote, erreur d'agent. Sept jours de persistance en
+#: font une preuve. Meme principe que `missed_count`, ou une annonce doit
+#: manquer a plusieurs scans CONSECUTIFS avant d'etre delistee : on exige de la
+#: DUREE, jamais une observation isolee.
+JOURS_AVANT_SORTIE_VENDU = 7
 
 
 def _now() -> str:
@@ -126,6 +139,7 @@ class SupabaseStore(BaseStore):
         new_price = norm.get("price")
         # AVANT l'écrasement — cf. SqliteStore._track_posted_at pour le pourquoi.
         self._track_posted_at(existing, norm.get("posted_at"), now)
+        self._suivre_statut_marche(existing, norm.get("market_status"), now)
         set_clause = ",".join(f"{c}=%s" for c in _COLS)
         self._execute(
             f"update listings set {set_clause},status='active',last_seen=%s,raw_data=%s,"
@@ -194,6 +208,43 @@ class SupabaseStore(BaseStore):
             q += " and deal_type=%s"
             params.append(deal_type)
         return self._execute(q, params).fetchone()[0]
+
+    def _suivre_statut_marche(self, existant, nouveau, maintenant) -> None:
+        """Date la PREMIERE apparition de la valeur courante de market_status.
+
+        Ne bouge que sur CHANGEMENT. Sans ca, `market_status_since` suivrait
+        `last_seen` et la regle des sept jours ne se declencherait jamais : elle
+        compterait toujours zero jour d'anciennete.
+        """
+        try:
+            ancien = existant["market_status"]
+        except (KeyError, IndexError, TypeError):
+            return
+        if (ancien or None) == (nouveau or None):
+            return
+        self._maj_since(existant["id"], maintenant if nouveau else None)
+
+    def _maj_since(self, lid, quand) -> None:
+        self._execute("update listings set market_status_since=%s where id=%s", (quand, lid))
+
+    def appliquer_ventes(self, jours: int = JOURS_AVANT_SORTIE_VENDU) -> int:
+        """Sort du stock actif les annonces marquees vendues depuis `jours`.
+
+        `status='sold'` est DISTINCT de `'inactive'` : l'annonce n'a pas disparu,
+        la source dit qu'elle est vendue. Confondre les deux ferait perdre
+        exactement l'information qu'on vient de gagner — le delistage confond
+        vente, retrait et artefact de fenetre, ce marqueur les separe.
+
+        `delisted_at` recoit la date de PREMIERE apparition du marqueur, pas
+        celle du jour : c'est la date ou le lot a quitte le marche, et c'est elle
+        qui doit compter dans les analyses de tension.
+        """
+        cur = self._execute(
+            "update listings set status='sold', delisted_at=market_status_since "
+            "where market_status='sold' and status='active' "
+            "  and market_status_since is not null "
+            f"  and market_status_since <= now() - interval '{int(jours)} days'")
+        return cur.rowcount if cur is not None else 0
 
     def mark_missing_inactive(self, source: str, seen_ids: set[str],
                               deal_type: str | None = None,

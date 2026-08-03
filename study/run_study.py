@@ -423,6 +423,105 @@ def per_1000(actives, official):
     return out
 
 # ───────────────────────── snapshot & évolution ─────────────────────────
+def panier_constant_md(a, b, mini_par_khet=8):
+    """Évolution à PANIER CONSTANT : uniquement les immeubles présents aux deux dates.
+
+    C'est la mesure qui résiste à la croissance du corpus. On ne compare pas deux
+    médianes de quartier calculées sur deux populations différentes — on prend
+    chaque immeuble connu des deux côtés, on regarde de combien SA médiane a
+    bougé, et on prend la médiane de ces variations.
+
+    Ainsi un quartier qui gagne trente immeubles bon marché ne « baisse » pas :
+    les nouveaux ne sont simplement pas comptés dans la variation. Ils le seront
+    à l'édition suivante, une fois présents des deux côtés.
+    """
+    ca, cb = a.get("condo_medians"), b.get("condo_medians")
+    if not ca or not cb:
+        return ("> *Évolution à panier constant indisponible : les instantanés "
+                "antérieurs au 2026-08-03 ne conservaient que le niveau quartier. "
+                "Elle apparaîtra dès que deux éditions consécutives porteront les "
+                "médianes par immeuble.*\n")
+
+    communs = defaultdict(lambda: {"v": [], "l": []})
+    for k in set(ca) & set(cb):
+        kh = cb[k].get("khet") or ca[k].get("khet")
+        if not kh:
+            continue
+        for champ, cle in (("vente_m2", "v"), ("loyer_m2", "l")):
+            x, y = ca[k].get(champ), cb[k].get(champ)
+            if x and y:
+                communs[kh][cle].append(100 * (y / x - 1))
+
+    lignes = []
+    for kh, d in communs.items():
+        if len(d["v"]) >= mini_par_khet:
+            lignes.append((kh, len(d["v"]), median(d["v"]) if d["v"] else None,
+                           len(d["l"]), median(d["l"]) if d["l"] else None))
+    if not lignes:
+        return ("> *Panier constant : aucun quartier n'atteint le seuil "
+                f"de {mini_par_khet} immeubles présents aux deux dates.*\n")
+
+    lignes.sort(key=lambda x: -(x[2] or 0))
+    out = [f"\n**À PANIER CONSTANT — immeubles présents le {a['date']} ET le {b['date']}.**",
+           "Ces variations sont insensibles à l'arrivée de nouveaux immeubles : "
+           "seuls ceux déjà connus des deux côtés sont comptés. C'est le chiffre à lire "
+           "quand le corpus a changé de taille.\n",
+           "| Quartier | Immeubles | Δ prix/m² | Immeubles (loc.) | Δ loyer/m² |",
+           "|---|---:|---:|---:|---:|"]
+    for kh, nv, dv, nl, dl in lignes:
+        out.append(f"| {kh.replace(' District', '')} | {nv} | "
+                   f"{dv:+.1f} % | {nl or '—'} | "
+                   f"{f'{dl:+.1f} %' if dl is not None else '—'} |")
+    return "\n".join(out) + "\n"
+
+
+def medianes_par_condo(actives, strata="0-1BR"):
+    """Médiane de prix et de loyer au m², PAR IMMEUBLE.
+
+    POURQUOI ON GARDE CE NIVEAU DE DÉTAIL. Le corpus grossit à chaque scrap —
+    c'est le principe même d'un observatoire, et les écarts entre éditions
+    mélangent donc mouvement de prix et changement de couverture. Un avertissement
+    ne règle rien : il dit que le chiffre est douteux sans en fournir un bon.
+
+    La réponse est de comparer LE MÊME PANIER : les immeubles présents dans les
+    deux éditions. Un immeuble déjà connu dont la médiane bouge, c'est du marché.
+    Un immeuble qui apparaît, c'est de la couverture. Les deux sont intéressants,
+    mais ce sont deux mesures, et les additionner n'en donne aucune.
+
+    Impossible à reconstituer après coup : jusqu'au 2026-08-03 les instantanés ne
+    gardaient que le niveau quartier. La série de panier constant commencera donc
+    à la première édition qui suivra celle-ci.
+
+    Coût : ~3 000 immeubles, quelques dizaines de kilo-octets par instantané,
+    pour une cadence mensuelle. Négligeable au regard de ce qu'on ne peut pas
+    recalculer plus tard.
+    """
+    ventes, loyers, khets = defaultdict(list), defaultdict(list), {}
+    for r in actives:
+        if not r["khet"] or (KHETS_BKK and r["khet"] not in KHETS_BKK):
+            continue
+        if strata == "0-1BR" and not is_01(r["bedrooms"]):
+            continue
+        k = norm_condo(r["condo_name"])
+        if not k:
+            continue
+        khets.setdefault(k, r["khet"])
+        if sale_ok(r):
+            ventes[k].append(r["price_per_sqm"])
+        elif rent_ok(r):
+            loyers[k].append(r["price_per_sqm"])
+
+    out = {}
+    for k in set(ventes) | set(loyers):
+        v, l = ventes.get(k, []), loyers.get(k, [])
+        out[k] = {"khet": khets.get(k), "n_v": len(v), "n_l": len(l)}
+        if v:
+            out[k]["vente_m2"] = round(median(v))
+        if l:
+            out[k]["loyer_m2"] = round(median(l), 1)
+    return out
+
+
 def write_snapshot(actives, D01, tens, demo=None, official=None):
     snap = {
         "date": TODAY, "config_version": CFG["config_version"],
@@ -439,6 +538,8 @@ def write_snapshot(actives, D01, tens, demo=None, official=None):
                           for k, v in D01.items()},
         "tension_by_khet": {r["khet"]: {"rate": r["delist_rate_pct"], "n": r["n_delisted"]}
                             for r in tens["by_khet"] if r["n_delisted"] >= CFG["tension"]["min_delisted_per_khet"]},
+        # Médianes par IMMEUBLE — la matière du panier constant (cf. medianes_par_condo).
+        "condo_medians": medianes_par_condo(actives),
         "demographics": demo or {},
         "dopa_yymm": (official or {}).get("dopa", {}).get("yymm_buddhist"),
     }
@@ -521,6 +622,7 @@ def evolution_md(snaps):
             "> Ce qui reste lisible : le SENS et le CLASSEMENT relatif des quartiers. "
             "Ce qui ne l'est pas : l'ampleur. La prochaine édition, sur corpus stable, "
             "donnera la première évolution propre.\n")
+    out.append(panier_constant_md(a, b))
     out.append(f"Éditions comparées : {', '.join(dates)} "
                f"(versions de config : {', '.join(str(s['config_version']) for s in snaps)}).\n")
     out.append("**Prix de vente /m² (0–1BR, double médiane) :**\n")

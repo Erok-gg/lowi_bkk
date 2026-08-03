@@ -168,6 +168,12 @@ def normalize(rec: dict) -> dict:
         "posted_at": rec.get("posted_at"),
         # Republication signalée par le site lui-même.
         "is_auto_repost": rec.get("is_auto_repost"),
+        # VENDU / LOUÉ dit par la source, AVANT même la disparition de l'annonce.
+        # C'est le seul signal de TRANSACTION directement observable : le
+        # délistage, lui, confond vente, retrait et artefact de fenêtre de scan.
+        # On l'ENREGISTRE sans toucher à `status` — requalifier une annonce en
+        # vendue est une décision d'analyse, pas un effet de bord du scrap.
+        "market_status": rec.get("market_status"),
     }
     rec_out["unit_key"] = unit_key(rec_out)
     return rec_out

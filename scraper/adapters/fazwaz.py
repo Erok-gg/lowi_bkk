@@ -32,6 +32,50 @@ OWNERSHIP_RE = re.compile(r'"ownership":\[\[(\d+)\]')
 FAZWAZ_OWNERSHIP = {1: ("thai", True), 2: ("foreigner", True)}
 
 
+# Emplacement du PRIX sur la fiche. FazWaz y met normalement le montant
+# (« ฿5,000,000 ») et le REMPLACE par un mot quand le lot n'est plus a vendre —
+# c'est le « Sale Price | Sold » visible a l'ecran.
+_PRIX_OU_STATUT = re.compile(r'<div class="price-message"[^>]*>(.*?)</div>', re.S)
+
+#: Mots qui, a cet emplacement, disent que le lot est SORTI DU MARCHE.
+#: Tout le reste (un montant) signifie qu'il y est encore.
+_STATUTS = {"sold": "sold", "rented": "rented", "reserved": "reserved",
+            "under offer": "under_offer", "off market": "off_market"}
+
+
+def statut_marche(html: str) -> str | None:
+    """`sold`, `rented`… ou None si la fiche affiche un prix.
+
+    POURQUOI CE CHAMP EXISTE. La section tension le disait en preambule :
+    « delistage = vendu OU retire OU artefact de fenetre ». Trois causes tres
+    differentes, agregees faute de pouvoir les separer. Une annonce marquee
+    vendue AVANT de disparaitre les separe enfin — c'est le seul signal de
+    VENTE directement observable dont on dispose, tout le reste etant du prix
+    affiche.
+
+    Signale par l'utilisateur le 2026-08-03 sur `u6588016` (The Alcove Thonglor
+    10, Vadhana) : la page affichait « Sold », notre base la portait `active` a
+    6 500 000 THB. Nous comptions un lot vendu comme de l'offre vivante.
+
+    ⚠ PREVALENCE FAIBLE, mesuree : sur 45 annonces actives tirees au sort,
+    ZERO n'etait marquee vendue (borne haute ~6,5 % a cet effectif). Ce n'est
+    donc pas un biais massif — c'est un signal rare et sur, a ne pas confondre
+    avec une correction de volume.
+
+    ⚠ COUVERTURE PARTIELLE : le marqueur n'est present QUE sur la fiche de
+    detail, absent de la page de liste (verifie). Il ne sera donc lu que pour
+    les fiches reellement ouvertes — la dedup incrementale saute celles dont le
+    prix n'a pas bouge, ce qui est precisement le cas d'un lot vendu dont le
+    prix a disparu. Angle mort a garder en tete.
+    """
+    m = _PRIX_OU_STATUT.search(html)
+    if not m:
+        return None
+    v = re.sub(r"<[^>]+>", " ", m.group(1))
+    v = " ".join(unescape(v).split()).lower()
+    return _STATUTS.get(v)
+
+
 class FazwazAdapter(BaseAdapter):
     source = "fazwaz"
 
@@ -169,6 +213,7 @@ class FazwazAdapter(BaseAdapter):
             return
         rec["description"] = description.extract(html)
         rec["page_text"] = description.texte_integral(html)
+        rec["market_status"] = statut_marche(html)
         # tenure + quota depuis le code d'ownership de l'unité
         m = OWNERSHIP_RE.search(unescape(html))
         code = int(m.group(1)) if m else None

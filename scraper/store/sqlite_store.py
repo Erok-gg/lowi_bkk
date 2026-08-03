@@ -62,6 +62,17 @@ create index if not exists idx_images_listing on listing_images(listing_id);
 """
 
 
+#: Jours pendant lesquels une annonce doit rester marquee vendue avant de
+#: quitter le stock actif. Decide le 2026-08-03.
+#:
+#: Le delai n'est pas de la prudence de facade : un badge « Sold » peut etre
+#: transitoire — vente qui capote, erreur d'agent. Sept jours de persistance en
+#: font une preuve. Meme principe que `missed_count`, ou une annonce doit
+#: manquer a plusieurs scans CONSECUTIFS avant d'etre delistee : on exige de la
+#: DUREE, jamais une observation isolee.
+JOURS_AVANT_SORTIE_VENDU = 7
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -150,6 +161,10 @@ class SqliteStore(BaseStore):
                          # provenance (cf. provenance_annonce.sql)
                          ("agent_id", "text"), ("agency_id", "text"),
                          ("posted_at", "text"), ("is_auto_repost", "integer"),
+                         # vendu/loue dit par la source (cf. fazwaz.statut_marche)
+                         # + date de PREMIERE apparition du marqueur : c'est elle
+                         # qui porte la regle des 7 jours avant sortie du stock.
+                         ("market_status", "text"), ("market_status_since", "text"),
                          # descriptif libre — seule matière textuelle de la base
                          ("description", "text"),
                          # MATIERE PREMIERE : texte integral compresse (zlib)
@@ -235,7 +250,7 @@ class SqliteStore(BaseStore):
             # cohorte (robuste aux republications), âge du bâtiment, empreinte photo
             "unit_key", "year_built", "photo_count", "photo_sizes",
             # provenance : qui publie, quand, et republication signalée par la source
-            "agent_id", "agency_id", "posted_at", "is_auto_repost",
+            "agent_id", "agency_id", "posted_at", "is_auto_repost", "market_status",
             # descriptif libre (capturé depuis le 2026-07-31, non rétroactif)
             "description", "page_text",
             # détails extraits du descriptif (cf. pipeline/details.py)
@@ -264,6 +279,7 @@ class SqliteStore(BaseStore):
         # C'est la seule façon de le prouver — l'update ci-dessous détruit
         # l'ancienne valeur, et un instantané ne dit rien d'une évolution.
         self._track_posted_at(existing, norm.get("posted_at"), now)
+        self._suivre_statut_marche(existing, norm.get("market_status"), now)
         self.db.execute(
             f"update listings set {','.join(c+'=?' for c in cols)},"
             f"status='active',last_seen=?,raw_data=?,"
@@ -346,6 +362,37 @@ class SqliteStore(BaseStore):
             q += " and deal_type=?"
             params.append(deal_type)
         return self.db.execute(q, params).fetchone()["c"]
+
+    def _suivre_statut_marche(self, existant, nouveau, maintenant) -> None:
+        """Date la PREMIERE apparition de la valeur courante de market_status.
+
+        Ne bouge que sur CHANGEMENT. Sans ca, `market_status_since` suivrait
+        `last_seen` et la regle des sept jours ne se declencherait jamais : elle
+        compterait toujours zero jour d'anciennete.
+        """
+        try:
+            ancien = existant["market_status"]
+        except (KeyError, IndexError, TypeError):
+            return
+        if (ancien or None) == (nouveau or None):
+            return
+        self._maj_since(existant["id"], maintenant if nouveau else None)
+
+    def _maj_since(self, lid, quand) -> None:
+        self.db.execute("update listings set market_status_since=? where id=?", (quand, lid))
+
+    def appliquer_ventes(self, jours: int = JOURS_AVANT_SORTIE_VENDU) -> int:
+        """Sort du stock actif les annonces marquees vendues depuis `jours`.
+        Voir SupabaseStore.appliquer_ventes pour le raisonnement."""
+        from datetime import timedelta
+        limite = (datetime.now(timezone.utc) - timedelta(days=jours)).isoformat()
+        cur = self.db.execute(
+            "update listings set status='sold', delisted_at=market_status_since "
+            "where market_status='sold' and status='active' "
+            "  and market_status_since is not null and market_status_since <= ?",
+            (limite,))
+        self.db.commit()
+        return cur.rowcount
 
     def mark_missing_inactive(self, source: str, seen_ids: set[str],
                               deal_type: str | None = None,

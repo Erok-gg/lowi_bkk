@@ -299,6 +299,15 @@ def main() -> None:
                   f"{int(FULL_DELIST_MIN_RATIO * 100)} % des {active_n} actives en base "
                   f"→ délistage ANNULÉ (site en panne / scan partiel ?). Relance un scan complet.")
         else:
+            # VENDUES depuis 7 jours → sortie du stock actif, AVANT le délistage.
+            # L'ordre compte : une annonce vendue qui disparaît ensuite doit être
+            # comptée comme vendue, pas comme retirée. C'est toute la différence
+            # que ce marqueur apporte — le délistage confond vente, retrait et
+            # artefact de fenêtre, `market_status` les sépare.
+            vendues = store.appliquer_ventes()
+            if vendues:
+                print(f"  {vendues} annonce(s) marquée(s) vendues depuis ≥7 j → sorties du stock")
+
             # scope l'inactivation au deal_type scrapé (sinon on délisterait l'autre catégorie)
             delisted = store.mark_missing_inactive(args.source, seen_ids, deal_type=args.deal_type)
             removed = len(delisted)
