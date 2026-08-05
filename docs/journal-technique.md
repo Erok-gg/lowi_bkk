@@ -1357,3 +1357,70 @@ ouvert, donc il se relâche seul à la mort du processus, plantage compris.
 Enseignement : un garde-fou écrit et non branché ne protège de rien. J'avais
 identifié le risque, construit l'outil, et omis de l'appliquer au seul endroit qui
 allait en avoir besoin dans les vingt-quatre heures.
+
+## 2026-08-05 — Cinquième source (LivingInsider), une source écartée après enquête (DotProperty), et le mécanisme T2 qui n'existait pas
+
+**Contexte.** Une discussion WhatsApp avec un agent (Earn) a fait remonter
+propertynetwork.asia comme source candidate. En creusant sa structure (aucune
+liste publique, `robots.txt` en `Disallow: /` total), le fil a mené à identifier
+que ce n'est pas un agrégateur mais un outil de partage client posé sur d'autres
+plateformes (confirmé par Earn elle-même, puis vérifié empiriquement : l'id
+`2280176` pointe vers exactement le même bien sur propertynetwork.asia et sur
+propertyscout.co.th). Aucune donnée unique à en tirer — PropertyScout est déjà
+une source active.
+
+**Décision 1 — le ticket `watch-sources` dormant sur DotProperty (créé le
+2026-08-01, jamais traité) a été rouvert, puis refusé après enquête.** Le
+sondage automatique de `watch-sources` ne teste que HTTP/blob/robots/volume, pas
+l'origine des données. Un échantillonnage manuel (90 annonces sur 3 pages
+indépendantes, vente + location) a montré que **100 % des photos** viennent de
+`cdn.fazwaz.com` / `img.fazwaz.com`. DotProperty Bangkok semble syndiquer FazWaz,
+déjà scrapé — écrire l'adaptateur aurait dupliqué la couverture existante pour un
+coût de scrape non négligeable (chaque fiche = 1 requête détail systématique).
+Adaptateur **délibérément non écrit**. `agents/state/watch-sources/registre.json`
+et le ticket lui-même portent la trace de cette correction ; la décision finale
+(creuser une fraction non-FazWaz, ou clore) reste à trancher par un humain.
+
+**Décision 2 — LivingInsider ajouté comme 5e source.** Vérifié indépendant
+(images sur `www.livinginsider.com`, `sku` préfixé `LV`, aucun CDN
+FazWaz/DDproperty/PropertyScout détecté), `robots.txt` quasi ouvert,
+`sitemap-project.xml` dédié. Deux limites structurelles, documentées dans
+`agents/skills/extract-livinginsider/SKILL.md` :
+- **Aucune dédup incrémentale possible** : la page de liste ne porte que des
+  URLs nues (pas de prix), contrairement aux 4 sources existantes — chaque scan
+  revisite donc TOUTES les fiches déjà connues, indéfiniment. `max_pages` posé
+  bas (25, contre 150 pour FazWaz/DDproperty/PropertyScout) en attendant une
+  mesure réelle de durée de run.
+- **Flux national, pas de filtre géo à la source.** Le format d'adresse n'est
+  pas homogène : certaines fiches disent proprement « … District, Bangkok »,
+  d'autres non (texte thaï/anglais mêlé, mot "District" absent). Premier essai
+  du filtre (regex stricte seule) : **1 fiche retenue sur 20**, alors que 13
+  des 19 écartées étaient de vraies fiches Bangkok mal formatées — le filtre
+  cassait plus qu'il ne triait. Corrigé par un second motif de repli sur le
+  code postal (« … Bangkok 10xxx »), qui prend les 2 derniers mots avant le
+  code postal comme meilleure estimation de district. Retest sur les mêmes 20
+  fiches : **18/20 retenues**, 0 faux positif observé sur les 17 fiches
+  vérifiées une à une (dont 3 réellement hors Bangkok, toutes correctement
+  écartées — Samut Prakan et Chon Buri ont des codes postaux hors plage
+  10xxx). Le nom de district déduit par repli n'est pas toujours canonisable
+  (ex. "Nuea Vadhana" au lieu de "Watthana District") — `--geocode` est de fait
+  indispensable ici, pas optionnel comme pour les autres sources.
+
+**Décision 3 — le mécanisme T2 n'existait pas.** `agents/README.md` décrit
+depuis le début « une session Claude planifiée [qui] draine » `agents/queue/`.
+Vérification : aucune tâche planifiée ne le fait — le rapport mensuel
+(`rapport-mensuel-lowi-bkk`) ne couvre que l'étude de marché, jamais la file de
+tickets. `agents/queue/done/` était vide depuis la création du système le
+2026-07-31. Six tickets (5 `agent_muet` sévérité haute + le `nouvelle_source`
+DotProperty) se sont accumulés sans jamais être traités. Tâche planifiée locale
+`drain-agent-queue-lowi-bkk` créée (quotidienne, ~08:38) pour combler ce vide —
+même limite que les tâches Windows de juillet, en moins grave : elle ne tourne
+que si l'app est ouverte à l'heure dite (rattrape au lancement suivant sinon),
+contrairement à la tâche Windows `LowiBKK-Agents` qui tourne app fermée. Premier
+passage prévu le 2026-08-06 matin.
+
+**Limite connue.** Aucun run de production `livinginsider` n'a encore eu lieu —
+tout ce qui précède vient de runs de test isolés (`LOWI_OUTPUT_DIR` dédié,
+`--limit`, SQLite local, jamais Supabase). Les bandes de `agents/agents.json`
+pour `extract-livinginsider` sont provisoires. Travail fait sur la branche
+`agents/new-sources-livinginsider-dotproperty`, jamais sur `main`.

@@ -1,0 +1,28 @@
+{
+  "_comment": "LivingInsider — site 100% serveur. Flux NATIONAL (pas de filtre géo à la source) : chaque fiche est visitée pour lire prix/surface/chambres/adresse, et écartée si l'adresse ne mentionne pas Bangkok. ⚠ AUCUNE dédup incrémentale possible (la liste ne porte aucun prix, contrairement à FazWaz/DDproperty/PropertyScout) : CHAQUE scan revisite TOUTES les fiches déjà connues, indéfiniment — coût de scrape structurellement plus élevé que les 4 sources existantes. max_pages volontairement bas au démarrage (12 annonces/page, flux national, ~75-90% de taux Bangkok mesuré le 2026-08-05 sur un échantillon de 20-37 fiches) : à mesurer sur un premier run réel (durée, volume retenu) avant d'augmenter.",
+  "source": "livinginsider",
+  "base_url": "https://www.livinginsider.com",
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  "rate_limit_seconds": 3.0,
+  "image_rate_limit_seconds": 0.4,
+  "timeout_seconds": 30,
+  "max_pages": 25,
+  "respect_robots": true,
+  "searches": [
+    {
+      "path": "/searchword_en/Condo/Buysell/{page}/property-listing-condo-for-sale.html",
+      "deal_type": "sale"
+    },
+    {
+      "path": "/searchword_en/Condo/Rent/{page}/property-listing-condo-for-rent.html",
+      "deal_type": "rent"
+    }
+  ],
+  "image": {
+    "width": 1024,
+    "height": 768,
+    "format": "webp",
+    "quality": 80,
+    "max_per_listing": 1
+  }
+}

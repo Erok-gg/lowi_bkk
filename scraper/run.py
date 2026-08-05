@@ -26,6 +26,7 @@ from adapters.fazwaz import FazwazAdapter  # noqa: E402
 from adapters.ddproperty import DdpropertyAdapter  # noqa: E402
 from adapters.propertyscout import PropertyscoutAdapter  # noqa: E402
 from adapters.nestopa import NestopaAdapter  # noqa: E402
+from adapters.livinginsider import LivinginsiderAdapter  # noqa: E402
 from pipeline.fetch import Fetcher  # noqa: E402
 from pipeline.normalize import normalize  # noqa: E402
 from pipeline.geo_match import KhetMatcher  # noqa: E402
@@ -40,6 +41,7 @@ ADAPTERS = {
     "ddproperty": DdpropertyAdapter,
     "propertyscout": PropertyscoutAdapter,
     "nestopa": NestopaAdapter,
+    "livinginsider": LivinginsiderAdapter,
 }
 ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "config"

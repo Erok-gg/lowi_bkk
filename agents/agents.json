@@ -158,6 +158,36 @@
       }
     },
     {
+      "name": "extract-livinginsider",
+      "famille": "Extraction",
+      "tier": "T0",
+      "lanes": [
+        "rent"
+      ],
+      "every_days": 4,
+      "cmd": [
+        "@py",
+        "scraper/run.py",
+        "--source",
+        "livinginsider",
+        "--full",
+        "--geocode",
+        "--store",
+        "supabase"
+      ],
+      "_ajoute_le": "2026-08-05 — aucun run de production encore, bandes provisoires. Voir agents/skills/extract-livinginsider/SKILL.md pour les pannes connues (pas de dédup incrémentale possible, filtre Bangkok imparfait).",
+      "bandes": {
+        "nouvelles": [
+          5,
+          1500
+        ],
+        "traces_erreur": [
+          0,
+          5
+        ]
+      }
+    },
+    {
       "name": "watch-health",
       "famille": "Surveillance",
       "tier": "T1",
@@ -171,7 +201,8 @@
         "extract-fazwaz",
         "extract-ddproperty",
         "extract-propertyscout",
-        "extract-nestopa"
+        "extract-nestopa",
+        "extract-livinginsider"
       ]
     },
     {
@@ -213,7 +244,8 @@
         "extract-fazwaz",
         "extract-ddproperty",
         "extract-propertyscout",
-        "extract-nestopa"
+        "extract-nestopa",
+        "extract-livinginsider"
       ],
       "needs_supabase": true,
       "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté."
