@@ -259,6 +259,27 @@
       "module": "agents.bots.watch_sources"
     },
     {
+      "name": "verif-dotproperty",
+      "famille": "Surveillance",
+      "tier": "T0",
+      "lanes": [
+        "daily"
+      ],
+      "every_days": 4,
+      "cmd": [
+        "@py",
+        "ops/verif-dotproperty.py"
+      ],
+      "_pourquoi": "Confirme/infirme sur 3 runs espaces l'hypothese de resyndication FazWaz (voir agents/state/watch-sources/registre.json, entree dotproperty) avant de trancher le ticket watch-sources du 2026-08-01. Auto-limite : ne fait plus rien apres 3 runs (agents/state/verif-dotproperty/etat.json), pas besoin de le retirer d'ici la. Premier run fait manuellement le 2026-08-06 (60/60 images FazWaz).",
+      "bandes": {
+        "traces_erreur": [
+          0,
+          0
+        ]
+      },
+      "needs_supabase": false
+    },
+    {
       "name": "analyze-sale",
       "famille": "Analyse",
       "tier": "T1",

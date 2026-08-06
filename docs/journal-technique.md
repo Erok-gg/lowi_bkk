@@ -1424,3 +1424,77 @@ tout ce qui précède vient de runs de test isolés (`LOWI_OUTPUT_DIR` dédié,
 `--limit`, SQLite local, jamais Supabase). Les bandes de `agents/agents.json`
 pour `extract-livinginsider` sont provisoires. Travail fait sur la branche
 `agents/new-sources-livinginsider-dotproperty`, jamais sur `main`.
+
+## 2026-08-06 (suite) — Vente/location le même jour, backup avant/après cycle, DotProperty tranché
+
+**Contexte.** Anthony a demandé trois choses dans la foulée de ce qui précède :
+(1) revenir à `agents/orchestrator.py` + `agents.json` plutôt que
+`superviseur.py`/`tests-scrap` — abandonné le même jour, voir plus haut ;
+(2) que vente ET location tournent le même jour, chaque source enchaînant
+elle-même sa passe location dès que sa passe vente finit, sans attendre les
+autres sources ; (3) un backup local avant ET après chaque cycle de 4 jours,
+pas seulement la purge hebdomadaire existante.
+
+**Décision 1 — fin de l'alternance sale/rent par jour.** L'ancien
+`current_lane()` alternait vente et location sur des jours différents (`day %
+4 < 2`) : concrètement, une catégorie restait périmée 4 jours de plus que
+nécessaire à chaque cycle, pour aucune raison technique — c'était une reprise
+telle quelle des anciennes tâches Windows (`ScrapVente`/`ScrapLocation`), pas
+un choix motivé. `current_lane()` simplifié à `daily`/`weekly`. Chaque source
+qui sépare `--deal-type` (FazWaz, DDproperty) enchaîne maintenant sale PUIS
+rent PUIS sa passe corridors via des étapes `then` successives dans
+`agents.json` — les extracteurs restant parallèles ENTRE eux (le
+`ThreadPoolExecutor` existant), la source la plus rapide démarre sa location
+sans attendre les autres, exactement le comportement demandé.
+
+**Défaut trouvé en l'implémentant, pas en le pensant.** Avec plusieurs étapes
+`then`, `run_agent()` n'écrivait qu'UNE clé `then_exit` dans les métriques —
+la deuxième étape écrasait le résultat de la première, qui disparaissait sans
+trace. Pire : le statut global de l'agent (`ok`/`failed`) ne regardait QUE le
+code retour de la commande PRINCIPALE. Une passe vente réussie suivie d'une
+passe location qui plante aurait été journalisée `ok` — la panne aurait été
+silencieuse. Corrigé : chaque étape (principal + tous les `then`) s'exécute
+indépendamment de l'échec des précédentes (une passe vente cassée ne doit pas
+empêcher la tentative de la passe location), ses métriques sont conservées
+sous une clé distincte (`metrics.etapes[]`), et le statut global agrège tout.
+Validé par un test synthétique (3 étapes, la 2e échoue exprès) avant de faire
+confiance au vrai pipeline : statut global bien `failed`, les 3 étapes
+s'exécutent quand même, rien n'est perdu dans les métriques.
+
+**Décision 2 — backup avant/après, pas seulement hebdomadaire.** Le seul
+filet de sécurité existant (`agent storage`, `ops/sync_supabase_local.py
+--prune`) tournait une fois par semaine — un retour en arrière après un cycle
+de scrap raté se serait fait sur une sauvegarde vieille de plusieurs jours.
+Deux nouveaux agents T0, cadence 4 jours (alignée sur le cycle
+d'extraction) : `backup-avant-cycle` (nouvelle famille `Prelude`, exécutée en
+premier, séquentielle, avant tout extracteur — `run_lane()` modifié pour
+supporter cette phase) et `backup-apres-cycle` (dernier avant `overseer`).
+Les deux appellent `ops/sync_supabase_local.py` SANS `--prune` — réplique
+seule, jamais destructif, et **sans** le garde-fou `requires_healthy` de
+`storage` : une sauvegarde de ce qui a réussi vaut mieux qu'aucune sauvegarde,
+même si une extraction a échoué en amont. Testé réellement (pas en dry-run) :
+`archive/lowi-archive.db` passe de 45 159 lignes périmées (2026-08-03) à
+555 691 lignes fraîches sur 7 tables, en un seul run.
+
+**Décision 3 — DotProperty tranché, pas juste suspecté.** Le ticket ouvert le
+2026-08-01 restait sur une investigation manuelle ponctuelle (90 annonces,
+un seul passage). Écrit `ops/verif-dotproperty.py` : 3 sondages de la page de
+LISTE uniquement (pas de fiche détail, pas d'écriture DB — juste le
+hébergeur des images), enregistrés dans un état persistant, avec conclusion
+automatique au 3e run. Plutôt que d'attendre 3 cycles réels (~12 jours), les
+3 runs ont été déclenchés à la main ce soir pour valider le mécanisme
+complet : **180 annonces échantillonnées sur 3 runs indépendants, 100% des
+images chez `cdn.fazwaz.com`/`img.fazwaz.com`** — verdict
+`resyndication_confirmee`. Le ticket est fermé et déplacé dans
+`agents/queue/done/`, le registre `watch-sources` mis à jour, un mail de
+conclusion déposé dans `agents/queue/mail/` (à drainer par
+`drain-agent-queue-lowi-bkk`, mis à jour le même jour pour créer des
+brouillons Gmail plutôt que d'envoyer directement — plus sûr pour une
+dispatch nocturne sans supervision).
+
+**Limite connue.** `verif-dotproperty` reste dans `agents.json` (cadence 4 j)
+mais ne fait plus rien après ces 3 runs (`etat.json` déjà à 3/3) — laissé en
+place comme trace, pas retiré, aucune action requise. Travail fait
+directement sur `main` (contrairement au reste de la nuit) : cette
+infrastructure doit être active pour le cycle planifié de demain 01:00, la
+laisser sur une branche l'aurait rendue invisible à la tâche Windows.
