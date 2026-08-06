@@ -1,7 +1,7 @@
 {
   "_comment": "Registre des agents. C'est ICI que vivent les cadences — l'orchestrateur lit ce fichier, interroge le ledger, et décide seul de ce qui est dû. Ajouter un agent = ajouter une entrée ; les agents T0 n'ont pas de code Python, seulement une commande.",
   "version": 2,
-  "_version_2_2026-08-06": "Vente et location tournent désormais LE MÊME JOUR (plus d'alternance sale/rent sur des jours différents, qui retardait chaque catégorie de 4 jours pour rien). Chaque source qui sépare deal_type (fazwaz, ddproperty) enchaîne elle-même sale PUIS rent via 'then', indépendamment des autres sources — si fazwaz finit sa vente avant ddproperty, sa location démarre tout de suite, sans attendre ddproperty. Ajout de backup-avant-cycle et backup-apres-cycle : la sauvegarde locale (archive/lowi-archive.db) ne tournait qu'une fois/semaine (agent storage) — un retour en arrière se serait fait sur une sauvegarde vieille de plusieurs jours. Elle encadre maintenant chaque cycle de 4 jours, sans purge (juste une réplique).",
+  "_version_2_2026-08-06": "Vente et location tournent désormais LE MÊME JOUR (plus d'alternance sale/rent sur des jours différents, qui retardait chaque catégorie de 4 jours pour rien). Chaque source qui sépare deal_type (fazwaz, ddproperty) enchaîne elle-même sale PUIS rent via 'then', indépendamment des autres sources — si fazwaz finit sa vente avant ddproperty, sa location démarre tout de suite, sans attendre ddproperty. Ajout de verifie-backup (Prelude) et backup-apres-cycle : la sauvegarde locale (archive/lowi-archive.db) ne tournait qu'une fois/semaine (agent storage) — un retour en arrière se serait fait sur une sauvegarde vieille de plusieurs jours. verifie-backup VÉRIFIE l'intégrité du backup précédent (intégrité SQLite, volume vs Supabase, dernier backup-apres-cycle 'ok' dans le ledger) avant de lancer l'extraction, et ne rattrape (ops/sync_supabase_local.py) QUE si un problème est détecté — pas de resync aveugle à chaque cycle.",
   "tiers": {
     "T0": "Déterministe. Aucun LLM. Il leur manque l'orchestration et une trace, pas de l'intelligence.",
     "T1": "Local qwen3:8b, EN MODE EXTRACTION uniquement (le modèle constate, le code décide).",
@@ -13,7 +13,7 @@
   },
   "agents": [
     {
-      "name": "backup-avant-cycle",
+      "name": "verifie-backup",
       "famille": "Prelude",
       "tier": "T0",
       "lanes": [
@@ -22,9 +22,9 @@
       "every_days": 4,
       "cmd": [
         "@py",
-        "ops/sync_supabase_local.py"
+        "ops/verifie-backup.py"
       ],
-      "_pourquoi": "Point de retour en arrière pris AVANT que le cycle ne touche la base — sans --prune (réplique seulement, jamais destructif). Tourne en Prelude : séquentiel, avant tout extracteur (cf. orchestrator.py:run_lane).",
+      "_pourquoi": "Vérifie l'intégrité du backup PRÉCÉDENT (PRAGMA integrity_check, tables attendues, volume archive vs Supabase, dernier backup-apres-cycle 'ok' dans le ledger et pas trop vieux) avant de lancer l'extraction. À défaut (n'importe quel point en échec) : rattrape en relançant ops/sync_supabase_local.py tout de suite, dans ce même cycle plutôt que d'attendre le suivant. Ne resynchronise PAS à l'aveugle si tout va déjà bien — contrairement à l'ancien backup-avant-cycle (v1), inconditionnel. Tourne en Prelude : séquentiel, avant tout extracteur (cf. orchestrator.py:run_lane).",
       "bandes": {
         "traces_erreur": [
           0,
@@ -32,7 +32,7 @@
         ]
       },
       "needs_supabase": true,
-      "_needs_supabase_pourquoi": "Réplique Supabase -> local : n'a pas de sens en mode --local (rien à répliquer). Sauté."
+      "_needs_supabase_pourquoi": "Compare le volume archivé au volume Supabase : n'a pas de sens en mode --local. Sauté."
     },
     {
       "name": "extract-fazwaz",

@@ -1498,3 +1498,27 @@ place comme trace, pas retiré, aucune action requise. Travail fait
 directement sur `main` (contrairement au reste de la nuit) : cette
 infrastructure doit être active pour le cycle planifié de demain 01:00, la
 laisser sur une branche l'aurait rendue invisible à la tâche Windows.
+
+## 2026-08-06 (suite 2) — Correction : "backup avant/après" voulait dire vérifier, pas resynchroniser
+
+Anthony a repris ma lecture du mot "backup" ci-dessus : `backup-avant-cycle`
+(v1) resynchronisait `archive/lowi-archive.db` à l'aveugle à chaque cycle,
+sans jamais se demander si le backup précédent avait déjà fait le travail. Ce
+n'était pas ce qui était demandé — la demande portait sur une VÉRIFICATION du
+backup précédent, avec rattrapage seulement "à défaut" (si la vérification
+échoue), et un agent dédié à la LECTURE du backup pour en juger l'intégrité,
+pas juste relancer la sync et espérer.
+
+`ops/verifie-backup.py` remplace `backup-avant-cycle` : quatre vérifications
+(`PRAGMA integrity_check` sur le SQLite local, tables attendues présentes,
+volume archivé >= 90 % du volume Supabase, dernier `backup-apres-cycle` 'ok'
+dans le ledger et pas plus vieux que cadence+1 jour) — et ne relance
+`ops/sync_supabase_local.py` QUE si l'une d'elles échoue. `backup-apres-cycle`
+(fin de cycle, inconditionnel) est inchangé.
+
+**Testé réellement**, pas en dry-run : `backup-apres-cycle` n'ayant encore
+jamais tourné via l'orchestrateur (créé ce soir), le check #4 a correctement
+détecté "aucun backup-apres-cycle 'ok' trouvé" et déclenché un rattrapage —
+qui a réussi (archive passée à 555 814 lignes). Revalidé une seconde fois en
+appelant `agents/orchestrator.py run verifie-backup` directement (pas juste le
+script), pour prouver l'intégration réelle, pas seulement la logique isolée.
