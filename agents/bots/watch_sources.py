@@ -79,7 +79,29 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
     else:
         registre = {"candidates": CANDIDATES_INITIALES, "connues_prometteuses": []}
 
+    # Le sondage automatique ne teste que HTTP/blob/robots/volume — il ignore
+    # tout ce qu'une investigation humaine ou Claude a pu établir (ex. une
+    # source qui resyndique une source déjà scrapée). Sans ça, un sondage
+    # planifié écrase silencieusement la note qui explique pourquoi une
+    # candidate "prometteuse" au sens technique a quand même été écartée —
+    # trouvé le 2026-08-06 en validant cet agent en conditions réelles : le
+    # premier run après une correction manuelle sur dotproperty/propertynetwork
+    # a effacé les champs note/date_sonde/sonde_par sans prévenir.
+    precedents = {r["nom"]: r for r in registre.get("dernier_sondage", [])}
     resultats = [_sonder(c) for c in registre["candidates"]]
+    for r in resultats:
+        prec = precedents.get(r["nom"])
+        if not prec:
+            continue
+        # "note" = ancienne convention (avant ce correctif) ; on la relaie sous
+        # le nom definitif pour ne plus la perdre au sondage suivant.
+        note = prec.get("note_investigation_anterieure") or prec.get("note")
+        if note:
+            r["note_investigation_anterieure"] = note
+            r["investigation_anterieure_le"] = (
+                prec.get("investigation_anterieure_le") or prec.get("date_sonde"))
+            r["investigation_anterieure_par"] = (
+                prec.get("investigation_anterieure_par") or prec.get("sonde_par"))
     deja = set(registre.get("connues_prometteuses", []))
     nouvelles = [r["nom"] for r in resultats if r["prometteuse"] and r["nom"] not in deja]
 

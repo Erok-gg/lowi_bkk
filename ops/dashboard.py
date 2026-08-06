@@ -1,7 +1,13 @@
 """dashboard.py — suivi live du scrap, style terminal / pixel art, 1920x1080.
 
-Lit directement les bases SQLite des scraps en cours (aucune requête réseau, aucun
-impact sur le scrap) et le ledger des agents. Rafraîchi toutes les 5 secondes.
+Lit directement les bases SQLite des scraps LOCAUX de test (aucune requête
+réseau, aucun impact sur le scrap) et le ledger des agents. Depuis le
+2026-08-06, l'archi de test locale (tests-scrap/) est abandonnée au profit de
+agents/orchestrator.py qui écrit DIRECTEMENT dans Supabase (--store supabase) —
+sans ça, ce dashboard ne montrait plus jamais un scrap réel : il ne savait lire
+que des bases SQLite locales, qu'un scrap en ligne n'écrit jamais. La source
+"SUPABASE (production)" ci-dessous corrige ça, en lecture seule (SELECT
+uniquement, jamais d'écriture). Rafraîchi toutes les 5 secondes.
 
 Lancement : double-clic sur ops\\Dashboard.bat
             ou  scraper\.venv\Scripts\python.exe ops/dashboard.py [--db <chemin>]
@@ -19,6 +25,23 @@ import tkinter as tk
 from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SUPABASE = "SUPABASE (production)"   # pseudo-chemin : marqueur de la source en ligne
+
+
+def _supabase_dsn() -> str | None:
+    """Lit SUPABASE_DB_URL depuis scraper/.env, sans dépendance (même motif que
+    scraper/run.py:load_env / ops/remonter-local.py)."""
+    env = os.path.join(ROOT, "scraper", ".env")
+    if not os.path.exists(env):
+        return None
+    for ligne in open(env, encoding="utf-8"):
+        ligne = ligne.strip()
+        if not ligne or ligne.startswith("#") or "=" not in ligne:
+            continue
+        k, v = ligne.split("=", 1)
+        if k.strip() == "SUPABASE_DB_URL":
+            return v.strip()
+    return None
 
 # Palette phosphore : fond anthracite, ambre dominant, violet pour les accents
 # (repris des tokens du projet), vert pour ce qui va bien, rouge pour l'anomalie.
@@ -58,11 +81,16 @@ def thb(x: float) -> str:
 
 
 def bases_disponibles() -> list[str]:
-    """Toutes les bases de scrap, la plus récemment modifiée d'abord."""
+    """SUPABASE (si SUPABASE_DB_URL est configuré) en premier — c'est la
+    production, ce qu'un scrap --store supabase écrit réellement — puis les
+    bases SQLite locales trouvées (tests-scrap/ hérité, scraper/output/ pour un
+    run --store sqlite ponctuel), la plus récemment modifiée d'abord."""
+    out = [SUPABASE] if _supabase_dsn() else []
     trouvees = glob.glob(os.path.join(ROOT, "tests-scrap", "*", "bangkok.db"))
     trouvees += glob.glob(os.path.join(ROOT, "scraper", "output", "bangkok.db"))
-    return sorted((f for f in trouvees if os.path.exists(f)),
+    out += sorted((f for f in trouvees if os.path.exists(f)),
                   key=os.path.getmtime, reverse=True)
+    return out
 
 
 class Source:
@@ -119,6 +147,73 @@ class Source:
             d1 = datetime.fromisoformat(r[0]["b"])
         except (TypeError, ValueError):
             return None
+        sec = (d1 - d0).total_seconds()
+        n = r[0]["n"]
+        return {"n": n, "sec": sec, "par_h": (n / sec * 3600) if sec > 0 else 0,
+                "dernier": d1}
+
+
+class SourceSupabase:
+    """Même interface que Source, mais lit Postgres (production) — SELECT
+    uniquement, jamais d'écriture. Une connexion par appel : le dashboard
+    tourne des heures, une connexion persistante finirait par expirer ou
+    laisser un idle-in-transaction inutile sur un pooler partagé."""
+
+    def __init__(self, dsn: str):
+        self.dsn = dsn
+
+    def _q(self, sql: str, params=()):
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(self.dsn, connect_timeout=5, autocommit=True,
+                                 row_factory=dict_row) as c:
+                with c.cursor() as cur:
+                    cur.execute(sql, params)
+                    return cur.fetchall()
+        except Exception:      # noqa: BLE001 — jamais bloquant pour l'affichage
+            return []
+
+    def total(self) -> int:
+        r = self._q("select count(*) n from listings")
+        return r[0]["n"] if r else 0
+
+    def par_source(self):
+        return self._q("select source, deal_type, count(*) n, "
+                       "count(description) d, count(lat) g from listings "
+                       "group by source, deal_type order by n desc")
+
+    def chambres_par_khet(self, deal: str, limite: int = 14):
+        return self._q(
+            "select khet, "
+            " sum(case when bedrooms=0 then 1 else 0 end) st, "
+            " sum(case when bedrooms=1 then 1 else 0 end) b1, "
+            " sum(case when bedrooms=2 then 1 else 0 end) b2, "
+            " sum(case when bedrooms>=3 then 1 else 0 end) b3, "
+            " count(*) tot "
+            "from listings where khet is not null and deal_type=%s "
+            "group by khet order by tot desc limit %s", (deal, limite))
+
+    def tranches(self, deal: str, bornes):
+        out = []
+        for lo, hi in bornes:
+            r = self._q("select count(*) n from listings "
+                        "where deal_type=%s and price>=%s and price<%s", (deal, lo, hi))
+            out.append((lo, hi, r[0]["n"] if r else 0))
+        return out
+
+    def cadence(self):
+        r = self._q("select min(first_seen) a, max(first_seen) b, count(*) n "
+                    "from listings")
+        if not r or not r[0]["a"]:
+            return None
+        d0, d1 = r[0]["a"], r[0]["b"]
+        # psycopg rend des datetime natifs (tz-aware) pour un timestamptz —
+        # contrairement à sqlite3 qui rend le TEXT ISO stocké tel quel.
+        if isinstance(d0, str):
+            d0 = datetime.fromisoformat(d0)
+        if isinstance(d1, str):
+            d1 = datetime.fromisoformat(d1)
         sec = (d1 - d0).total_seconds()
         n = r[0]["n"]
         return {"n": n, "sec": sec, "par_h": (n / sec * 3600) if sec > 0 else 0,
@@ -196,14 +291,18 @@ class Dashboard(tk.Tk):
             self.after(5000, self.rafraichir)
             return
         chemin = self.bases[self.idx]
-        s = Source(chemin)
+        en_ligne = (chemin == SUPABASE)
+        s = SourceSupabase(_supabase_dsn()) if en_ligne else Source(chemin)
 
         for ligne in BANNIERE:
             self.ecrire("  " + ligne + "\n", "banniere")
         maint = datetime.now().strftime("%d/%m %H:%M:%S")
         self.ecrire(f"  BANGKOK · supervision du scrap{' ' * 26}{maint}\n", "w")
-        self.ecrire(f"  source : {os.path.basename(os.path.dirname(chemin))}"
-                    f"   [S] changer · {len(self.bases)} base(s)\n", "dim")
+        nom_source = "SUPABASE — PRODUCTION (en ligne)" if en_ligne \
+            else os.path.basename(os.path.dirname(chemin))
+        self.ecrire(f"  source : {nom_source}"
+                    f"   [S] changer · {len(self.bases)} base(s)\n",
+                    "ok" if en_ligne else "dim")
         self.ecrire("  " + "─" * 150 + "\n\n", "dim")
 
         # ── progression ──
