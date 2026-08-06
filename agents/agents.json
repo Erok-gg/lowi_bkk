@@ -1,24 +1,45 @@
 {
-  "_comment": "Registre des 12 agents. C'est ICI que vivent les cadences — elles étaient auparavant figées dans ops/scrap-*.ps1 et dans trois tâches Windows qui n'ont jamais tourné. L'orchestrateur lit ce fichier, interroge le ledger, et décide seul de ce qui est dû. Ajouter un agent = ajouter une entrée ; les agents T0 n'ont pas de code Python, seulement une commande.",
-  "version": 1,
+  "_comment": "Registre des agents. C'est ICI que vivent les cadences — l'orchestrateur lit ce fichier, interroge le ledger, et décide seul de ce qui est dû. Ajouter un agent = ajouter une entrée ; les agents T0 n'ont pas de code Python, seulement une commande.",
+  "version": 2,
+  "_version_2_2026-08-06": "Vente et location tournent désormais LE MÊME JOUR (plus d'alternance sale/rent sur des jours différents, qui retardait chaque catégorie de 4 jours pour rien). Chaque source qui sépare deal_type (fazwaz, ddproperty) enchaîne elle-même sale PUIS rent via 'then', indépendamment des autres sources — si fazwaz finit sa vente avant ddproperty, sa location démarre tout de suite, sans attendre ddproperty. Ajout de backup-avant-cycle et backup-apres-cycle : la sauvegarde locale (archive/lowi-archive.db) ne tournait qu'une fois/semaine (agent storage) — un retour en arrière se serait fait sur une sauvegarde vieille de plusieurs jours. Elle encadre maintenant chaque cycle de 4 jours, sans purge (juste une réplique).",
   "tiers": {
     "T0": "Déterministe. Aucun LLM. Il leur manque l'orchestration et une trace, pas de l'intelligence.",
     "T1": "Local qwen3:8b, EN MODE EXTRACTION uniquement (le modèle constate, le code décide).",
     "T2": "Claude, via la file agents/queue/. Rare, enjeu fort, besoin de l'accès dépôt."
   },
   "lanes": {
-    "sale": "Journée VENTE — tous les 4 jours",
-    "rent": "Journée LOCATION — tous les 4 jours, décalée de 2 jours",
-    "weekly": "Hebdomadaire — archivage, purge, audit"
+    "daily": "Vente + location, tous les 4 jours (cadence par agent via every_days, pas par ce nom de lane)",
+    "weekly": "Hebdomadaire — archivage + purge, sondage de nouvelles sources"
   },
   "agents": [
+    {
+      "name": "backup-avant-cycle",
+      "famille": "Prelude",
+      "tier": "T0",
+      "lanes": [
+        "daily"
+      ],
+      "every_days": 4,
+      "cmd": [
+        "@py",
+        "ops/sync_supabase_local.py"
+      ],
+      "_pourquoi": "Point de retour en arrière pris AVANT que le cycle ne touche la base — sans --prune (réplique seulement, jamais destructif). Tourne en Prelude : séquentiel, avant tout extracteur (cf. orchestrator.py:run_lane).",
+      "bandes": {
+        "traces_erreur": [
+          0,
+          0
+        ]
+      },
+      "needs_supabase": true,
+      "_needs_supabase_pourquoi": "Réplique Supabase -> local : n'a pas de sens en mode --local (rien à répliquer). Sauté."
+    },
     {
       "name": "extract-fazwaz",
       "famille": "Extraction",
       "tier": "T0",
       "lanes": [
-        "sale",
-        "rent"
+        "daily"
       ],
       "every_days": 4,
       "cmd": [
@@ -27,12 +48,23 @@
         "--source",
         "fazwaz",
         "--deal-type",
-        "{deal}",
+        "sale",
         "--full",
         "--store",
         "supabase"
       ],
       "then": [
+        [
+          "@py",
+          "scraper/run.py",
+          "--source",
+          "fazwaz",
+          "--deal-type",
+          "rent",
+          "--full",
+          "--store",
+          "supabase"
+        ],
         [
           "@py",
           "scraper/run.py",
@@ -44,7 +76,7 @@
           "supabase"
         ]
       ],
-      "_then_pourquoi": "La passe ciblée SUIT le scan global : la fenêtre 150 pages du --full délisterait à tort les districts ciblés, la passe ciblée les réactive.",
+      "_then_pourquoi": "1er 'then' = location, enchaînée dès que la vente finit (indépendamment des autres sources). 2e 'then' = passe ciblée corridors, EN DERNIER : la fenêtre 150 pages du --full délisterait à tort les districts ciblés, la passe ciblée les réactive après coup.",
       "bandes": {
         "nouvelles": [
           50,
@@ -61,8 +93,7 @@
       "famille": "Extraction",
       "tier": "T0",
       "lanes": [
-        "sale",
-        "rent"
+        "daily"
       ],
       "every_days": 4,
       "cmd": [
@@ -71,13 +102,25 @@
         "--source",
         "ddproperty",
         "--deal-type",
-        "{deal}",
+        "sale",
         "--full",
         "--geocode",
         "--store",
         "supabase"
       ],
       "then": [
+        [
+          "@py",
+          "scraper/run.py",
+          "--source",
+          "ddproperty",
+          "--deal-type",
+          "rent",
+          "--full",
+          "--geocode",
+          "--store",
+          "supabase"
+        ],
         [
           "@py",
           "scraper/run.py",
@@ -105,7 +148,7 @@
       "famille": "Extraction",
       "tier": "T0",
       "lanes": [
-        "rent"
+        "daily"
       ],
       "every_days": 4,
       "cmd": [
@@ -117,6 +160,7 @@
         "--store",
         "supabase"
       ],
+      "_pourquoi_pas_de_then": "Un seul run.py couvre déjà sale+rent (pas de split --deal-type dans sa config) — rien à enchaîner.",
       "bandes": {
         "nouvelles": [
           10,
@@ -133,7 +177,7 @@
       "famille": "Extraction",
       "tier": "T0",
       "lanes": [
-        "rent"
+        "daily"
       ],
       "every_days": 4,
       "cmd": [
@@ -162,7 +206,7 @@
       "famille": "Extraction",
       "tier": "T0",
       "lanes": [
-        "rent"
+        "daily"
       ],
       "every_days": 4,
       "cmd": [
@@ -192,8 +236,7 @@
       "famille": "Surveillance",
       "tier": "T1",
       "lanes": [
-        "sale",
-        "rent"
+        "daily"
       ],
       "every_days": 1,
       "module": "agents.bots.watch_health",
@@ -220,7 +263,7 @@
       "famille": "Analyse",
       "tier": "T1",
       "lanes": [
-        "sale"
+        "daily"
       ],
       "every_days": 4,
       "module": "agents.bots.analyze_sale",
@@ -236,7 +279,7 @@
       "famille": "Analyse",
       "tier": "T1",
       "lanes": [
-        "rent"
+        "daily"
       ],
       "every_days": 4,
       "module": "agents.bots.analyze_rent",
@@ -255,8 +298,7 @@
       "famille": "Data organizing",
       "tier": "T1",
       "lanes": [
-        "sale",
-        "rent"
+        "daily"
       ],
       "every_days": 4,
       "module": "agents.bots.organize",
@@ -271,14 +313,14 @@
       "famille": "Data reporting",
       "tier": "T0",
       "lanes": [
-        "rent"
+        "daily"
       ],
       "every_days": 4,
       "cmd": [
         "@py",
         "study/run_study.py"
       ],
-      "_pourquoi_rent": "L'étude tourne en fin de journée LOCATION : les deux deal_types sont alors frais de moins de 4 jours.",
+      "_pourquoi_daily": "Vente et location étant désormais rafraîchies le même jour, l'étude peut tourner dans la foulée sans attendre un 'jour location' séparé.",
       "escalate_after": {
         "kind": "narratif_mensuel",
         "severity": "low",
@@ -294,6 +336,28 @@
       "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté."
     },
     {
+      "name": "backup-apres-cycle",
+      "famille": "Data reporting",
+      "tier": "T0",
+      "lanes": [
+        "daily"
+      ],
+      "every_days": 4,
+      "cmd": [
+        "@py",
+        "ops/sync_supabase_local.py"
+      ],
+      "_pourquoi": "Second point de retour en arrière, pris APRÈS le cycle (extraction + analyse), sans --prune. Tourne TOUJOURS, même si une extraction a échoué en amont : une sauvegarde de ce qui a réussi vaut mieux que pas de sauvegarde du tout — pas de requires_healthy ici (contrairement à 'storage', qui lui purge et doit rester prudent).",
+      "bandes": {
+        "traces_erreur": [
+          0,
+          0
+        ]
+      },
+      "needs_supabase": true,
+      "_needs_supabase_pourquoi": "Réplique Supabase -> local : n'a pas de sens en mode --local. Sauté."
+    },
+    {
       "name": "storage",
       "famille": "Security & storage",
       "tier": "T0",
@@ -306,7 +370,7 @@
         "ops/sync_supabase_local.py",
         "--prune"
       ],
-      "_garde_fou": "L'orchestrateur refuse de lancer cet agent si le dernier run d'un extracteur a échoué : jamais de purge derrière un cycle douteux.",
+      "_garde_fou": "L'orchestrateur refuse de lancer cet agent si le dernier run d'un extracteur a échoué : jamais de purge derrière un cycle douteux. Distinct de backup-avant/apres-cycle : celui-ci PURGE (destructif, vérifié), les deux autres ne font que répliquer.",
       "requires_healthy": [
         "extract-fazwaz",
         "extract-ddproperty"
@@ -325,8 +389,7 @@
       "famille": "Overseeing",
       "tier": "T1",
       "lanes": [
-        "sale",
-        "rent",
+        "daily",
         "weekly"
       ],
       "every_days": 1,

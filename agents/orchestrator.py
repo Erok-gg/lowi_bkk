@@ -58,19 +58,16 @@ def is_due(led: Ledger, spec: dict) -> tuple[bool, str]:
 
 
 def current_lane() -> str:
-    """Alternance vente / location tous les 4 jours, décalée de 2 jours —
-    reprise telle quelle des anciennes tâches Windows."""
+    """Vente ET location le même jour (2026-08-06 : l'ancienne alternance vente/
+    location sur des jours différents retardait chaque catégorie de 4 jours
+    supplémentaires pour rien — chaque source enchaîne maintenant sale PUIS
+    rent elle-même, cf. agents.json 'then'). "weekly" reste une cadence à part
+    (archivage + purge + sondage de nouvelles sources)."""
     day = datetime.now(timezone.utc).toordinal()
-    if day % 7 == 0:
-        return "weekly"
-    return "sale" if (day % 4) < 2 else "rent"
+    return "weekly" if day % 7 == 0 else "daily"
 
 
 # ───────────────────────── exécution ─────────────────────────
-def _deal_for_lane(lane: str) -> str:
-    return "sale" if lane == "sale" else "rent"
-
-
 def localiser(cmd: list[str]) -> list[str]:
     """Bascule une commande vers le store LOCAL. Utilisé par le mode --local :
     on valide un cycle complet sans écrire une ligne dans Supabase."""
@@ -119,18 +116,14 @@ def run_agent(led: Ledger, name: str, lane: str | None = None,
             return False
 
     if dry:
-        # On substitue {deal} : le mode à blanc sert justement à lire la commande
-        # EXACTE qui partira, pas un gabarit.
         if "module" in spec:
             what = spec["module"]
         else:
-            deal = _deal_for_lane(lane)
             base = localiser(spec["cmd"]) if local else spec["cmd"]
-            what = " ".join(p.replace("{deal}", deal) for p in base)
+            what = " ".join(base)
             for extra in spec.get("then", []):
                 e = localiser(extra) if local else extra
-                what += "\n         puis → " + " ".join(
-                    p.replace("{deal}", deal) for p in e)
+                what += "\n         puis → " + " ".join(e)
         print(f"  [dry] {name} ({spec['tier']}) → {what}")
         return True
 
@@ -146,17 +139,24 @@ def run_agent(led: Ledger, name: str, lane: str | None = None,
             metrics = mod.run(led=led, run_id=run_id, lane=lane, spec=spec) or {}
             code = 0
         else:
-            base = localiser(spec["cmd"]) if local else spec["cmd"]
-            cmd = [p.replace("{deal}", _deal_for_lane(lane)) for p in base]
-            code, out = shell.run(cmd, log=log, env_extra=env_local)
-            metrics = shell.metrics_from_output(out)
-            for extra in spec.get("then", []):
-                e = localiser(extra) if local else extra
-                extra = [p.replace("{deal}", _deal_for_lane(lane)) for p in e]
-                c2, out2 = shell.run(extra, log=log + ".then", env_extra=env_local)
-                metrics["then_exit"] = c2
-                metrics.update({f"then_{k}": v
-                                for k, v in shell.metrics_from_output(out2).items()})
+            # Chaque étape (cmd principal + tous les 'then') s'exécute même si
+            # une précédente a échoué : un échec sur la passe vente ne doit pas
+            # empêcher la passe location d'être tentée, ce sont deux catégories
+            # indépendantes sur le même site. Le statut global agrège TOUTES
+            # les étapes — avant ce correctif (2026-08-06), seul le code retour
+            # du cmd principal comptait et un 'then' raté passait pour 'ok'.
+            etapes = [("principal", spec["cmd"])] + \
+                     [(f"then_{i}", e) for i, e in enumerate(spec.get("then", []))]
+            metrics = {"etapes": []}
+            code = 0
+            for label, brute in etapes:
+                c = localiser(brute) if local else brute
+                lg = log if label == "principal" else f"{log}.{label}"
+                c_code, out = shell.run(c, log=lg, env_extra=env_local)
+                m = shell.metrics_from_output(out)
+                metrics["etapes"].append({"etape": label, "exit": c_code, **m})
+                if c_code != 0:
+                    code = c_code   # code final = dernier echec rencontre
     except Exception as e:                                   # noqa: BLE001
         led.end_run(run_id, "failed", 1, {"exception": f"{type(e).__name__}: {e}"})
         led.finding(name, "high", "exception", f"{name} a levé {type(e).__name__}",
@@ -192,6 +192,15 @@ def run_lane(led: Ledger, lane: str, dry: bool = False, only_due: bool = True,
             continue
         a_lancer.append(spec)
 
+    # PRELUDE : avant toute extraction, séquentiel. Sert au backup local
+    # (ops/sync_supabase_local.py, agent backup-avant-cycle) — un point de
+    # retour en arrière pris juste avant que le cycle ne touche la base.
+    # Ne DOIT PAS tourner en parallèle des extracteurs ni entre agents Prelude
+    # eux-mêmes : c'est un point de repère, pas un travail concurrent.
+    prelude = [s for s in a_lancer if s.get("famille") == "Prelude"]
+    for spec in prelude:
+        run_agent(led, spec["name"], lane, dry, local)
+
     # Les EXTRACTEURS visent quatre DOMAINES DIFFÉRENTS : les lancer ensemble ne
     # change rien à la cadence vue par chaque site — le rate-limit est par
     # Fetcher, donc par source. Le temps de cycle tombe à celui de la source la
@@ -199,7 +208,7 @@ def run_lane(led: Ledger, lane: str, dry: bool = False, only_due: bool = True,
     # Tout le reste (analyse, organisation, audit) reste séquentiel : ces agents
     # lisent l'état laissé par les extracteurs.
     extracteurs = [s for s in a_lancer if s.get("famille") == "Extraction"]
-    suite = [s for s in a_lancer if s.get("famille") != "Extraction"]
+    suite = [s for s in a_lancer if s.get("famille") not in ("Extraction", "Prelude")]
 
     if extracteurs and not dry and parallele and len(extracteurs) > 1:
         print(f"  ⇉ {len(extracteurs)} extracteurs en parallèle "

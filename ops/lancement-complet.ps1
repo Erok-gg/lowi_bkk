@@ -2,13 +2,16 @@
 #
 # ASCII strict (voir test-session.ps1 : un accent mal decode casse le parsing).
 #
-# Passe les 12 agents des deux lanes, en ignorant les cadences (--all), dans
-# l'ordre ou l'orchestrateur les declare. Concretement :
-#   lane sale : fazwaz sale --full + couloirs, ddproperty sale --full + couloirs,
-#               watch-health, analyze-sale, organize, overseer
-#   lane rent : fazwaz rent --full + couloirs, ddproperty rent --full + couloirs,
-#               propertyscout, nestopa, watch-health, analyze-rent, organize,
-#               report (etude datee), overseer
+# Passe les agents des deux lanes, en ignorant les cadences (--all), dans
+# l'ordre ou l'orchestrateur les declare. Depuis 2026-08-06, vente ET location
+# tournent le meme jour (lane "daily") : chaque source qui separe deal_type
+# (fazwaz, ddproperty) enchaine elle-meme sale PUIS rent (cf. agents.json
+# 'then'), independamment des autres sources. Concretement :
+#   lane daily : backup-avant-cycle, PUIS en parallele fazwaz(sale->rent->
+#                couloirs), ddproperty(sale->rent->couloirs), propertyscout,
+#                nestopa, livinginsider, PUIS watch-health, analyze-sale,
+#                analyze-rent, organize, report (etude datee),
+#                backup-apres-cycle, overseer
 #   lane weekly : watch-sources, storage (archive + purge), overseer
 #
 # DUREE ATTENDUE : 6 a 10 heures. La tache a une limite de 10 h.
@@ -23,7 +26,7 @@
 
 param(
     [switch]$DryRun,
-    [ValidateSet('tout', 'sale', 'rent', 'weekly')][string]$Portee = 'tout',
+    [ValidateSet('tout', 'daily', 'weekly')][string]$Portee = 'tout',
     # -Local : scrap vers un store SQLite isole. AUCUNE ecriture Supabase.
     #          Les agents qui LISENT Supabase sont sautes (ils analyseraient la
     #          production, pas le test). Remontee ensuite par ops\remonter-local.py
@@ -48,7 +51,7 @@ New-Item -ItemType Directory -Force $logDir | Out-Null
 $log = Join-Path $logDir ("lancement-complet-{0}.log" -f (Get-Date -Format "yyyy-MM-dd-HHmm"))
 
 $lanes = switch ($Portee) {
-    'tout'   { @('sale', 'rent', 'weekly') }
+    'tout'   { @('daily', 'weekly') }
     default  { @($Portee) }
 }
 
