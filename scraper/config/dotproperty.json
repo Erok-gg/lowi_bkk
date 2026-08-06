@@ -1,0 +1,28 @@
+{
+  "_comment": "DotProperty — VÉRIFICATION UNIQUEMENT (voir docstring de l'adaptateur). max_pages volontairement bas : on veut un échantillon représentatif sur 3 runs, pas une couverture complète d'une source qu'on soupçonne redondante.",
+  "source": "dotproperty",
+  "base_url": "https://www.dotproperty.co.th",
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  "rate_limit_seconds": 3.0,
+  "timeout_seconds": 30,
+  "max_pages": 10,
+  "page_param": "page",
+  "respect_robots": true,
+  "searches": [
+    {
+      "path": "/en/condos-for-sale/bangkok",
+      "deal_type": "sale"
+    },
+    {
+      "path": "/en/condos-for-rent/bangkok",
+      "deal_type": "rent"
+    }
+  ],
+  "image": {
+    "width": 1024,
+    "height": 768,
+    "format": "webp",
+    "quality": 80,
+    "max_per_listing": 1
+  }
+}
