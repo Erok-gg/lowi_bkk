@@ -470,7 +470,7 @@ def panier_constant_md(a, b, mini_par_khet=8):
            "|---|---:|---:|---:|---:|"]
     for kh, nv, dv, nl, dl in lignes:
         out.append(f"| {kh.replace(' District', '')} | {nv} | "
-                   f"{dv:+.1f} % | {nl or '—'} | "
+                   f"{f'{dv:+.1f} %' if dv is not None else '—'} | {nl or '—'} | "
                    f"{f'{dl:+.1f} %' if dl is not None else '—'} |")
     return "\n".join(out) + "\n"
 
