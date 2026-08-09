@@ -16,6 +16,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from agents.core import alert, escalation, local_llm
+from agents.orchestrator import is_due
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS = os.path.join(ROOT, "skills")
@@ -97,8 +98,18 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
     # Un agent MUET est plus inquiétant qu'un agent en erreur : c'est la signature
     # d'une tâche qui ne se déclenche plus. Les 3 tâches Windows étaient invisibles
     # ainsi pendant trois semaines.
+    #
+    # "dû" ici doit suivre le MÊME calcul que l'orchestrateur (is_due, cadence
+    # every_days par agent) — pas seulement "appartient à cette lane". Bug trouvé
+    # le 2026-08-09 : la version précédente comparait TOUT agent de la lane contre
+    # une fenêtre d'observation d'1 jour (depuis, ligne ~66), alors que la plupart
+    # des agents daily ont une cadence de 4 jours (voire 7/14). Résultat : un faux
+    # positif "agent_muet" sévérité haute + email quasi chaque jour, sur des agents
+    # parfaitement à jour — bruit qui aurait masqué une vraie panne. Vu sur 4
+    # tickets consécutifs (07-31, 08-01, 08-06, 08-08) avant d'être diagnostiqué.
     dus = [a["name"] for a in REGISTRY["agents"]
-           if lane in a.get("lanes", []) and a["name"] != "overseer"]
+           if lane in a.get("lanes", []) and a["name"] != "overseer"
+           and is_due(led, a)[0]]
     muets = [a for a in dus if a not in vus]
     for a in muets:
         led.finding("overseer", "high", "agent_muet",
