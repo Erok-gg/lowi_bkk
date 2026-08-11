@@ -2,7 +2,16 @@
 
 import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
-import { BED_CATS, bestDiscounts, bestYields, type BedCat, type DealRow } from "@/lib/deals";
+import {
+  BED_CATS,
+  bestDiscounts,
+  bestDiscountsByKhet,
+  bestYields,
+  bestYieldsByKhet,
+  type BedCat,
+  type DealRow,
+  type KhetGroup,
+} from "@/lib/deals";
 
 const DealsMiniMap = dynamic(() => import("./DealsMiniMap"), {
   ssr: false,
@@ -21,10 +30,91 @@ const fmtPrice = (v: number | null | undefined) =>
 
 type Mode = "discounts" | "yields";
 
+/** Tableau des annonces — partagé entre la vue plate (top 20) et les groupes par quartier. */
+function DealsTable({ rows, mode }: { rows: DealRow[]; mode: Mode }) {
+  return (
+    <table className="w-full border-collapse text-sm">
+      <thead className="sticky top-0 bg-anthracite-deep">
+        <tr className="border-b border-violet-soft text-left text-text-muted">
+          <th className="px-3 py-2 font-medium">#</th>
+          <th className="px-3 py-2 font-medium">Listing</th>
+          <th className="px-3 py-2 font-medium">District</th>
+          <th className="px-3 py-2 font-medium">Street</th>
+          <th className="px-3 py-2 text-right font-medium">Price</th>
+          <th className="px-3 py-2 text-right font-medium">Price/m²</th>
+          <th className="px-3 py-2 text-right font-medium">Area</th>
+          {mode === "discounts" ? (
+            <>
+              <th className="px-3 py-2 text-right font-medium">St. discount</th>
+              <th className="px-3 py-2 text-right font-medium">Condo discount</th>
+              <th className="px-3 py-2 text-right font-medium">Δ since listed</th>
+            </>
+          ) : (
+            <>
+              <th className="px-3 py-2 text-right font-medium">Est. yield</th>
+              <th className="px-3 py-2 font-medium">Basis</th>
+            </>
+          )}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={r.id} className="border-b border-violet-soft/40 hover:bg-surface/40">
+            <td className="px-3 py-2 text-text-faint">{i + 1}</td>
+            <td className="px-3 py-2">
+              <a href={r.sourceUrl} target="_blank" rel="noreferrer" className="text-text hover:text-gold">
+                {r.name}
+              </a>
+            </td>
+            <td className="px-3 py-2 text-text-muted">{r.khet?.replace(" District", "") || "—"}</td>
+            <td className={`px-3 py-2 ${mode === "yields" && r.yieldBasis === "street" ? "text-gold" : "text-text-muted"}`}>
+              {r.street || "—"}
+            </td>
+            <td className="px-3 py-2 text-right">{fmtPrice(r.price)}</td>
+            <td className="px-3 py-2 text-right text-text-muted">{fmt(r.pricePerSqm)}</td>
+            <td className="px-3 py-2 text-right text-text-muted">{r.areaSqm ? `${fmt(r.areaSqm)} m²` : "—"}</td>
+            {mode === "discounts" ? (
+              <>
+                <td className={`px-3 py-2 text-right font-medium ${(r.streetDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
+                  {r.streetDiscountPct != null ? `${r.streetDiscountPct} %` : "—"}
+                </td>
+                <td className={`px-3 py-2 text-right font-medium ${(r.condoDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
+                  {r.condoDiscountPct != null ? `${r.condoDiscountPct} %` : "—"}
+                </td>
+                <td className={`px-3 py-2 text-right ${(r.temporalDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
+                  {r.temporalDiscountPct ? `−${r.temporalDiscountPct} %` : "—"}
+                </td>
+              </>
+            ) : (
+              <>
+                <td className="px-3 py-2 text-right font-medium text-gold">
+                  {r.estYieldPct != null ? `${r.estYieldPct} %` : "—"}
+                </td>
+                <td className="px-3 py-2 text-text-faint">{r.yieldBasis ?? "—"}</td>
+              </>
+            )}
+          </tr>
+        ))}
+        {rows.length === 0 && (
+          <tr>
+            <td colSpan={mode === "discounts" ? 10 : 9} className="px-3 py-10 text-center text-text-faint">
+              Not enough comparable listings for this category.
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  );
+}
+
 export default function DealsView({ rows }: { rows: DealRow[] }) {
   const [mode, setMode] = useState<Mode>("discounts");
   const [cat, setCat] = useState<BedCat>("1");
   const [khetSel, setKhetSel] = useState<string>("");
+  const [groupByDistrict, setGroupByDistrict] = useState(false);
+  const [priceMin, setPriceMin] = useState<string>("");
+  const [priceMax, setPriceMax] = useState<string>("");
+  const [search, setSearch] = useState<string>("");
   const [showHow, setShowHow] = useState(false);
 
   const khets = useMemo(
@@ -32,18 +122,37 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
     [rows]
   );
 
-  const scoped = useMemo(
-    () => (khetSel ? rows.filter((r) => r.khet === khetSel) : rows),
-    [rows, khetSel]
-  );
+  const scoped = useMemo(() => {
+    const min = priceMin ? Number(priceMin) : null;
+    const max = priceMax ? Number(priceMax) : null;
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (khetSel && r.khet !== khetSel) return false;
+      if (min != null && r.price < min) return false;
+      if (max != null && r.price > max) return false;
+      if (q && !r.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [rows, khetSel, priceMin, priceMax, search]);
 
   const top = useMemo(
     () => (mode === "discounts" ? bestDiscounts(scoped, cat) : bestYields(scoped, cat)),
     [scoped, mode, cat]
   );
+  const groups = useMemo<KhetGroup[]>(
+    () =>
+      groupByDistrict
+        ? mode === "discounts"
+          ? bestDiscountsByKhet(scoped, cat)
+          : bestYieldsByKhet(scoped, cat)
+        : [],
+    [scoped, mode, cat, groupByDistrict]
+  );
+
+  const displayedRows = groupByDistrict ? groups.flatMap((g) => g.rows) : top;
   const points = useMemo(
-    () => top.map((r) => ({ id: r.id, lat: r.lat, lng: r.lng, name: r.name })),
-    [top]
+    () => displayedRows.map((r) => ({ id: r.id, lat: r.lat, lng: r.lng, name: r.name })),
+    [displayedRows]
   );
 
   const Tab = ({ m, label }: { m: Mode; label: string }) => (
@@ -65,19 +174,45 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
           <Tab m="discounts" label="Best discounts" />
           <Tab m="yields" label="Best yields" />
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={() => setShowHow((v) => !v)}
             className="rounded-md border border-violet-soft px-2.5 py-1 text-xs text-text-muted transition hover:border-violet-fluo hover:text-text"
           >
             ⓘ How it&apos;s computed
           </button>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search listing…"
+            className="w-36 rounded-md border border-violet-soft bg-anthracite-deep px-2 py-1.5 text-xs text-text placeholder:text-text-faint focus:outline-none"
+          />
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-text-muted">Price</span>
+            <input
+              type="number"
+              value={priceMin}
+              onChange={(e) => setPriceMin(e.target.value)}
+              placeholder="min"
+              className="w-24 rounded-md border border-violet-soft bg-anthracite-deep px-2 py-1.5 text-xs text-text placeholder:text-text-faint focus:outline-none"
+            />
+            <span className="text-text-faint">–</span>
+            <input
+              type="number"
+              value={priceMax}
+              onChange={(e) => setPriceMax(e.target.value)}
+              placeholder="max"
+              className="w-24 rounded-md border border-violet-soft bg-anthracite-deep px-2 py-1.5 text-xs text-text placeholder:text-text-faint focus:outline-none"
+            />
+          </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-text-muted">District</span>
             <select
               value={khetSel}
               onChange={(e) => setKhetSel(e.target.value)}
-              className="rounded-md border border-violet-soft bg-anthracite-deep px-2 py-1.5 text-xs text-text-muted transition hover:text-text focus:text-text focus:outline-none"
+              disabled={groupByDistrict}
+              className="rounded-md border border-violet-soft bg-anthracite-deep px-2 py-1.5 text-xs text-text-muted transition hover:text-text focus:text-text focus:outline-none disabled:opacity-40"
             >
               <option value="">All districts</option>
               {khets.map((k) => (
@@ -87,6 +222,14 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
               ))}
             </select>
           </div>
+          <label className="flex items-center gap-1.5 text-xs text-text-muted">
+            <input
+              type="checkbox"
+              checked={groupByDistrict}
+              onChange={(e) => setGroupByDistrict(e.target.checked)}
+            />
+            Top 10 per district
+          </label>
           <div className="flex items-center gap-2">
             <span className="text-xs text-text-muted">Beds</span>
             <div className="flex overflow-hidden rounded-md border border-violet-soft">
@@ -112,7 +255,7 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
           <p className="mb-1">
             <span className="text-text">Comparable</span> = same <span className="text-text">condo (building)</span> + bedroom count (1/2/3/4+), excluding the listing itself.{" "}
             Fewer than {"3"} peers in the building → falls back to same <span className="text-text">street</span> + bedroom count.
-            District is only used to filter the table, not to compute the baseline.{" "}
+            District is only used to filter/group the table, not to compute the baseline.{" "}
             <span className="text-text">Baseline</span> = average of the ~10 median listings of the comparable group.
             Sale prices bounded 800k–100M THB; figures are gross (before charges, taxes, vacancy).
           </p>
@@ -129,83 +272,34 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
               <li className="text-text-faint">Estimated: uses the comparable-group median rent (same building, or street if too few), not this exact unit&apos;s lease.</li>
             </ul>
           )}
+          <p className="mt-1 text-text-faint">
+            &quot;Top 10 per district&quot; recomputes the ranking within each district separately (min 1 comparable
+            listing) instead of a single citywide top 20. Search and price range filter the pool before ranking.
+          </p>
         </div>
       )}
 
-      {/* Corps : tableau + minimap */}
+      {/* Corps : tableau(x) + minimap */}
       <div className="flex min-h-0 flex-1">
         <div className="min-w-0 flex-1 overflow-auto">
-          <table className="w-full border-collapse text-sm">
-            <thead className="sticky top-0 bg-anthracite-deep">
-              <tr className="border-b border-violet-soft text-left text-text-muted">
-                <th className="px-3 py-2 font-medium">#</th>
-                <th className="px-3 py-2 font-medium">Listing</th>
-                <th className="px-3 py-2 font-medium">District</th>
-                <th className="px-3 py-2 font-medium">Street</th>
-                <th className="px-3 py-2 text-right font-medium">Price</th>
-                <th className="px-3 py-2 text-right font-medium">Price/m²</th>
-                <th className="px-3 py-2 text-right font-medium">Area</th>
-                {mode === "discounts" ? (
-                  <>
-                    <th className="px-3 py-2 text-right font-medium">St. discount</th>
-                    <th className="px-3 py-2 text-right font-medium">Condo discount</th>
-                    <th className="px-3 py-2 text-right font-medium">Δ since listed</th>
-                  </>
-                ) : (
-                  <>
-                    <th className="px-3 py-2 text-right font-medium">Est. yield</th>
-                    <th className="px-3 py-2 font-medium">Basis</th>
-                  </>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {top.map((r, i) => (
-                <tr key={r.id} className="border-b border-violet-soft/40 hover:bg-surface/40">
-                  <td className="px-3 py-2 text-text-faint">{i + 1}</td>
-                  <td className="px-3 py-2">
-                    <a href={r.sourceUrl} target="_blank" rel="noreferrer" className="text-text hover:text-gold">
-                      {r.name}
-                    </a>
-                  </td>
-                  <td className="px-3 py-2 text-text-muted">{r.khet?.replace(" District", "") || "—"}</td>
-                  <td className={`px-3 py-2 ${mode === "yields" && r.yieldBasis === "street" ? "text-gold" : "text-text-muted"}`}>
-                    {r.street || "—"}
-                  </td>
-                  <td className="px-3 py-2 text-right">{fmtPrice(r.price)}</td>
-                  <td className="px-3 py-2 text-right text-text-muted">{fmt(r.pricePerSqm)}</td>
-                  <td className="px-3 py-2 text-right text-text-muted">{r.areaSqm ? `${fmt(r.areaSqm)} m²` : "—"}</td>
-                  {mode === "discounts" ? (
-                    <>
-                      <td className={`px-3 py-2 text-right font-medium ${(r.streetDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
-                        {r.streetDiscountPct != null ? `${r.streetDiscountPct} %` : "—"}
-                      </td>
-                      <td className={`px-3 py-2 text-right font-medium ${(r.condoDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
-                        {r.condoDiscountPct != null ? `${r.condoDiscountPct} %` : "—"}
-                      </td>
-                      <td className={`px-3 py-2 text-right ${(r.temporalDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
-                        {r.temporalDiscountPct ? `−${r.temporalDiscountPct} %` : "—"}
-                      </td>
-                    </>
-                  ) : (
-                    <>
-                      <td className="px-3 py-2 text-right font-medium text-gold">
-                        {r.estYieldPct != null ? `${r.estYieldPct} %` : "—"}
-                      </td>
-                      <td className="px-3 py-2 text-text-faint">{r.yieldBasis ?? "—"}</td>
-                    </>
-                  )}
-                </tr>
-              ))}
-              {top.length === 0 && (
-                <tr>
-                  <td colSpan={mode === "discounts" ? 10 : 9} className="px-3 py-10 text-center text-text-faint">
-                    Not enough comparable listings for this category.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+          {groupByDistrict ? (
+            groups.length === 0 ? (
+              <div className="px-3 py-10 text-center text-text-faint">
+                Not enough comparable listings for this category.
+              </div>
+            ) : (
+              groups.map((g) => (
+                <div key={g.khet} className="border-b border-violet-soft">
+                  <div className="sticky top-0 bg-anthracite-deep px-3 py-1.5 text-xs font-medium text-gold">
+                    {g.khet.replace(" District", "")}
+                  </div>
+                  <DealsTable rows={g.rows} mode={mode} />
+                </div>
+              ))
+            )
+          ) : (
+            <DealsTable rows={top} mode={mode} />
+          )}
         </div>
 
         {/* Minimap : pins des biens affichés */}

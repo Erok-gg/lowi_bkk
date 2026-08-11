@@ -181,3 +181,40 @@ export function bestYields(rows: DealRow[], cat: BedCat, limit = 20): DealRow[] 
     .sort((a, b) => (b.estYieldPct ?? -Infinity) - (a.estYieldPct ?? -Infinity))
     .slice(0, limit);
 }
+
+export interface KhetGroup {
+  khet: string;
+  rows: DealRow[];
+}
+
+/** Top `limitPerKhet` par quartier, triés par le score donné, quartiers triés
+ *  par ordre alphabétique (pour parcourir la liste, pas pour dire lequel est "le meilleur"). */
+function groupTopByKhet(
+  rows: DealRow[],
+  cat: BedCat,
+  scoreOf: (r: DealRow) => number | null,
+  limitPerKhet: number
+): KhetGroup[] {
+  const byKhet = new Map<string, DealRow[]>();
+  for (const r of rows) {
+    if (!r.khet || !matchBedCat(r.bedrooms, cat) || scoreOf(r) == null) continue;
+    (byKhet.get(r.khet) ?? byKhet.set(r.khet, []).get(r.khet)!).push(r);
+  }
+  const groups: KhetGroup[] = [];
+  for (const [khet, arr] of byKhet) {
+    arr.sort((a, b) => (scoreOf(b) ?? -Infinity) - (scoreOf(a) ?? -Infinity));
+    groups.push({ khet, rows: arr.slice(0, limitPerKhet) });
+  }
+  groups.sort((a, b) => a.khet.localeCompare(b.khet));
+  return groups;
+}
+
+/** Top N décotes par quartier (un groupe par khet). */
+export function bestDiscountsByKhet(rows: DealRow[], cat: BedCat, limitPerKhet = 10): KhetGroup[] {
+  return groupTopByKhet(rows, cat, (r) => r.marketDiscountPct, limitPerKhet);
+}
+
+/** Top N rendements par quartier (un groupe par khet). */
+export function bestYieldsByKhet(rows: DealRow[], cat: BedCat, limitPerKhet = 10): KhetGroup[] {
+  return groupTopByKhet(rows, cat, (r) => r.estYieldPct, limitPerKhet);
+}
