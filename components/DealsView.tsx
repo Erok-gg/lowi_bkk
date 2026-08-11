@@ -21,11 +21,22 @@ type Mode = "discounts" | "yields";
 export default function DealsView({ rows }: { rows: DealRow[] }) {
   const [mode, setMode] = useState<Mode>("discounts");
   const [cat, setCat] = useState<BedCat>("1");
+  const [khetSel, setKhetSel] = useState<string>("");
   const [showHow, setShowHow] = useState(false);
 
+  const khets = useMemo(
+    () => [...new Set(rows.map((r) => r.khet).filter(Boolean))].sort() as string[],
+    [rows]
+  );
+
+  const scoped = useMemo(
+    () => (khetSel ? rows.filter((r) => r.khet === khetSel) : rows),
+    [rows, khetSel]
+  );
+
   const top = useMemo(
-    () => (mode === "discounts" ? bestDiscounts(rows, cat) : bestYields(rows, cat)),
-    [rows, mode, cat]
+    () => (mode === "discounts" ? bestDiscounts(scoped, cat) : bestYields(scoped, cat)),
+    [scoped, mode, cat]
   );
   const points = useMemo(
     () => top.map((r) => ({ id: r.id, lat: r.lat, lng: r.lng, name: r.name })),
@@ -59,6 +70,21 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
             ⓘ How it&apos;s computed
           </button>
           <div className="flex items-center gap-2">
+            <span className="text-xs text-text-muted">District</span>
+            <select
+              value={khetSel}
+              onChange={(e) => setKhetSel(e.target.value)}
+              className="rounded-md border border-violet-soft bg-anthracite-deep px-2 py-1.5 text-xs text-text-muted transition hover:text-text focus:text-text focus:outline-none"
+            >
+              <option value="">All districts</option>
+              {khets.map((k) => (
+                <option key={k} value={k}>
+                  {k.replace(" District", "")}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
             <span className="text-xs text-text-muted">Beds</span>
             <div className="flex overflow-hidden rounded-md border border-violet-soft">
               {BED_CATS.map((c) => (
@@ -81,19 +107,22 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
       {showHow && (
         <div className="shrink-0 border-b border-violet-soft bg-surface/40 px-4 py-3 text-xs leading-relaxed text-text-muted">
           <p className="mb-1">
-            <span className="text-text">Comparable</span> = same district + bedroom count (1/2/3/4+).{" "}
-            <span className="text-text">Baseline</span> = average of the 10 median listings of the comparable group.
+            <span className="text-text">Comparable</span> = same <span className="text-text">condo (building)</span> + bedroom count (1/2/3/4+), excluding the listing itself.{" "}
+            Fewer than {"3"} peers in the building → falls back to same <span className="text-text">street</span> + bedroom count.
+            District is only used to filter the table, not to compute the baseline.{" "}
+            <span className="text-text">Baseline</span> = average of the ~10 median listings of the comparable group.
             Sale prices bounded 800k–100M THB; figures are gross (before charges, taxes, vacancy).
           </p>
           {mode === "discounts" ? (
             <ul className="list-inside list-disc space-y-0.5">
               <li><span className="text-gold">Market discount</span> = (baseline sale price/m² − listing price/m²) ÷ baseline × 100</li>
               <li><span className="text-gold">Δ since listed</span> = (first recorded price − current price) ÷ first price × 100 <span className="text-text-faint">(from price history; mostly 0 until prices move over successive scrapes)</span></li>
+              <li className="text-text-faint">The &quot;Basis&quot; column shows whether the discount was computed against the building or the street.</li>
             </ul>
           ) : (
             <ul className="list-inside list-disc space-y-0.5">
               <li><span className="text-gold">Est. yield</span> = (baseline rent/m² × 12) ÷ listing sale price/m² × 100</li>
-              <li className="text-text-faint">Estimated: uses the comparable-group median rent, not this exact unit&apos;s lease.</li>
+              <li className="text-text-faint">Estimated: uses the comparable-group median rent (same building, or street if too few), not this exact unit&apos;s lease.</li>
             </ul>
           )}
         </div>
@@ -108,16 +137,22 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
                 <th className="px-3 py-2 font-medium">#</th>
                 <th className="px-3 py-2 font-medium">Listing</th>
                 <th className="px-3 py-2 font-medium">District</th>
+                <th className="px-3 py-2 font-medium">Condo</th>
+                <th className="px-3 py-2 font-medium">Street</th>
                 <th className="px-3 py-2 text-right font-medium">Price</th>
                 <th className="px-3 py-2 text-right font-medium">Price/m²</th>
                 <th className="px-3 py-2 text-right font-medium">Area</th>
                 {mode === "discounts" ? (
                   <>
                     <th className="px-3 py-2 text-right font-medium">Market discount</th>
+                    <th className="px-3 py-2 font-medium">Basis</th>
                     <th className="px-3 py-2 text-right font-medium">Δ since listed</th>
                   </>
                 ) : (
-                  <th className="px-3 py-2 text-right font-medium">Est. yield</th>
+                  <>
+                    <th className="px-3 py-2 text-right font-medium">Est. yield</th>
+                    <th className="px-3 py-2 font-medium">Basis</th>
+                  </>
                 )}
               </tr>
             </thead>
@@ -131,6 +166,12 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
                     </a>
                   </td>
                   <td className="px-3 py-2 text-text-muted">{r.khet?.replace(" District", "") || "—"}</td>
+                  <td className={`px-3 py-2 ${r.compareBasis === "condo" || r.yieldBasis === "condo" ? "text-gold" : "text-text-muted"}`}>
+                    {r.condoName || "—"}
+                  </td>
+                  <td className={`px-3 py-2 ${r.compareBasis === "street" || r.yieldBasis === "street" ? "text-gold" : "text-text-muted"}`}>
+                    {r.street || "—"}
+                  </td>
                   <td className="px-3 py-2 text-right">{fmt(r.price)}</td>
                   <td className="px-3 py-2 text-right text-text-muted">{fmt(r.pricePerSqm)}</td>
                   <td className="px-3 py-2 text-right text-text-muted">{r.areaSqm ? `${fmt(r.areaSqm)} m²` : "—"}</td>
@@ -139,20 +180,24 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
                       <td className={`px-3 py-2 text-right font-medium ${(r.marketDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
                         {r.marketDiscountPct != null ? `${r.marketDiscountPct} %` : "—"}
                       </td>
+                      <td className="px-3 py-2 text-text-faint">{r.compareBasis ?? "—"}</td>
                       <td className={`px-3 py-2 text-right ${(r.temporalDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
                         {r.temporalDiscountPct ? `−${r.temporalDiscountPct} %` : "—"}
                       </td>
                     </>
                   ) : (
-                    <td className="px-3 py-2 text-right font-medium text-gold">
-                      {r.estYieldPct != null ? `${r.estYieldPct} %` : "—"}
-                    </td>
+                    <>
+                      <td className="px-3 py-2 text-right font-medium text-gold">
+                        {r.estYieldPct != null ? `${r.estYieldPct} %` : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-text-faint">{r.yieldBasis ?? "—"}</td>
+                    </>
                   )}
                 </tr>
               ))}
               {top.length === 0 && (
                 <tr>
-                  <td colSpan={mode === "discounts" ? 8 : 7} className="px-3 py-10 text-center text-text-faint">
+                  <td colSpan={mode === "discounts" ? 11 : 10} className="px-3 py-10 text-center text-text-faint">
                     Not enough comparable listings for this category.
                   </td>
                 </tr>
