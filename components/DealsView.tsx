@@ -28,6 +28,14 @@ const fmt = (v: number | null | undefined) =>
 const fmtPrice = (v: number | null | undefined) =>
   v == null ? "—" : v >= 1_000_000 ? `${(v / 1_000_000).toFixed(2)}M` : Math.round(v).toLocaleString("en-US");
 
+/** Le filtre prix se saisit en millions de THB (ex: "6.98" ou "6,98M" → 6 980 000). */
+const parsePriceM = (v: string): number | null => {
+  const cleaned = v.trim().replace(",", ".").replace(/m$/i, "");
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n * 1_000_000 : null;
+};
+
 type Mode = "discounts" | "yields";
 
 /** Tableau des annonces — partagé entre la vue plate (top 20) et les groupes par quartier. */
@@ -39,7 +47,6 @@ function DealsTable({ rows, mode }: { rows: DealRow[]; mode: Mode }) {
           <th className="px-3 py-2 font-medium">#</th>
           <th className="px-3 py-2 font-medium">Listing</th>
           <th className="px-3 py-2 font-medium">District</th>
-          <th className="px-3 py-2 font-medium">Street</th>
           <th className="px-3 py-2 text-right font-medium">Price</th>
           <th className="px-3 py-2 text-right font-medium">Price/m²</th>
           <th className="px-3 py-2 text-right font-medium">Area</th>
@@ -67,9 +74,6 @@ function DealsTable({ rows, mode }: { rows: DealRow[]; mode: Mode }) {
               </a>
             </td>
             <td className="px-3 py-2 text-text-muted">{r.khet?.replace(" District", "") || "—"}</td>
-            <td className={`px-3 py-2 ${mode === "yields" && r.yieldBasis === "street" ? "text-gold" : "text-text-muted"}`}>
-              {r.street || "—"}
-            </td>
             <td className="px-3 py-2 text-right">{fmtPrice(r.price)}</td>
             <td className="px-3 py-2 text-right text-text-muted">{fmt(r.pricePerSqm)}</td>
             <td className="px-3 py-2 text-right text-text-muted">{r.areaSqm ? `${fmt(r.areaSqm)} m²` : "—"}</td>
@@ -97,7 +101,7 @@ function DealsTable({ rows, mode }: { rows: DealRow[]; mode: Mode }) {
         ))}
         {rows.length === 0 && (
           <tr>
-            <td colSpan={mode === "discounts" ? 10 : 9} className="px-3 py-10 text-center text-text-faint">
+            <td colSpan={mode === "discounts" ? 9 : 8} className="px-3 py-10 text-center text-text-faint">
               Not enough comparable listings for this category.
             </td>
           </tr>
@@ -123,8 +127,8 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
   );
 
   const scoped = useMemo(() => {
-    const min = priceMin ? Number(priceMin) : null;
-    const max = priceMax ? Number(priceMax) : null;
+    const min = parsePriceM(priceMin);
+    const max = parsePriceM(priceMax);
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
       if (khetSel && r.khet !== khetSel) return false;
@@ -168,83 +172,87 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
 
   return (
     <div className="flex h-full flex-col">
-      {/* En-tête : onglets + sélecteur chambres */}
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-violet-soft px-4 py-3">
+      {/* Onglets */}
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-violet-soft px-4 py-3">
         <div className="flex items-center gap-2">
           <Tab m="discounts" label="Best discounts" />
           <Tab m="yields" label="Best yields" />
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={() => setShowHow((v) => !v)}
-            className="rounded-md border border-violet-soft px-2.5 py-1 text-xs text-text-muted transition hover:border-violet-fluo hover:text-text"
-          >
-            ⓘ How it&apos;s computed
-          </button>
+        <button
+          onClick={() => setShowHow((v) => !v)}
+          className="rounded-md border border-violet-soft px-2.5 py-1 text-xs text-text-muted transition hover:border-violet-fluo hover:text-text"
+        >
+          ⓘ How it&apos;s computed
+        </button>
+      </div>
+
+      {/* Bandeau de filtres */}
+      <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-violet-soft bg-surface/20 px-4 py-2.5">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search listing…"
+          className="w-36 rounded-md border border-violet-soft bg-anthracite-deep px-2 py-1.5 text-xs text-text placeholder:text-text-faint focus:outline-none"
+        />
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-text-muted">Price (M)</span>
           <input
             type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search listing…"
-            className="w-36 rounded-md border border-violet-soft bg-anthracite-deep px-2 py-1.5 text-xs text-text placeholder:text-text-faint focus:outline-none"
+            inputMode="decimal"
+            value={priceMin}
+            onChange={(e) => setPriceMin(e.target.value)}
+            placeholder="6.98"
+            className="w-20 rounded-md border border-violet-soft bg-anthracite-deep px-2 py-1.5 text-xs text-text placeholder:text-text-faint focus:outline-none"
           />
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-text-muted">Price</span>
-            <input
-              type="number"
-              value={priceMin}
-              onChange={(e) => setPriceMin(e.target.value)}
-              placeholder="min"
-              className="w-24 rounded-md border border-violet-soft bg-anthracite-deep px-2 py-1.5 text-xs text-text placeholder:text-text-faint focus:outline-none"
-            />
-            <span className="text-text-faint">–</span>
-            <input
-              type="number"
-              value={priceMax}
-              onChange={(e) => setPriceMax(e.target.value)}
-              placeholder="max"
-              className="w-24 rounded-md border border-violet-soft bg-anthracite-deep px-2 py-1.5 text-xs text-text placeholder:text-text-faint focus:outline-none"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-text-muted">District</span>
-            <select
-              value={khetSel}
-              onChange={(e) => setKhetSel(e.target.value)}
-              disabled={groupByDistrict}
-              className="rounded-md border border-violet-soft bg-anthracite-deep px-2 py-1.5 text-xs text-text-muted transition hover:text-text focus:text-text focus:outline-none disabled:opacity-40"
-            >
-              <option value="">All districts</option>
-              {khets.map((k) => (
-                <option key={k} value={k}>
-                  {k.replace(" District", "")}
-                </option>
-              ))}
-            </select>
-          </div>
-          <label className="flex items-center gap-1.5 text-xs text-text-muted">
-            <input
-              type="checkbox"
-              checked={groupByDistrict}
-              onChange={(e) => setGroupByDistrict(e.target.checked)}
-            />
-            Top 10 per district
-          </label>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-text-muted">Beds</span>
-            <div className="flex overflow-hidden rounded-md border border-violet-soft">
-              {BED_CATS.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => setCat(c)}
-                  className={`px-2.5 py-1.5 text-xs transition ${
-                    cat === c ? "bg-violet/30 text-gold" : "text-text-muted hover:text-text"
-                  }`}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
+          <span className="text-text-faint">–</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={priceMax}
+            onChange={(e) => setPriceMax(e.target.value)}
+            placeholder="15M"
+            className="w-20 rounded-md border border-violet-soft bg-anthracite-deep px-2 py-1.5 text-xs text-text placeholder:text-text-faint focus:outline-none"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-text-muted">District</span>
+          <select
+            value={khetSel}
+            onChange={(e) => setKhetSel(e.target.value)}
+            disabled={groupByDistrict}
+            className="rounded-md border border-violet-soft bg-anthracite-deep px-2 py-1.5 text-xs text-text-muted transition hover:text-text focus:text-text focus:outline-none disabled:opacity-40"
+          >
+            <option value="">All districts</option>
+            {khets.map((k) => (
+              <option key={k} value={k}>
+                {k.replace(" District", "")}
+              </option>
+            ))}
+          </select>
+        </div>
+        <label className="flex items-center gap-1.5 text-xs text-text-muted">
+          <input
+            type="checkbox"
+            checked={groupByDistrict}
+            onChange={(e) => setGroupByDistrict(e.target.checked)}
+          />
+          Top 10 per district
+        </label>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-text-muted">Beds</span>
+          <div className="flex overflow-hidden rounded-md border border-violet-soft">
+            {BED_CATS.map((c) => (
+              <button
+                key={c}
+                onClick={() => setCat(c)}
+                className={`px-2.5 py-1.5 text-xs transition ${
+                  cat === c ? "bg-violet/30 text-gold" : "text-text-muted hover:text-text"
+                }`}
+              >
+                {c}
+              </button>
+            ))}
           </div>
         </div>
       </div>
