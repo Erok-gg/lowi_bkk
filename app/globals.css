@@ -19,6 +19,16 @@
   letter-spacing: 0.02em;
 }
 
+/* Spinner de chargement : le "o" du logo tourne sur son axe vertical (rotateY) */
+@keyframes spin-y {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(360deg); }
+}
+.logo-spin-o {
+  display: inline-block;
+  animation: spin-y 1s linear infinite;
+}
+
 html,
 body {
   height: 100%;
