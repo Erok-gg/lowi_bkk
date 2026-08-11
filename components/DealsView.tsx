@@ -16,6 +16,9 @@ const DealsMiniMap = dynamic(() => import("./DealsMiniMap"), {
 const fmt = (v: number | null | undefined) =>
   v == null ? "—" : Math.round(v).toLocaleString("en-US");
 
+const fmtPrice = (v: number | null | undefined) =>
+  v == null ? "—" : v >= 1_000_000 ? `${(v / 1_000_000).toFixed(2)}M` : Math.round(v).toLocaleString("en-US");
+
 type Mode = "discounts" | "yields";
 
 export default function DealsView({ rows }: { rows: DealRow[] }) {
@@ -115,9 +118,10 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
           </p>
           {mode === "discounts" ? (
             <ul className="list-inside list-disc space-y-0.5">
-              <li><span className="text-gold">Market discount</span> = (baseline sale price/m² − listing price/m²) ÷ baseline × 100</li>
+              <li><span className="text-gold">St. discount</span> = discount vs. the street baseline only (— if fewer than 3 street peers)</li>
+              <li><span className="text-gold">Condo discount</span> = discount vs. the building baseline only (— if fewer than 3 building peers)</li>
               <li><span className="text-gold">Δ since listed</span> = (first recorded price − current price) ÷ first price × 100 <span className="text-text-faint">(from price history; mostly 0 until prices move over successive scrapes)</span></li>
-              <li className="text-text-faint">The &quot;Basis&quot; column shows whether the discount was computed against the building or the street.</li>
+              <li className="text-text-faint">Ranking uses the condo discount when available, the street discount otherwise.</li>
             </ul>
           ) : (
             <ul className="list-inside list-disc space-y-0.5">
@@ -137,15 +141,14 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
                 <th className="px-3 py-2 font-medium">#</th>
                 <th className="px-3 py-2 font-medium">Listing</th>
                 <th className="px-3 py-2 font-medium">District</th>
-                <th className="px-3 py-2 font-medium">Condo</th>
                 <th className="px-3 py-2 font-medium">Street</th>
                 <th className="px-3 py-2 text-right font-medium">Price</th>
                 <th className="px-3 py-2 text-right font-medium">Price/m²</th>
                 <th className="px-3 py-2 text-right font-medium">Area</th>
                 {mode === "discounts" ? (
                   <>
-                    <th className="px-3 py-2 text-right font-medium">Market discount</th>
-                    <th className="px-3 py-2 font-medium">Basis</th>
+                    <th className="px-3 py-2 text-right font-medium">St. discount</th>
+                    <th className="px-3 py-2 text-right font-medium">Condo discount</th>
                     <th className="px-3 py-2 text-right font-medium">Δ since listed</th>
                   </>
                 ) : (
@@ -166,21 +169,20 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
                     </a>
                   </td>
                   <td className="px-3 py-2 text-text-muted">{r.khet?.replace(" District", "") || "—"}</td>
-                  <td className={`px-3 py-2 ${r.compareBasis === "condo" || r.yieldBasis === "condo" ? "text-gold" : "text-text-muted"}`}>
-                    {r.condoName || "—"}
-                  </td>
-                  <td className={`px-3 py-2 ${r.compareBasis === "street" || r.yieldBasis === "street" ? "text-gold" : "text-text-muted"}`}>
+                  <td className={`px-3 py-2 ${mode === "yields" && r.yieldBasis === "street" ? "text-gold" : "text-text-muted"}`}>
                     {r.street || "—"}
                   </td>
-                  <td className="px-3 py-2 text-right">{fmt(r.price)}</td>
+                  <td className="px-3 py-2 text-right">{fmtPrice(r.price)}</td>
                   <td className="px-3 py-2 text-right text-text-muted">{fmt(r.pricePerSqm)}</td>
                   <td className="px-3 py-2 text-right text-text-muted">{r.areaSqm ? `${fmt(r.areaSqm)} m²` : "—"}</td>
                   {mode === "discounts" ? (
                     <>
-                      <td className={`px-3 py-2 text-right font-medium ${(r.marketDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
-                        {r.marketDiscountPct != null ? `${r.marketDiscountPct} %` : "—"}
+                      <td className={`px-3 py-2 text-right font-medium ${(r.streetDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
+                        {r.streetDiscountPct != null ? `${r.streetDiscountPct} %` : "—"}
                       </td>
-                      <td className="px-3 py-2 text-text-faint">{r.compareBasis ?? "—"}</td>
+                      <td className={`px-3 py-2 text-right font-medium ${(r.condoDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
+                        {r.condoDiscountPct != null ? `${r.condoDiscountPct} %` : "—"}
+                      </td>
                       <td className={`px-3 py-2 text-right ${(r.temporalDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
                         {r.temporalDiscountPct ? `−${r.temporalDiscountPct} %` : "—"}
                       </td>
@@ -197,7 +199,7 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
               ))}
               {top.length === 0 && (
                 <tr>
-                  <td colSpan={mode === "discounts" ? 11 : 10} className="px-3 py-10 text-center text-text-faint">
+                  <td colSpan={mode === "discounts" ? 10 : 9} className="px-3 py-10 text-center text-text-faint">
                     Not enough comparable listings for this category.
                   </td>
                 </tr>

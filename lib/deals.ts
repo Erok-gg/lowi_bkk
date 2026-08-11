@@ -61,8 +61,10 @@ export interface DealRow {
   lat: number | null;
   lng: number | null;
   sourceUrl: string;
-  marketDiscountPct: number | null; // % sous la médiane comparable (>0 = bonne affaire)
-  compareBasis: CompareBasis; // sur quoi la décote marché est calculée
+  marketDiscountPct: number | null; // meilleure décote dispo (condo, sinon rue) — sert au classement
+  compareBasis: CompareBasis; // sur quoi marketDiscountPct est calculée
+  condoDiscountPct: number | null; // décote vs pairs du MÊME immeuble uniquement
+  streetDiscountPct: number | null; // décote vs pairs de la MÊME rue uniquement
   temporalDiscountPct: number | null; // % de baisse depuis le 1er relevé
   estYieldPct: number | null; // rendement estimé (loyer médian comparable)
   yieldBasis: CompareBasis;
@@ -88,8 +90,20 @@ function buildGroups(listings: Listing[], deal: "sale" | "rent") {
   return { byCondo, byStreet };
 }
 
-/** Baseline pour un bien donné : condo d'abord, rue en repli, exclut le bien
- *  lui-même du groupe (sinon un immeuble à 2 lots se compare à moitié à lui-même). */
+/** Baseline sur UN SEUL groupe (condo OU rue), exclut le bien lui-même
+ *  (sinon un immeuble à 2 lots se compare à moitié à lui-même). */
+function baselineForGroup(
+  selfId: string,
+  key: string | null,
+  byKey: Map<string, Entry[]>
+): number | null {
+  const group = (key ? byKey.get(key) : undefined)?.filter((e) => e.id !== selfId) ?? [];
+  if (group.length < MIN_COMPARABLES) return null;
+  return medianAvg(group.map((e) => e.pricePerSqm), BASELINE_N);
+}
+
+/** Baseline pour un bien donné : condo d'abord, rue en repli — sert au
+ *  classement (bestDiscounts/bestYields), qui a besoin d'une seule valeur. */
 function baselineFor(
   selfId: string,
   condoKey: string | null,
@@ -97,19 +111,10 @@ function baselineFor(
   byCondo: Map<string, Entry[]>,
   byStreet: Map<string, Entry[]>
 ): { value: number; basis: CompareBasis } | null {
-  const withoutSelf = (arr: Entry[] | undefined) =>
-    (arr ?? []).filter((e) => e.id !== selfId);
-
-  const condoGroup = withoutSelf(condoKey ? byCondo.get(condoKey) : undefined);
-  if (condoGroup.length >= MIN_COMPARABLES) {
-    const m = medianAvg(condoGroup.map((e) => e.pricePerSqm), BASELINE_N);
-    if (m != null) return { value: m, basis: "condo" };
-  }
-  const streetGroup = withoutSelf(streetKey ? byStreet.get(streetKey) : undefined);
-  if (streetGroup.length >= MIN_COMPARABLES) {
-    const m = medianAvg(streetGroup.map((e) => e.pricePerSqm), BASELINE_N);
-    if (m != null) return { value: m, basis: "street" };
-  }
+  const condoVal = baselineForGroup(selfId, condoKey, byCondo);
+  if (condoVal != null) return { value: condoVal, basis: "condo" };
+  const streetVal = baselineForGroup(selfId, streetKey, byStreet);
+  if (streetVal != null) return { value: streetVal, basis: "street" };
   return null;
 }
 
@@ -128,6 +133,10 @@ export function enrichSaleDeals(
     const streetKey = streetKeyOf(l.street, l.bedrooms);
     const sBase = baselineFor(l.id, condoKey, streetKey, saleGroups.byCondo, saleGroups.byStreet);
     const rBase = baselineFor(l.id, condoKey, streetKey, rentGroups.byCondo, rentGroups.byStreet);
+    const condoSaleBase = baselineForGroup(l.id, condoKey, saleGroups.byCondo);
+    const streetSaleBase = baselineForGroup(l.id, streetKey, saleGroups.byStreet);
+    const pct = (base: number | null) =>
+      base ? Math.round(((base - l.pricePerSqm!) / base) * 1000) / 10 : null;
     const orig = originalPrices.get(l.id);
     rows.push({
       id: l.id,
@@ -145,6 +154,8 @@ export function enrichSaleDeals(
       marketDiscountPct:
         sBase ? Math.round(((sBase.value - l.pricePerSqm) / sBase.value) * 1000) / 10 : null,
       compareBasis: sBase?.basis ?? null,
+      condoDiscountPct: pct(condoSaleBase),
+      streetDiscountPct: pct(streetSaleBase),
       temporalDiscountPct:
         orig && orig > l.price ? Math.round(((orig - l.price) / orig) * 1000) / 10 : orig ? 0 : null,
       estYieldPct:
