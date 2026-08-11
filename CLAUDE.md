@@ -13,6 +13,40 @@
 > restait faux au moment de la décision, et la traçabilité de provenance).
 > Toute décision structurante ou tout défaut découvert s'y consigne, daté.
 
+## Règles de travail sur ce dépôt — à appliquer sans qu'on le redemande
+
+**1. Mesurer avant d'affirmer, et distinguer les deux dans ce qu'on écrit.**
+Ce qui est mesuré se marque comme tel ; ce qui est déduit ou supposé aussi. La
+distinction a coûté cher : sept fois en août 2026, c'est la mesure — et non le
+système mesuré — qui était en cause. Un « facteur 14 » qui valait 22 %, un
+doublon de processus qui n'existait pas, une optimisation entière bâtie sur
+l'idée qu'on rouvrait 2 900 fiches alors qu'on n'en ouvrait que les nouvelles.
+
+**2. Un garde-fou qui crie au loup est pire que pas de garde-fou.** Il apprend à
+ignorer les alertes. Avant de livrer une surveillance, vérifier qu'elle se tait
+quand tout va bien ET qu'elle parle quand ça ne va pas. Trois s'étaient révélés
+inertes le même jour (overseer, watch-health, robots.txt) et un criait au loup
+(le juge de plausibilité).
+
+**3. Consigner au journal EN FIN DE SÉANCE, sans qu'on le demande.**
+`docs/journal-technique.md`, entrée datée, en ajout seul. On n'y réécrit jamais
+le passé : une décision qui s'est révélée fausse y reste, suivie de l'entrée qui
+la corrige. **Y faire figurer explicitement ce qui n'a PAS été fait** et
+pourquoi — abandonné après mesure, laissé à l'arbitrage, ou non vérifié. C'est
+cette section qui évite de refaire trois fois la même enquête.
+
+**4. Le code porte le pourquoi, pas le quoi.** Un commentaire dit quel défaut
+mesuré a imposé cette ligne, avec le chiffre. `# ~78 % de gain` vaut mieux que
+`# compresse le texte`. Un cinquième du code est du commentaire, délibérément.
+
+**5. Ne pas trancher à la place de l'utilisateur** sur la posture (cadence de
+scrap, jitter, contournement d'un blocage, seuils d'un garde-fou) ni sur la
+méthode statistique. Proposer, chiffrer, laisser décider.
+
+**6. Rien n'entre en production sans mesure préalable**, et une migration
+s'applique avec sa contrepartie côté code (`_COLS`, stores, types) — les deux
+vont ensemble, sinon le scrap suivant échoue sur une colonne inconnue.
+
 ## Objectif
 Outil **perso, non public** : carte interactive de Bangkok découpée par quartiers, cliquable (zoom au clic), thème dark violet/anthracite, alimentée par des annonces immobilières scrapées (condos **vente + location**, **foreigner & thai quota**), avec fiches biens et statistiques agrégées (ville / quartier / rue).
 
@@ -187,5 +221,6 @@ Usage perso non-commercial. Fréquence ~hebdo (pas de boucle serrée). Respect r
   - **Alertes** : `agents/audits/CHANGELOG.md` exhaustif + e-mail Gmail sur sévérité haute seulement. Claude écrit sur **branche**, jamais `main`.
 - [x] **Descriptifs capturés (2026-07-31)** — colonne `description` + `scraper/pipeline/description.py`, branchée sur les 4 adaptateurs. Aucun texte libre n'était stocké jusque-là (`raw_data ? 'description'` = 0 partout) : le « motif du vendeur » des case studies venait de l'audit humain, pas de la donnée. Deux pièges corrigés en testant sur de vraies pages : le `ld+json` FazWaz décrit **l'organisation** et non le bien ; le contenu des blocs `<style>` survivait au détaguage et arrivait en CSS. **Nestopa n'a rien d'exploitable** (champ absent ou redite des specs, pages détail en 403) — 0 % y est attendu. **Non rétroactif.**
 - [x] **Cinquième source : LivingInsider (2026-08-05)** — `scraper/adapters/livinginsider.py` + config, agent `extract-livinginsider` (T0, lane rent). Vérifié indépendant de nos 4 sources (images sur son propre domaine, pas de CDN partagé). Deux limites structurelles : **aucune dédup incrémentale possible** (liste sans prix → chaque scan revisite tout, `max_pages` posé bas à 25 en attendant une mesure réelle), et **filtre Bangkok imparfait** sur un flux national à adresses mal formatées (repli sur code postal, 18/20 retenues sur l'échantillon testé contre 1/20 avec la regex stricte seule — voir journal technique). **DotProperty écarté après enquête** : 90/90 annonces échantillonnées chargent leurs photos depuis `cdn.fazwaz.com`/`img.fazwaz.com` — semble syndiquer FazWaz, déjà scrapé ; adaptateur non écrit, décision finale laissée à trancher. **propertynetwork.asia clarifié** : pas un agrégateur, un outil de partage client posé sur PropertyScout (confirmé par l'agent source + vérifié empiriquement) — exclu, aucune donnée unique. **Le mécanisme T2 n'existait pas** : `agents/README.md` promettait une tâche planifiée drainant `agents/queue/`, aucune ne le faisait (`queue/done/` vide depuis le 31/07) — tâche locale `drain-agent-queue-lowi-bkk` créée (quotidienne). Détail complet : [journal technique du 2026-08-05](docs/journal-technique.md). Travail sur branche `agents/new-sources-livinginsider-dotproperty`, pas encore mergée — aucun run de production, bandes provisoires.
+- [x] **Widget de bureau (2026-08-10)** — `ops/widget/` ([README](ops/widget/README.md)) : panneau posé sur le bureau, prochaines échéances des tâches Windows + routines Claude + cycle d'agents. Rafraîchi à l'ouverture de session, à la sortie de veille/déverrouillage (`SystemEvents`, drapeau relevé par la minuterie — pas de rappel inter-thread) et toutes les 10 min. Trois sources, trois natures : tâches Windows lues en direct ; agents calculés depuis `agents.json` + `ledger.db` en lecture seule, **rendus au prochain créneau réel de `LowiBKK-Agents`** et non à leur date d'échéance (avec la lane `weekly` calculée sur l'ordinal **UTC** — à 01:00 Bangkok on est encore la veille en UTC) ; **routines Claude recalculées depuis un cron recopié à la main** dans `config.json`, faute d'API locale (elles vivent côté serveur Claude ; vérifié : le calcul retombe à la seconde sur les `nextRunAt` annoncés). ⚠ **toute création/modification d'une routine Claude doit être reportée dans `config.json`**, rien ne signale la désynchronisation. Sobriété demandée et appliquée : ni WinForms ni System.Drawing, collecte dans un processus court séparé, interface reconstruite seulement si `etat.json` a bougé, `EmptyWorkingSet` après chaque rendu (~50-60 Mo). Installé par raccourci Démarrage (`installe.ps1`), relancé par `garde.vbs`.
 - [ ] **Suites identifiées (mesurées, non traitées)** : `/tension-table` pèse encore 8,6 Mo (sérialise les 34 275 annonces) ; dédup même-agent applicable au prochain scrape ; sonder PropertyScout pour l'agent ; empreinte photo inerte (0 ligne, `est_doublon` sans appelant) ; `year_built` à backfiller **côté serveur** ; quota étranger par immeuble ; logique métier dupliquée `study/run_study.py` ↔ `lib/yields.ts` ; décision à prendre sur le ticket DotProperty (creuser une fraction non-FazWaz, ou clore) ; premier run de production `livinginsider` à lancer puis bandes `agents.json` à recalibrer.
 - [ ] **Idées plus tard** : jitter/mouvements aléatoires anti-ban ; heatmaps loyers & prix sur la carte (couche MapLibre pondérée).

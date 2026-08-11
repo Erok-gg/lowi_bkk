@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import time
 
@@ -238,6 +239,18 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
             ambigues.append(p)
 
     # Traitement par lots : le stock complet représenterait ~28 h en flux unique.
+    # TIRAGE ALÉATOIRE, pas la tête de liste.
+    #
+    # `ambigues[:300]` prenait les 300 premières d'une requête SANS `order by` :
+    # une tranche arbitraire, en pratique groupée par immeuble et par source,
+    # donc structurellement homogène. Mesuré le 2026-08-11 : cette tranche rendait
+    # 9 % d'abstention, quand un tirage aléatoire sur la MÊME population en donne
+    # 97 %. On ne mesurait pas le modèle, on mesurait un coin de la base.
+    #
+    # S'y ajoutait un défaut plus grave : sans mémoire des paires déjà vues, le
+    # même lot repassait à chaque cycle et les 25 848 autres n'auraient jamais
+    # été traitées. Le journal de reprise (`gpu.Reprise`) l'a corrigé le même jour.
+    random.shuffle(ambigues)
     lot = ambigues[:int(os.environ.get("ORGANIZE_LOT", LOT_MAX))]
     abstentions, pannes, revue = 0, 0, 0
     t0 = time.time()

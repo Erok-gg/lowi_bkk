@@ -76,6 +76,20 @@ _ARCHIVE = re.compile(r":\s*(\d+)\s+lignes serveur\s*→\s*(\d+)\s+en archive")
 _PURGE = re.compile(r"(\d+)\s+annonces purgées")
 _HTTP_ERR = re.compile(r"HTTP\s*(?:error\s*)?(4\d\d|5\d\d)", re.I)
 
+# ÉCHECS SUR LES IMAGES — comptés à part du scraping.
+#
+# Relevé le 2026-08-11 : les métriques annonçaient `traces_erreur: 0` et
+# `erreurs_http: 0` pendant que les journaux contenaient des
+# « upload erreur ... RemoteDisconnected » vers le stockage et des 502/503 du
+# CDN de PropertyScout. `watch-health` déclarait donc la source SAINE alors que
+# des photos se perdaient.
+#
+# Le défaut n'était pas le comptage mais le PÉRIMÈTRE : on ne mesurait que la
+# collecte des annonces, jamais ce qu'on en faisait ensuite. « Source saine »
+# voulait dire « le scraping va bien », et personne ne le savait.
+_IMG_ERR = re.compile(
+    r"upload erreur|échec GET \(bytes\)|echec GET \(bytes\)|erreur image", re.I)
+
 
 def metrics_from_output(text: str) -> dict:
     """Métriques structurées. Elles alimentent les bandes de `watch-health` et
@@ -104,6 +118,7 @@ def metrics_from_output(text: str) -> dict:
         m["purge_refusee"] = True
 
     m["erreurs_http"] = len(_HTTP_ERR.findall(text))
+    m["erreurs_images"] = len(_IMG_ERR.findall(text))
     m["lignes_log"] = text.count("\n")
     low = text.lower()
     m["traces_erreur"] = low.count("traceback") + low.count("[erreur]")

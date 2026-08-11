@@ -59,3 +59,8 @@ ops/logs/
 ops/taches-supprimees/
 tests-scrap/
 verif_tooltip.ts
+
+# widget de bureau : état local et journal, pas du code
+ops/widget/etat.json
+ops/widget/widget.log
+ops/widget/.arret

@@ -30,6 +30,7 @@ from adapters.livinginsider import LivinginsiderAdapter  # noqa: E402
 from pipeline.fetch import Fetcher  # noqa: E402
 from pipeline.normalize import normalize  # noqa: E402
 from pipeline.geo_match import KhetMatcher  # noqa: E402
+from pipeline import chrono  # noqa: E402
 from pipeline.images import process_images  # noqa: E402
 from pipeline import photo_sig  # noqa: E402
 from pipeline.fiche import write_fiche  # noqa: E402
@@ -227,7 +228,8 @@ def main() -> None:
             if geocoder and norm.get("condo_name") and (
                 not norm.get("street") or norm.get("lat") is None
             ):
-                res = geocoder.lookup(norm["condo_name"], norm.get("khet"))
+                with chrono.mesure("geocodage"):
+                    res = geocoder.lookup(norm["condo_name"], norm.get("khet"))
                 if res:
                     if res.get("street") and not norm.get("street"):
                         norm["street"] = res["street"]
@@ -245,25 +247,29 @@ def main() -> None:
             # déjà la leur, et c'est là que la question du repost se pose.
             if existing is None and norm.get("image_urls"):
                 try:
-                    norm["photo_count"], norm["photo_sizes"] = photo_sig.relever(
-                        fetcher, norm["image_urls"])
+                    with chrono.mesure("empreinte_photo"):
+                        norm["photo_count"], norm["photo_sizes"] = photo_sig.relever(
+                            fetcher, norm["image_urls"])
                 except Exception as e:  # une empreinte manquante n'est pas bloquante
                     print(f"  (empreinte photo ignorée : {e})")
 
             need_images = (not args.no_images) and bool(norm.get("image_urls")) and (
                 existing is None or not store.has_images(norm["id"])
             )
-            images = (
-                process_images(fetcher, norm["id"], norm["image_urls"], OUTPUT_DIR, cfg["image"])
-                if need_images else None
-            )
+            images = None
+            if need_images:
+                with chrono.mesure("traitement_images"):
+                    images = process_images(fetcher, norm["id"], norm["image_urls"],
+                                            OUTPUT_DIR, cfg["image"])
 
             # upload des images vers Storage (object path = storage_path)
             if storage and images:
                 for im in images:
-                    storage.upload(str(OUTPUT_DIR / im["storage_path"]), im["storage_path"])
+                    with chrono.mesure("transfert_storage"):
+                        storage.upload(str(OUTPUT_DIR / im["storage_path"]), im["storage_path"])
 
-            status, old_price = store.upsert_listing(norm, images)
+            with chrono.mesure("ecriture_base"):
+                status, old_price = store.upsert_listing(norm, images)
             if status == "new":
                 n_new += 1
             elif status == "changed":
@@ -322,6 +328,11 @@ def main() -> None:
                 store.delete_images(lid)
             if delisted:
                 print(f"  ↓ {removed} délistées → photos supprimées, conservées en DB (inactive)")
+
+    # OÙ EST PASSÉ LE TEMPS. Imprimé dans le journal du run, donc relu par
+    # `metrics_from_output` et conservé au ledger : la répartition devient une
+    # série, pas une observation ponctuelle.
+    print(chrono.rapport(), flush=True)
 
     store.record_scan_run(args.source, n_total, n_new, removed, n_changed,
                           notes="full" if args.full else "partial")

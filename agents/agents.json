@@ -192,14 +192,15 @@
       ],
       "bandes": {
         "nouvelles": [
-          5,
-          400
+          0,
+          60
         ],
         "traces_erreur": [
           0,
           3
         ]
-      }
+      },
+      "_gel": "Bande abaissee le 2026-08-11 : la source est GELEE a UNE page (cf. scraper/config/nestopa.json). Sans cet ajustement, watch-health la declarerait cassee a chaque cycle — un garde-fou qui crie au loup est pire que pas de garde-fou."
     },
     {
       "name": "extract-livinginsider",

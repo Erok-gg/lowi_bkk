@@ -22,10 +22,15 @@ SKILLS = os.path.join(ROOT, "skills")
 AUDITS = os.path.join(ROOT, "audits")
 REGISTRY = json.load(open(os.path.join(ROOT, "agents.json"), encoding="utf-8"))
 
-SYSTEM = """Tu rédiges un audit en français clair, pour quelqu'un qui n'a pas suivi le cycle.
-Une phrase par agent : ce qui a été fait, et ce qui cloche s'il y a lieu.
-Pas de jargon, pas de JSON recopié, pas de superlatif.
-Réponds UNIQUEMENT en JSON : {"resume":"<80 mots", "point_dattention":"<30 mots ou vide"}"""
+# CONSIGNES EN ANGLAIS, CONTENU EN FRANÇAIS — cf. le commentaire équivalent dans
+# watch_health.py. Mesuré : 12,2 % d'incohérence avec des consignes françaises,
+# 0 % traduites. Cet appel exige du JSON, la contrainte s'applique.
+SYSTEM = """You write a short audit for someone who did not follow the cycle.
+One sentence per agent: what it did, and what is wrong if anything.
+No jargon, no JSON copied back, no superlatives.
+
+Reply ONLY with JSON: {"resume":"<80 words", "point_dattention":"<30 words or empty"}
+Both values MUST be written in FRENCH."""
 
 
 def contrat_de(agent: str) -> set[str]:
@@ -97,8 +102,29 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
     # Un agent MUET est plus inquiétant qu'un agent en erreur : c'est la signature
     # d'une tâche qui ne se déclenche plus. Les 3 tâches Windows étaient invisibles
     # ainsi pendant trois semaines.
-    dus = [a["name"] for a in REGISTRY["agents"]
-           if lane in a.get("lanes", []) and a["name"] != "overseer"]
+    # ⚠ « DÛ » SE CALCULE, IL NE SE DÉDUIT PAS DE LA FILE.
+    #
+    # Corrigé le 2026-08-11. Cette liste retenait TOUT agent de la file, sans
+    # regarder sa cadence : un extracteur à 4 jours qui, correctement, n'avait
+    # pas tourné aujourd'hui était signalé muet — en sévérité HAUTE. L'overseer
+    # tournant chaque jour et les extracteurs tous les 4 jours, il criait au
+    # loup trois jours sur quatre. Relevé : 36 findings de sévérité haute, tous
+    # faux, sur 92 findings au total.
+    #
+    # On réutilise `orchestrator.is_due` — la MÊME fonction que celle qui décide
+    # de lancer l'agent. Deux définitions de « dû » finissent toujours par
+    # diverger ; c'est précisément ce qui s'était produit ici.
+    from agents.orchestrator import is_due
+
+    dus = []
+    for a in REGISTRY["agents"]:
+        if lane not in a.get("lanes", []) or a["name"] == "overseer":
+            continue
+        try:
+            if is_due(led, a)[0]:
+                dus.append(a["name"])
+        except Exception:                      # noqa: BLE001
+            dus.append(a["name"])              # dans le doute, on surveille
     muets = [a for a in dus if a not in vus]
     for a in muets:
         led.finding("overseer", "high", "agent_muet",

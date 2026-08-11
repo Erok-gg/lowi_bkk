@@ -30,8 +30,15 @@ from agents.core import local_llm                                            # n
 SEUIL_JUSTESSE = 90       # sur 100
 SEUIL_ABSTENTION = 0.70   # sur les ambiguës
 
-DATA = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                   "pairs.json"), encoding="utf-8"))
+# Un jeu alternatif peut être passé en argument. Sert à distinguer une dérive du
+# MODÈLE d'un vieillissement du JEU : si le score remonte sur un échantillon
+# fraîchement tiré de la production, c'est le jeu qui n'est plus représentatif.
+# Question ouverte le 2026-08-11, quand le score est tombé de 91-92 à 87-88 sans
+# qu'aucune dépendance du test n'ait changé.
+_JEU = (sys.argv[1] if len(sys.argv) > 1 and sys.argv[1].endswith(".json")
+        else os.path.join(os.path.dirname(os.path.abspath(__file__)), "pairs.json"))
+DATA = json.load(open(_JEU, encoding="utf-8"))
+print(f"jeu : {os.path.basename(_JEU)}")
 
 
 def juger(paire: dict) -> tuple[str | None, str | None]:

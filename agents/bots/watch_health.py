@@ -20,9 +20,21 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REGISTRY = json.load(open(os.path.join(ROOT, "agents.json"), encoding="utf-8"))
 EXTRACTEURS = [a for a in REGISTRY["agents"] if a["famille"] == "Extraction"]
 
-SYSTEM = """Tu rédiges un constat court en français à partir de chiffres de supervision.
-Tu ne juges pas, tu décris. Une phrase, factuelle, sans jargon.
-Réponds UNIQUEMENT en JSON : {"constat":"<25 mots"}"""
+# CONSIGNES EN ANGLAIS, CONTENU EN FRANÇAIS.
+#
+# Mesuré le 2026-08-01 sur 90 paires réelles : des consignes en français donnent
+# 12,2 % de sorties internement incohérentes, les mêmes traduites 0 %. La cause
+# est la LANGUE DE L'INSTRUCTION, pas le nommage des champs — qwen3 tient mal
+# une contrainte de format énoncée en français.
+#
+# Cet appel exige du JSON, donc c'est bien une sortie contrainte. On traduit
+# l'instruction, jamais le résultat : le constat doit rester lisible par un
+# francophone.
+SYSTEM = """You write ONE short factual sentence from monitoring figures.
+Describe, never judge. No jargon, no numbers repeated verbatim.
+
+Reply ONLY with JSON: {"constat":"<25 words"}
+The value of "constat" MUST be written in FRENCH."""
 
 
 def _metrics(row) -> dict:
@@ -32,9 +44,25 @@ def _metrics(row) -> dict:
         return {}
 
 
+#: Au-delà, les échecs d'images cessent d'être du bruit réseau. Sur le cycle du
+#: 2026-08-11 : 1 par source, 3 pour PropertyScout — donc un seuil à 10 ne
+#: déclenchera que sur une vraie dégradation, pas sur les aléas d'un CDN.
+SEUIL_ERREURS_IMAGES = 10
+
+
 def _classer(nouvelles: int | None, erreurs: int, mediane: float | None,
-             bande: list | None) -> tuple[str, str]:
-    """Rend (verdict, sévérité)."""
+             bande: list | None, err_images: int = 0) -> tuple[str, str]:
+    """Rend (verdict, sévérité).
+
+    ⚠ `err_images` est SÉPARÉ des autres erreurs, et c'est le point.
+    Jusqu'au 2026-08-11 cette fonction ne voyait que la collecte : une source
+    dont toutes les photos échouaient était déclarée SAINE, parce que
+    `traces_erreur` et `erreurs_http` restaient à zéro. Le périmètre de la
+    mesure, pas le comptage, était en cause — « source saine » voulait dire
+    « le scraping va bien », et personne ne le savait.
+
+    L'ordre compte : un parseur cassé prime sur des images perdues.
+    """
     if nouvelles is None:
         return "metriques_absentes", "medium"
     if nouvelles == 0 and erreurs == 0:
@@ -45,6 +73,9 @@ def _classer(nouvelles: int | None, erreurs: int, mediane: float | None,
         return "derive", "medium"
     if bande and nouvelles > bande[1]:
         return "volume_anormal", "low"
+    # Les annonces arrivent, mais leurs photos non : la source n'est pas « saine ».
+    if err_images >= SEUIL_ERREURS_IMAGES:
+        return "images_perdues", "medium"
     return "ok", "low"
 
 
@@ -67,9 +98,11 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
         mediane = statistics.median(histo) if len(histo) >= 3 else None
         bande = (ext.get("bandes") or {}).get("nouvelles")
 
-        verdict, severite = _classer(nouvelles, erreurs, mediane, bande)
+        err_images = m.get("erreurs_images", 0) or 0
+        verdict, severite = _classer(nouvelles, erreurs, mediane, bande, err_images)
         detail.append({"source": name, "verdict": verdict, "nouvelles": nouvelles,
-                       "mediane": mediane, "erreurs": erreurs})
+                       "mediane": mediane, "erreurs": erreurs,
+                       "erreurs_images": err_images})
 
         if verdict == "ok":
             continue
@@ -81,14 +114,14 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
             SYSTEM,
             f"Source {name}. Verdict technique : {verdict}. "
             f"Nouvelles annonces ce run : {nouvelles}. Médiane des 10 derniers : {mediane}. "
-            f"Traces d'erreur : {erreurs}.",
+            f"Traces d'erreur : {erreurs}. Échecs sur les images : {err_images}.",
             {"constat": "str"}, ledger=led, agent="watch-health", run_id=run_id)
         if red:
             phrase = red["constat"]
 
         led.finding(name, severite, verdict, phrase,
                     {"nouvelles": nouvelles, "mediane": mediane, "erreurs": erreurs,
-                     "run_id": last["id"]}, run_id)
+                     "erreurs_images": err_images, "run_id": last["id"]}, run_id)
 
         # Escalade : deux runs consécutifs à zéro, jamais sur un seul.
         if verdict == "parseur_casse":

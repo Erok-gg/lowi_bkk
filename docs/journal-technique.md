@@ -1582,3 +1582,173 @@ sinon) ; revérifié en relisant le texte de la page rendue (`/deals`, mode
 Best discounts) plutôt qu'en supposant que le premier jet suffisait.
 `npm run typecheck` et `npm test` passent, aucun test dédié à `deals.ts`
 n'existait avant (aucun ajouté ici, changement d'affichage pur).
+
+---
+
+## 2026-08-11 — Trois garde-fous qui ne gardaient rien, et une optimisation que j'ai inventée
+
+### Le fil de la journée
+
+Point de départ : « j'ai vu des remontées d'erreurs d'agents ». Elles étaient
+fausses. En cherchant pourquoi, trois autres garde-fous se sont révélés inertes,
+et une proposition d'optimisation que j'avais construite s'est effondrée à la
+mesure.
+
+### 1. L'overseer criait au loup trois jours sur quatre
+
+```python
+dus = [a["name"] for a in REGISTRY["agents"] if lane in a.get("lanes", [])]
+```
+
+Il tenait pour « dû » **tout agent de sa file**, sans jamais lire sa cadence.
+L'overseer tourne chaque jour, les extracteurs tous les quatre : il signalait donc
+en sévérité HAUTE des agents qui se comportaient exactement comme prévu.
+
+**36 constats hauts sur 92, tous faux. Et 8 des 9 escalades jamais remontées
+venaient de là** — le canal d'alerte n'a donc jamais transporté que son propre
+défaut.
+
+Corrigé en lui faisant réutiliser `orchestrator.is_due`, la fonction qui décide
+de lancer l'agent. Deux définitions de « dû » finissent toujours par diverger.
+
+### 2. « Source saine » voulait dire « le scraping va bien »
+
+Les métriques annonçaient `traces_erreur: 0` et `erreurs_http: 0` pendant que les
+journaux contenaient des `RemoteDisconnected` sur le stockage et des 502/503 du
+CDN PropertyScout. `watch-health` déclarait la source saine **pendant que des
+photos se perdaient**.
+
+Le défaut n'était pas le comptage mais le **périmètre** : on ne mesurait que la
+collecte, jamais ce qu'on en faisait ensuite. Métrique `erreurs_images` séparée,
+verdict `images_perdues` au-delà de 10. Vérifié sur le cycle du jour : 1 par
+source, 3 pour PropertyScout — exactement ce que les métriques annonçaient à zéro.
+
+### 3. `respect_robots=True` autorisait tout
+
+**Le plus sérieux de la journée.** Deux défauts de `urllib.robotparser`, mesurés
+sur nestopa.com :
+
+- **un seul bloc `User-agent: *` est retenu** — `if self.default_entry is None`.
+  Les robots.txt gérés par Cloudflare en ajoutent un en tête (`Content-Signal`,
+  `Allow: /`) AVANT celui du site. On ne voyait que le `Allow: /`, et les
+  interdictions réelles étaient jetées en silence ;
+- **la première règle qui correspond gagne**, pas la plus spécifique, et les
+  jokers ne sont pas gérés : `/*?page=` devenait `/%2A%3Fpage%3D`.
+
+Résultat : nous demandions `?page=N` — **explicitement interdit** — environ 300
+fois par cycle, depuis le début. La posture documentée du projet est « robots.txt
+respecté » ; elle ne l'était pas.
+
+Remplacé par une classe `Robots` conforme au RFC 9309 : règle au chemin le plus
+long gagnante, jokers `*` et `$`, groupes nommés prioritaires sur `*`. Testé 7/7,
+sans régression sur FazWaz ni PropertyScout (un seul bloc `*` chacun).
+
+### 4. Deux prompts français demandaient du JSON
+
+`overseer` et `watch_health` exigeaient une sortie contrainte avec des consignes
+françaises — 12,2 % d'incohérence mesurés le 1er août contre 0 % en anglais.
+Consignes traduites, contenu toujours demandé en français. Vérifié : les deux
+rendent bien du français.
+
+### Nestopa : gelé, après avoir cartographié tous les accès
+
+| chemin | résultat |
+|---|---|
+| liste globale | 200 |
+| pagination `?page=` | **interdite par robots.txt** |
+| navigation par quartier (leur propre sitemap) | 403 |
+| fiches de détail | 403 |
+| sitemap des propriétés | 502 chez eux |
+
+Le 403 résiste à la session réchauffée, aux cookies et à des en-têtes de
+navigateur complets — c'est un blocage par empreinte de connexion. Une seule page
+par type reste accessible à un client non-navigateur.
+
+**J'ai eu tort deux fois sur ce dossier** : j'ai d'abord affirmé que le « 403 »
+venait d'une note ancienne et non d'une observation — la note avait raison ;
+puis j'ai proposé le sitemap comme voie de remplacement avant de constater qu'il
+répond 502.
+
+Gelé à une page, avec sa bande de santé abaissée à `[0, 60]` — sans quoi
+`watch-health` l'aurait déclaré cassé à chaque cycle, exactement le défaut qu'on
+venait de corriger ailleurs. Nestopa pesait 91 nouvelles sur 3 441 (2,6 %) et
+n'apporte aucun champ enrichi.
+
+### DDproperty : j'ai construit une optimisation sur une supposition
+
+**Ce que j'avais annoncé** : la liste contient `floorArea` et `tenure`, donc on
+ouvre 2 900 fiches pour rien ; un mode « liste d'abord » ferait passer le poste
+de 6 h à 1 h.
+
+**Ce que la mesure dit** : l'adaptateur ouvre déjà **uniquement les nouvelles** —
+1 488 ce cycle, **0 modifiée**, 1 167 correctement sautées par la dédup. Le mode
+proposé n'aurait rien économisé. Les deux gains secondaires tombent aussi : le
+`tenure` en liste éviterait d'ouvrir les leasehold, il y en a eu **zéro** ; les
+images sont déjà plafonnées à une par annonce.
+
+Ce que la recherche laisse quand même :
+
+- le tableau d'annonces est à `props.pageProps.pageData.data.listingsData`, et
+  il faut l'identifier **par son contenu** (`floorArea`, `tenure`, `listingId`,
+  `postedOn`) — le blob a exposé `listings` puis `listingsData.items` entre deux
+  requêtes le même jour ;
+- **les coordonnées ne sont PAS dans la liste** : c'était le point bloquant, la
+  réponse est non, et elle condamne l'idée d'éviter la fiche pour une annonce
+  nouvelle.
+
+### Ce qui reste inexpliqué, et l'instrumentation
+
+Le cycle : 150 pages + 1 488 fiches à 4,5 s font **2 h**. Le run a duré **6,2 h**.
+En ajoutant empreintes photo et images, on atteint ~3 h 30. **Deux heures et demie
+ne se rattachent à rien.**
+
+D'où `scraper/pipeline/chrono.py` : onze points de mesure (attente et réseau
+séparés pour liste, fiche, image, empreinte ; traitement d'images, transfert
+Storage, géocodage, écriture base), un rapport en fin de run, et les durées
+versées au ledger — donc une série, pas une observation. Le poste **NON MESURÉ**
+y figure explicitement : c'est lui qu'on cherche.
+
+Le géocodage est chronométré **sans être touché**, à la demande.
+
+### Le garde-fou du modèle échoue, et je ne sais pas pourquoi
+
+`test_local_llm.py` : **87 puis 88/100** contre un seuil de 90, alors qu'il
+donnait 91-92 du 1er au 3 août. `git` est formel — `local_llm.py`, `organize.py`
+et le jeu de test sont **inchangés**. L'abstention est montée de 77 % à 80 %.
+
+Un échantillon frais tiré de la production donne **84/100 mais 97 % d'abstention**.
+Il est biaisé et je le signale : je l'ai équilibré 60/60 alors que la production
+compte 25 658 `distinct_units` pour 1 650 `same_unit` — le cas rare est
+sur-représenté d'un facteur dix. Les 84 ne sont pas comparables aux 91.
+
+**Mais ce détour a trouvé un vrai défaut** : `organize` prenait `ambigues[:300]`,
+les 300 premières d'une requête **sans `order by`** — une tranche groupée par
+immeuble, donc homogène. Elle rendait **9 % d'abstention** quand un tirage
+aléatoire sur la même population en donne **97 %**. On ne mesurait pas le modèle,
+on mesurait un coin de la base. Pire : sans mémoire des paires vues, le même lot
+repassait à chaque cycle et les **25 848 autres n'auraient jamais été traitées**.
+Corrigé par un tirage aléatoire et un journal de reprise.
+
+La dérive du garde-fou, elle, reste **ouverte**. Ce n'est ni le code ni
+l'échantillon seul.
+
+### Ce qui n'a PAS été fait
+
+- **Le mode « liste d'abord » DDproperty** — abandonné, la mesure l'a vidé de son
+  intérêt. À reconsidérer seulement si les annonces *modifiées* deviennent
+  nombreuses (0 ce cycle).
+- **Le parallélisme** — il achète du temps de mur, pas de la discrétion : 2 900
+  fiches restent 2 900 requêtes, groupées autrement. Non tenté.
+- **Le jitter à 0,3** (−18 % sur tout le cycle) — c'est un choix de posture, pas
+  une optimisation neutre. Laissé à l'arbitrage.
+- **Playwright sur Nestopa** — techniquement fondé (robots.txt autorise les
+  fiches), mais ~164 pages de navigation à piloter pour 2,6 % du volume et aucun
+  champ enrichi. Écarté par arithmétique, pas par principe.
+- **L'unification des deux mécanismes de scrap** — `LowiBKK-Agents` (quotidien,
+  vers Supabase) et `LowiBKK-ScrapNocturne` (4 jours, vers SQLite, désactivé) se
+  recouvrent, et **la résilience est du mauvais côté** : le superviseur sait
+  reprendre après coupure, il est éteint. Décision d'architecture, pas bricolage.
+- **La correction de l'overseer n'est pas vérifiée** sur un cycle réel : ni lui
+  ni `watch-health` n'ont tourné dans le cycle du jour.
+- **Le réveil est en retard de ~2 h** — les deux tâches démarrent vers 03:10 pour
+  01:00 et 02:00 prévus. Cause non élucidée.
