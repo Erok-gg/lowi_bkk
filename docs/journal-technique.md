@@ -1522,3 +1522,63 @@ détecté "aucun backup-apres-cycle 'ok' trouvé" et déclenché un rattrapage �
 qui a réussi (archive passée à 555 814 lignes). Revalidé une seconde fois en
 appelant `agents/orchestrator.py run verifie-backup` directement (pas juste le
 script), pour prouver l'intégration réelle, pas seulement la logique isolée.
+
+## 2026-08-11 — Revue algo deals/yields/tension : 3 propositions sur 4 écartées
+
+Un retour externe (analyse mathématique du code de `lib/deals.ts`,
+`lib/yields.ts`, `lib/tension.ts`) proposait 4 changements. Vérification
+contre le code et les données réelles avant d'implémenter quoi que ce soit —
+trois écartés, un retenu.
+
+**Écarté 1 — prime d'étage dans `deals.ts`.** Le taux proposé (+0,5 %/étage
+au-dessus du 5e) est une hypothèse non mesurée sur les données du projet, pas
+un chiffre calibré. `d_etage` (comme les autres champs descriptifs) n'est
+renseigné que sur une fraction des annonces et n'est pas rétroactif (cf.
+2026-08-02 ci-dessus, couverture 24-78 % selon le champ). Ajouter un
+ajustement de prix basé sur un taux deviné aurait introduit de la fausse
+précision dans le classement des décotes — exactement ce que le projet évite
+depuis le revirement sur `posted_at` (2026-08-02 également, plus haut).
+Alternative retenue : aucune, reporté à plus tard si besoin de mesurer
+d'abord la relation réelle prix/étage sur l'échantillon disponible.
+
+**Écarté 2 — rendement net via forfait CAM fee dans `yields.ts`.**
+`d_cam_fee_thb` n'est connu que sur 24 % des annonces. Appliquer un forfait
+(50 THB/m²/mois) aux 76 % restantes aurait fabriqué une donnée plutôt que de
+la mesurer, sur une métrique (Gross Yield) déjà fiable et largement utilisée
+en aval (`/rendements`, `study/run_study.py`). Non implémenté.
+
+**Écarté 3 — momentum en EMA dans `tension.ts`.** L'idée ("donner plus de
+poids aux instantanés récents") est légitime, mais l'extrait fourni calcule
+une moyenne mobile exponentielle sur les NIVEAUX (`activeCount`/prix), pas
+une pente. Or `stockTrend` et `priceMomentum` sont utilisés dans tout le
+reste du calcul comme une pente SIGNÉE (régression `slope()`, rang centile,
+sens tendu/mou) — remplacer `slope()` par cet EMA aurait changé la sémantique
+des deux composantes sans que rien d'autre dans `tension.ts` ne le sache.
+Par ailleurs l'historique de `khet_snapshots` par quartier reste court
+(démarré le 2026-07-04), donc peu de points pour qu'un rétrécissement
+exponentiel change grand-chose pour l'instant. Une alternative correcte
+existe (régression pondérée / WLS, qui reste une vraie pente) mais n'a pas
+été demandée — non implémentée non plus.
+
+**Retenu — score de confiance sur les décotes de `deals.ts`.** Seul
+changement fait : exposer une info que le code connaissait déjà en interne
+(le nombre `n` de comparables derrière `marketDiscountPct`/`compareBasis`)
+sans introduire de nouvelle donnée ni de seuil deviné. `baselineForGroup` et
+`baselineFor` renvoient désormais `n` en plus de la valeur ; `confidenceOf(n)`
+classe en low/medium/high en réutilisant les constantes déjà en place
+(`MIN_COMPARABLES = 3` comme plancher, `BASELINE_N = 10` comme palier
+"high"), pas de nouveau nombre inventé. Côté UI (`DealsView.tsx`), un point
+coloré accolé à la cellule St./Condo (pas de nouvelle colonne, cohérent avec
+les commits récents de compaction du tableau).
+
+**Défaut trouvé en vérifiant, pas en l'écrivant.** Première version : le
+point de confiance était toujours accolé à la cellule "Condo", même quand le
+classement (`marketDiscountPct`) provenait en réalité du repli RUE
+(`compareBasis === "street"`) — visuellement il apparaissait à côté d'un
+"—" dans la colonne Condo, ce qui aurait fait croire à une confiance sur une
+valeur non affichée. Corrigé en conditionnant l'affichage du point à
+`r.compareBasis` (point sur "St." si le calcul vient de la rue, sur "Condo"
+sinon) ; revérifié en relisant le texte de la page rendue (`/deals`, mode
+Best discounts) plutôt qu'en supposant que le premier jet suffisait.
+`npm run typecheck` et `npm test` passent, aucun test dédié à `deals.ts`
+n'existait avant (aucun ajouté ici, changement d'affichage pur).

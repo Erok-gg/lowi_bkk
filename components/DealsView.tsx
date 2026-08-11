@@ -28,6 +28,26 @@ const fmt = (v: number | null | undefined) =>
 const fmtPrice = (v: number | null | undefined) =>
   v == null ? "—" : v >= 1_000_000 ? `${(v / 1_000_000).toFixed(2)}M` : Math.round(v).toLocaleString("en-US");
 
+const CONFIDENCE_DOT: Record<"low" | "medium" | "high", string> = {
+  low: "text-text-faint",
+  medium: "text-text-muted",
+  high: "text-gold",
+};
+
+/** Petit indicateur de confiance (n comparables derrière la décote condo) —
+ *  pas de nouvelle colonne, juste un point accolé à la valeur existante. */
+function ConfidenceDot({ r }: { r: DealRow }) {
+  if (r.confidence == null || r.comparableCount == null) return null;
+  return (
+    <span
+      className={`ml-1 ${CONFIDENCE_DOT[r.confidence]}`}
+      title={`${r.comparableCount} comparable listing${r.comparableCount > 1 ? "s" : ""} (${r.confidence} confidence)`}
+    >
+      ●
+    </span>
+  );
+}
+
 /** Le filtre prix se saisit en millions de THB (ex: "6.98" ou "6,98M" → 6 980 000). */
 const parsePriceM = (v: string): number | null => {
   const cleaned = v.trim().replace(",", ".").replace(/m$/i, "");
@@ -81,9 +101,11 @@ function DealsTable({ rows, mode }: { rows: DealRow[]; mode: Mode }) {
               <>
                 <td className={`px-1.5 py-1 text-right font-medium ${(r.streetDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
                   {r.streetDiscountPct != null ? `${r.streetDiscountPct}%` : "—"}
+                  {r.compareBasis === "street" && <ConfidenceDot r={r} />}
                 </td>
                 <td className={`px-1.5 py-1 text-right font-medium ${(r.condoDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
                   {r.condoDiscountPct != null ? `${r.condoDiscountPct}%` : "—"}
+                  {r.compareBasis === "condo" && <ConfidenceDot r={r} />}
                 </td>
                 <td className={`px-1.5 py-1 text-right ${(r.temporalDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
                   {r.temporalDiscountPct ? `−${r.temporalDiscountPct}%` : "—"}
@@ -273,6 +295,11 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
               <li><span className="text-gold">Condo discount</span> = discount vs. the building baseline only (— if fewer than 3 building peers)</li>
               <li><span className="text-gold">Δ since listed</span> = (first recorded price − current price) ÷ first price × 100 <span className="text-text-faint">(from price history; mostly 0 until prices move over successive scrapes)</span></li>
               <li className="text-text-faint">Ranking uses the condo discount when available, the street discount otherwise.</li>
+              <li>
+                <span className="text-gold">●</span> confidence dot next to the condo discount = comparable
+                count backing the ranked discount: <span className="text-text-faint">faint</span> under 5,{" "}
+                <span className="text-text-muted">grey</span> 5–9, <span className="text-gold">gold</span> 10+.
+              </li>
             </ul>
           ) : (
             <ul className="list-inside list-disc space-y-0.5">

@@ -68,6 +68,19 @@ export interface DealRow {
   temporalDiscountPct: number | null; // % de baisse depuis le 1er relevé
   estYieldPct: number | null; // rendement estimé (loyer médian comparable)
   yieldBasis: CompareBasis;
+  comparableCount: number | null; // n pairs derrière marketDiscountPct/compareBasis
+  confidence: Confidence | null;
+}
+
+export type Confidence = "low" | "medium" | "high";
+
+/** Paliers sur `n` comparables, réutilisant les constantes déjà en place
+ *  (pas de nouveau seuil deviné) : sous MIN_COMPARABLES pas de valeur du tout,
+ *  sous BASELINE_N la fenêtre de `medianAvg` n'est pas encore pleine. */
+export function confidenceOf(n: number): Confidence {
+  if (n < 5) return "low";
+  if (n < BASELINE_N) return "medium";
+  return "high";
 }
 
 interface Entry { id: string; pricePerSqm: number }
@@ -96,10 +109,11 @@ function baselineForGroup(
   selfId: string,
   key: string | null,
   byKey: Map<string, Entry[]>
-): number | null {
+): { value: number; n: number } | null {
   const group = (key ? byKey.get(key) : undefined)?.filter((e) => e.id !== selfId) ?? [];
   if (group.length < MIN_COMPARABLES) return null;
-  return medianAvg(group.map((e) => e.pricePerSqm), BASELINE_N);
+  const value = medianAvg(group.map((e) => e.pricePerSqm), BASELINE_N);
+  return value == null ? null : { value, n: group.length };
 }
 
 /** Baseline pour un bien donné : condo d'abord, rue en repli — sert au
@@ -110,11 +124,11 @@ function baselineFor(
   streetKey: string | null,
   byCondo: Map<string, Entry[]>,
   byStreet: Map<string, Entry[]>
-): { value: number; basis: CompareBasis } | null {
+): { value: number; basis: CompareBasis; n: number } | null {
   const condoVal = baselineForGroup(selfId, condoKey, byCondo);
-  if (condoVal != null) return { value: condoVal, basis: "condo" };
+  if (condoVal != null) return { value: condoVal.value, basis: "condo", n: condoVal.n };
   const streetVal = baselineForGroup(selfId, streetKey, byStreet);
-  if (streetVal != null) return { value: streetVal, basis: "street" };
+  if (streetVal != null) return { value: streetVal.value, basis: "street", n: streetVal.n };
   return null;
 }
 
@@ -135,8 +149,8 @@ export function enrichSaleDeals(
     const rBase = baselineFor(l.id, condoKey, streetKey, rentGroups.byCondo, rentGroups.byStreet);
     const condoSaleBase = baselineForGroup(l.id, condoKey, saleGroups.byCondo);
     const streetSaleBase = baselineForGroup(l.id, streetKey, saleGroups.byStreet);
-    const pct = (base: number | null) =>
-      base ? Math.round(((base - l.pricePerSqm!) / base) * 1000) / 10 : null;
+    const pct = (base: { value: number } | null) =>
+      base ? Math.round(((base.value - l.pricePerSqm!) / base.value) * 1000) / 10 : null;
     const orig = originalPrices.get(l.id);
     rows.push({
       id: l.id,
@@ -161,6 +175,8 @@ export function enrichSaleDeals(
       estYieldPct:
         rBase ? Math.round(((rBase.value * 12) / l.pricePerSqm) * 1000) / 10 : null,
       yieldBasis: rBase?.basis ?? null,
+      comparableCount: sBase?.n ?? null,
+      confidence: sBase ? confidenceOf(sBase.n) : null,
     });
   }
   return rows;
