@@ -41,25 +41,25 @@ type Mode = "discounts" | "yields";
 /** Tableau des annonces — partagé entre la vue plate (top 20) et les groupes par quartier. */
 function DealsTable({ rows, mode }: { rows: DealRow[]; mode: Mode }) {
   return (
-    <table className="w-full border-collapse text-sm">
+    <table className="w-full border-collapse text-xs">
       <thead className="sticky top-0 bg-anthracite-deep">
         <tr className="border-b border-violet-soft text-left text-text-muted">
-          <th className="px-3 py-2 font-medium">#</th>
-          <th className="px-3 py-2 font-medium">Listing</th>
-          <th className="px-3 py-2 font-medium">District</th>
-          <th className="px-3 py-2 text-right font-medium">Price</th>
-          <th className="px-3 py-2 text-right font-medium">Price/m²</th>
-          <th className="px-3 py-2 text-right font-medium">Area</th>
+          <th className="px-1.5 py-1.5 font-medium">#</th>
+          <th className="px-1.5 py-1.5 font-medium">Listing</th>
+          <th className="px-1.5 py-1.5 font-medium">District</th>
+          <th className="px-1.5 py-1.5 text-right font-medium">Price</th>
+          <th className="px-1.5 py-1.5 text-right font-medium">Price/m²</th>
+          <th className="px-1.5 py-1.5 text-right font-medium">Area</th>
           {mode === "discounts" ? (
             <>
-              <th className="px-3 py-2 text-right font-medium">St. discount</th>
-              <th className="px-3 py-2 text-right font-medium">Condo discount</th>
-              <th className="px-3 py-2 text-right font-medium">Δ since listed</th>
+              <th className="px-1.5 py-1.5 text-right font-medium">St.</th>
+              <th className="px-1.5 py-1.5 text-right font-medium">Condo</th>
+              <th className="px-1.5 py-1.5 text-right font-medium">Δ</th>
             </>
           ) : (
             <>
-              <th className="px-3 py-2 text-right font-medium">Est. yield</th>
-              <th className="px-3 py-2 font-medium">Basis</th>
+              <th className="px-1.5 py-1.5 text-right font-medium">Yield</th>
+              <th className="px-1.5 py-1.5 font-medium">Basis</th>
             </>
           )}
         </tr>
@@ -67,41 +67,41 @@ function DealsTable({ rows, mode }: { rows: DealRow[]; mode: Mode }) {
       <tbody>
         {rows.map((r, i) => (
           <tr key={r.id} className="border-b border-violet-soft/40 hover:bg-surface/40">
-            <td className="px-3 py-2 text-text-faint">{i + 1}</td>
-            <td className="px-3 py-2">
-              <a href={r.sourceUrl} target="_blank" rel="noreferrer" className="text-text hover:text-gold">
+            <td className="px-1.5 py-1 text-text-faint">{i + 1}</td>
+            <td className="max-w-[160px] truncate px-1.5 py-1">
+              <a href={r.sourceUrl} target="_blank" rel="noreferrer" className="text-text hover:text-gold" title={r.name}>
                 {r.name}
               </a>
             </td>
-            <td className="px-3 py-2 text-text-muted">{r.khet?.replace(" District", "") || "—"}</td>
-            <td className="px-3 py-2 text-right">{fmtPrice(r.price)}</td>
-            <td className="px-3 py-2 text-right text-text-muted">{fmt(r.pricePerSqm)}</td>
-            <td className="px-3 py-2 text-right text-text-muted">{r.areaSqm ? `${fmt(r.areaSqm)} m²` : "—"}</td>
+            <td className="px-1.5 py-1 text-text-muted">{r.khet?.replace(" District", "") || "—"}</td>
+            <td className="px-1.5 py-1 text-right">{fmtPrice(r.price)}</td>
+            <td className="px-1.5 py-1 text-right text-text-muted">{fmt(r.pricePerSqm)}</td>
+            <td className="px-1.5 py-1 text-right text-text-muted">{r.areaSqm ? `${fmt(r.areaSqm)} m²` : "—"}</td>
             {mode === "discounts" ? (
               <>
-                <td className={`px-3 py-2 text-right font-medium ${(r.streetDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
-                  {r.streetDiscountPct != null ? `${r.streetDiscountPct} %` : "—"}
+                <td className={`px-1.5 py-1 text-right font-medium ${(r.streetDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
+                  {r.streetDiscountPct != null ? `${r.streetDiscountPct}%` : "—"}
                 </td>
-                <td className={`px-3 py-2 text-right font-medium ${(r.condoDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
-                  {r.condoDiscountPct != null ? `${r.condoDiscountPct} %` : "—"}
+                <td className={`px-1.5 py-1 text-right font-medium ${(r.condoDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
+                  {r.condoDiscountPct != null ? `${r.condoDiscountPct}%` : "—"}
                 </td>
-                <td className={`px-3 py-2 text-right ${(r.temporalDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
-                  {r.temporalDiscountPct ? `−${r.temporalDiscountPct} %` : "—"}
+                <td className={`px-1.5 py-1 text-right ${(r.temporalDiscountPct ?? 0) > 0 ? "text-gold" : "text-text-faint"}`}>
+                  {r.temporalDiscountPct ? `−${r.temporalDiscountPct}%` : "—"}
                 </td>
               </>
             ) : (
               <>
-                <td className="px-3 py-2 text-right font-medium text-gold">
-                  {r.estYieldPct != null ? `${r.estYieldPct} %` : "—"}
+                <td className="px-1.5 py-1 text-right font-medium text-gold">
+                  {r.estYieldPct != null ? `${r.estYieldPct}%` : "—"}
                 </td>
-                <td className="px-3 py-2 text-text-faint">{r.yieldBasis ?? "—"}</td>
+                <td className="px-1.5 py-1 text-text-faint">{r.yieldBasis ?? "—"}</td>
               </>
             )}
           </tr>
         ))}
         {rows.length === 0 && (
           <tr>
-            <td colSpan={mode === "discounts" ? 9 : 8} className="px-3 py-10 text-center text-text-faint">
+            <td colSpan={mode === "discounts" ? 9 : 8} className="px-1.5 py-10 text-center text-text-faint">
               Not enough comparable listings for this category.
             </td>
           </tr>
@@ -311,7 +311,7 @@ export default function DealsView({ rows }: { rows: DealRow[] }) {
         </div>
 
         {/* Minimap : pins des biens affichés */}
-        <div className="hidden w-2/5 shrink-0 border-l border-violet-soft md:block">
+        <div className="hidden w-1/2 shrink-0 border-l border-violet-soft md:block">
           <DealsMiniMap points={points} />
         </div>
       </div>
