@@ -1752,3 +1752,123 @@ l'échantillon seul.
   ni `watch-health` n'ont tourné dans le cycle du jour.
 - **Le réveil est en retard de ~2 h** — les deux tâches démarrent vers 03:10 pour
   01:00 et 02:00 prévus. Cause non élucidée.
+
+## 2026-08-20 — Une porte dérobée par-dessus le RLS : les vues étaient SECURITY DEFINER
+
+Les alertes de sécurité Supabase remontaient 30 lignes. Une seule était une
+vraie faille — et elle était exploitable. Le reste était soit le comportement
+voulu, soit de l'hygiène.
+
+### Le mécanisme, mesuré et non déduit du linter
+
+Les 15 vues de `public` avaient `pg_class.reloptions = NULL` : `security_invoker`
+n'avait jamais été posé, donc comportement **SECURITY DEFINER** par défaut. Elles
+appartiennent toutes à `postgres`, et `pg_roles` donne `postgres.rolbypassrls =
+true`. Conséquence : une requête `anon` sur une vue s'exécutait avec les droits
+de `postgres` et **ignorait entièrement le RLS deny-all** des tables. Les tables
+faisaient leur travail ; les vues ouvraient une porte au-dessus.
+
+Trois de ces vues sont en plus *auto-updatable* (simple `SELECT` sur une table
+unique, `information_schema.views.is_updatable = YES`) et `anon` détenait
+`INSERT/UPDATE/DELETE` dessus : `listings_sane`→`listings`,
+`condos_age`→`condos`, `social_leads_opportunites`→`social_leads`.
+
+**Preuve d'abord, correctif ensuite.** Via l'API REST avec la clé anon :
+`GET /rest/v1/listings` renvoyait `[]` (RLS actif) pendant que
+`GET /rest/v1/listings_sane` renvoyait les annonces. Puis, en SQL, dans une
+transaction annulée et avec une écriture **no-op** (`title = title`, pour
+qu'un rollback raté ne change rien) :
+
+```
+set local role anon;
+update listings_sane set title=title where id='fazwaz:sale:5995772';  -- 1 ligne
+update listings      set title=title where id='fazwaz:sale:5995772';  -- 0 ligne
+```
+
+Même rôle, même ligne, même transaction : la vue laissait passer l'écriture, la
+table la bloquait. Après correctif, la même requête échoue en
+`42501 permission denied for view listings_sane`.
+
+**Un test que j'avais mal conçu, corrigé en le relisant** : la première version
+prenait l'id via `(select id from listings limit 1)` — sous-requête exécutée en
+`anon`, donc bloquée par le RLS, donc `id = NULL`, donc 0 ligne partout et
+« faille absente ». Le garde-fou testait le garde-fou. Refait avec un id
+littéral. Deuxième sonde trompeuse : un `PATCH` REST sur un id inexistant
+renvoie `204` aussi bien quand l'écriture est autorisée que quand le RLS filtre
+à 0 ligne — il ne distingue rien, c'est la transaction SQL qui tranche.
+
+### Ce qui a été fait
+
+`supabase/migrations/2026-08-20_rls_hardening.sql` : `security_invoker = true`
+sur les 15 vues (le correctif de fond — sans lui, révoquer les grants laisserait
+la lecture ouverte) ; `revoke all` pour `anon`/`authenticated` sur tout `public` ;
+**et** `alter default privileges ... revoke all` — sans ce dernier point le trou
+se rouvrait en silence, puisque `pg_default_acl` accordait `anon=arwdDxtm` sur
+toute table créée par `postgres` (c'est ce défaut qui avait posé les grants sur
+les 26 relations existantes). Plus le `revoke execute` sur `rls_auto_enable()` et
+un `search_path` fixe sur `lowi_norm_condo(text)`.
+
+Les 14 `create or replace view` du dépôt reçoivent `with (security_invoker =
+true)` : **`CREATE OR REPLACE VIEW` remet `reloptions` à zéro**, donc rejouer un
+seul de ces fichiers aurait rouvert la faille sans rien signaler.
+
+Fail-safe : `2026-08-20_rollback_rls_hardening.sql`, **généré depuis le
+catalogue live avant d'appliquer** (reloptions, `role_table_grants`,
+`pg_default_acl`, `proacl`), pas reconstruit de mémoire.
+
+### Ce qui n'a PAS été fait, et pourquoi
+
+- **Aucune policy RLS créée.** Les 11 alertes `rls_enabled_no_policy` (INFO)
+  subsistent après coup et c'est voulu : le deny-all est la protection, l'app et
+  le pipeline passent par la connexion Postgres directe en `postgres`
+  (BYPASSRLS), jamais par PostgREST. Ajouter une policy rouvrirait l'accès.
+- **Bucket Storage `listings` laissé public** (38 446 objets, 0 policy) : lecture
+  publique des photos assumée, les envois passent par `SUPABASE_SERVICE_KEY`.
+- **Dérive fichiers ↔ serveur constatée, non résolue** : 4 vues vivent sur le
+  serveur sans aucun fichier de migration (`rent_stats`, `yield_by_khet`,
+  `sold_and_rented`, `listing_matches`) et `details_couverture` est définie dans
+  `details_descriptif.sql` mais **absente du serveur**. La migration les traite
+  quand même (elle vise les vues par leur nom réel), mais leur définition n'est
+  reproductible depuis aucun fichier. Laissé à l'arbitrage.
+- **Portée réelle de l'exposition, non tranchée** : la faille exigeait de
+  connaître la clé anon, qui n'est utilisée nulle part dans le code (0 occurrence
+  de `supabase-js` ou `/rest/v1` hors Storage), n'est pas déployée sur Vercel et
+  n'a jamais été commitée (seul `.env.example` vide est dans l'historique git).
+  Probabilité d'exploitation donc faible — mais faire reposer la protection des
+  données sur le secret d'une clé *publishable* n'est pas une protection.
+- **`opportunites` dépasse le statement timeout** en lecture directe (erreur
+  `57014` rencontrée pendant les tests). Constaté en passant, pas creusé.
+
+### L'archive locale n'était pas complète — le fail-safe supposé ne l'était pas
+
+Vérification demandée avant d'agir, et elle a payé. `SYNC_TABLES`
+(`ops/sync_supabase_local.py`) était une **liste figée de 7 tables** : l'«
+introspection qui résiste aux évolutions de schéma » annoncée dans CLAUDE.md
+n'existait qu'au niveau des **colonnes**. Trois tables n'avaient donc **jamais**
+été archivées — `condos` (4 514), `cohort_snapshots` (578 683),
+`posted_at_history` (23 604) — soit ~607 000 lignes hors de l'archive censée
+autoriser la purge du serveur.
+
+Corrigé : les tables, les colonnes **et les clés primaires** sont désormais lues
+au catalogue à chaque run. Deuxième défaut trouvé au passage : le code supposait
+`id` comme clé. `condos` a pour PK `name` — elle aurait reçu un `UNIQUE INDEX`
+sur ses **19 colonnes** avec `INSERT OR IGNORE`, donc une ligne de plus à chaque
+changement d'agrégat (`n_listings`, `n_sale`… bougent à chaque scan) au lieu d'un
+upsert. Troisième : le garde-fou anti-purge ne contrôlait que `listings` ; il
+porte maintenant sur toutes les tables.
+
+Sync relancée **sans `--prune`** : 11/11 tables, chacune ≥ serveur, archive
+588 → 742 Mo.
+
+### Vérifications
+
+`npm run typecheck` propre, `npm test` 6/6. Les 3 pages chargent en HTTP 200
+avec leurs données (`/for-sale` 11,2 Mo, `/to-rent` 9,8 Mo, `/rendements`
+8,8 Mo), 0 `permission denied`, 0 erreur serveur. En `postgres`, les vues se
+lisent toujours (`listings_sane` 62 363, `cohort_tension` 17 959). Le linter ne
+renvoie plus que les 11 INFO attendues : les 15 ERROR `security_definer_view`,
+les 2 WARN `rls_auto_enable` et le WARN `search_path` ont disparu.
+
+**Non vérifié** : le comportement en production sur Vercel (les tests portent sur
+le serveur de dev local, qui attaque la même base Supabase — le chemin de données
+est identique, l'hébergement non).

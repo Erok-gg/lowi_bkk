@@ -23,7 +23,7 @@
 --   loyer  :     3 000 ..    500 000 THB
 --   surface:        15 ..        500 m²
 
-create or replace view listings_sane as
+create or replace view listings_sane with (security_invoker = true) as
 select *
 from listings
 where price is not null
@@ -48,7 +48,7 @@ comment on view listings_sane is
 create index if not exists idx_listings_street
   on listings (street, deal_type, status) where price_per_sqm > 0;
 
-create or replace view listing_benchmarks as
+create or replace view listing_benchmarks with (security_invoker = true) as
 select
   l.id, l.source_url, l.condo_name, l.khet, l.street, l.deal_type,
   l.bedrooms, l.area_sqm, l.price, l.price_per_sqm, l.quota, l.year_built,
@@ -107,7 +107,7 @@ comment on view listing_benchmarks is
   'immeuble > rue), sur le périmètre assaini `listings_sane`. Le niveau khet est '
   'volontairement absent : à 52 % de dispersion aucun écart n''y est interprétable.';
 
-create or replace view opportunites as
+create or replace view opportunites with (security_invoker = true) as
 select
   id, source_url, condo_name, khet, street, deal_type, bedrooms, area_sqm,
   price, price_per_sqm, quota, year_built,

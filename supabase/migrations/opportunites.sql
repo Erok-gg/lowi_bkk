@@ -28,7 +28,7 @@
 create index if not exists idx_listings_bench
   on listings (condo_name, deal_type, status) where price_per_sqm > 0;
 
-create or replace view listing_benchmarks as
+create or replace view listing_benchmarks with (security_invoker = true) as
 select
   l.id, l.source_url, l.condo_name, l.khet, l.street, l.deal_type,
   l.bedrooms, l.area_sqm, l.price, l.price_per_sqm, l.quota, l.year_built,
@@ -94,7 +94,7 @@ comment on view listing_benchmarks is
 -- Filtre : écart au-delà du seuil du niveau, ET sous le premier quartile de son
 -- propre ensemble de comparaison (une décote qui reste dans la fourchette
 -- normale n'est pas une décote).
-create or replace view opportunites as
+create or replace view opportunites with (security_invoker = true) as
 select
   id, source_url, condo_name, khet, street, deal_type, bedrooms, area_sqm,
   price, price_per_sqm, quota, year_built,

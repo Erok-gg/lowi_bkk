@@ -49,7 +49,7 @@ comment on column listings.is_auto_repost is
 -- Vue de diagnostic, volontairement PAS branchée sur les statistiques : tant que
 -- `agent_id` n'est pas rempli (au prochain scrape), elle est vide. C'est le
 -- comportement voulu — mieux vaut ne rien fusionner que fusionner à tort.
-create or replace view doublons_agent as
+create or replace view doublons_agent with (security_invoker = true) as
 select
   agent_id, condo_name, deal_type, bedrooms, area_sqm, price,
   count(*)                        as n_annonces,

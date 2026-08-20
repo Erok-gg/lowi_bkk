@@ -59,7 +59,7 @@ comment on table cohort_snapshots is
   'Stock actif par cohorte à chaque scan. Un repost ne modifie pas le stock (une annonce meurt, une autre naît dans la même cohorte) : la variation mesure donc une vraie absorption.';
 
 -- Variation du stock entre les deux derniers relevés d'une cohorte.
-create or replace view cohort_tension as
+create or replace view cohort_tension with (security_invoker = true) as
 with derniers as (
   select unit_key, condo_name, khet, deal_type, bedrooms, area_bucket,
          active_count, median_price, taken_at,

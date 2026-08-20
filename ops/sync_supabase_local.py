@@ -5,7 +5,9 @@ le serveur ne garde que la fenêtre chaude. Une ligne n'est supprimée du serveu
 QUE si sa copie est vérifiée dans l'archive locale.
 
   1. SYNC   : upsert de toutes les tables vers archive/lowi-archive.db
-              (introspection des colonnes → résiste aux évolutions de schéma).
+              (tables ET colonnes ET clés primaires lues au catalogue à chaque
+              run → résiste aux évolutions de schéma, y compris l'ajout d'une
+              table entière).
   2. VERIFY : comptes par table + présence id par id des candidates à la purge.
   3. PRUNE  : (--prune) supprime du serveur les annonces INACTIVES délistées
               depuis > RETENTION_DAYS + leurs images/price_history/amenities.
@@ -30,8 +32,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ARCHIVE = os.path.join(ROOT, "archive", "lowi-archive.db")
 RETENTION_DAYS = 90          # inactives délistées depuis plus de X jours → purgées du serveur
 PRUNE_TABLES_CHILDREN = ["price_history", "listing_images", "listing_amenities"]
-SYNC_TABLES = ["listings", "listing_images", "listing_amenities",
-               "price_history", "scan_runs", "khet_snapshots", "pois"]
 
 for line in open(os.path.join(ROOT, "scraper", ".env"), encoding="utf-8"):
     line = line.strip()
@@ -46,6 +46,22 @@ def log(msg: str) -> None:
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+def pg_tables(conn) -> list[str]:
+    """Toutes les tables de `public`, lues au catalogue à chaque run.
+
+    C'était une liste figée de 7 noms jusqu'au 2026-08-20, alors que la doc
+    annonçait « réplique TOUTES les tables ». Conséquence mesurée ce jour-là :
+    condos (4 514), cohort_snapshots (578 683) et posted_at_history (23 479)
+    n'avaient JAMAIS été archivées — 606 676 lignes hors de l'archive censée
+    servir de référence historique avant purge.
+    """
+    rows = conn.execute(
+        "SELECT table_name FROM information_schema.tables "
+        "WHERE table_schema='public' AND table_type='BASE TABLE' "
+        "ORDER BY table_name").fetchall()
+    return [r[0] for r in rows]
+
+
 def pg_columns(conn, table: str) -> list[str]:
     rows = conn.execute(
         "SELECT column_name FROM information_schema.columns "
@@ -54,11 +70,33 @@ def pg_columns(conn, table: str) -> list[str]:
     return [r[0] for r in rows]
 
 
-def ensure_sqlite_table(db: sqlite3.Connection, table: str, cols: list[str]) -> None:
+def pg_primary_key(conn, table: str) -> list[str]:
+    """Colonnes de la PK réelle, dans l'ordre — au lieu de supposer « id ».
+
+    `condos` a pour PK `name` : la supposition lui posait un UNIQUE INDEX sur
+    ses 19 colonnes avec INSERT OR IGNORE, donc une ligne de PLUS à chaque
+    changement d'agrégat (n_listings, n_sale… bougent à chaque scan) au lieu
+    d'un upsert sur le nom de l'immeuble.
+    """
+    rows = conn.execute(
+        "SELECT a.attname FROM pg_index i "
+        "JOIN pg_class c ON c.oid = i.indrelid "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "JOIN unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) ON true "
+        "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum "
+        "WHERE n.nspname='public' AND c.relname=%s AND i.indisprimary "
+        "ORDER BY k.ord", (table,)).fetchall()
+    return [r[0] for r in rows]
+
+
+def ensure_sqlite_table(db: sqlite3.Connection, table: str, cols: list[str],
+                        pk: list[str]) -> None:
     qcols = ", ".join(f'"{c}"' for c in cols)
-    if "id" in cols:
-        db.execute(f'CREATE TABLE IF NOT EXISTS "{table}" ({qcols}, PRIMARY KEY ("id"))')
+    if pk:
+        qpk = ", ".join(f'"{c}"' for c in pk)
+        db.execute(f'CREATE TABLE IF NOT EXISTS "{table}" ({qcols}, PRIMARY KEY ({qpk}))')
     else:
+        # sans PK côté serveur, le dédoublonnage ne peut porter que sur la ligne entière
         db.execute(f'CREATE TABLE IF NOT EXISTS "{table}" ({qcols})')
         db.execute(f'CREATE UNIQUE INDEX IF NOT EXISTS "ux_{table}_all" ON "{table}" ({qcols})')
     # colonnes ajoutées côté serveur depuis la dernière sync → on les ajoute en local
@@ -81,17 +119,18 @@ def adapt(v):
 def sync(pg, db) -> dict[str, tuple[int, int]]:
     """Upsert toutes les tables. Retourne {table: (rows_serveur, rows_local)}."""
     stats = {}
-    for table in SYNC_TABLES:
+    for table in pg_tables(pg):
         cols = pg_columns(pg, table)
         if not cols:
             log(f"  {table}: absente côté serveur, ignorée")
             continue
-        ensure_sqlite_table(db, table, cols)
+        pk = pg_primary_key(pg, table)
+        ensure_sqlite_table(db, table, cols, pk)
         qcols = ", ".join(f'"{c}"' for c in cols)
         cur = pg.execute(f'SELECT {qcols} FROM "{table}"')
         n = 0
         ph = ", ".join("?" for _ in cols)
-        verb = "INSERT OR REPLACE" if "id" in cols else "INSERT OR IGNORE"
+        verb = "INSERT OR REPLACE" if pk else "INSERT OR IGNORE"
         while True:
             batch = cur.fetchmany(5000)
             if not batch:
@@ -149,10 +188,15 @@ def main() -> None:
     db = sqlite3.connect(ARCHIVE)
     with psycopg.connect(os.environ["SUPABASE_DB_URL"], connect_timeout=30) as pg:
         stats = sync(pg, db)
-        # sanity minimal : la table maîtresse doit avoir au moins autant de lignes en local
-        srv, loc = stats.get("listings", (0, 0))
-        if loc < srv:
-            log(f"⛔ archive listings ({loc}) < serveur ({srv}) — purge interdite")
+        # Le garde-fou ne portait que sur `listings` : une table mal répliquée
+        # ailleurs laissait la purge s'exécuter. Il porte maintenant sur TOUTES
+        # les tables — l'archive doit être au moins aussi fournie que le serveur
+        # partout, puisque c'est elle qui autorise à supprimer là-bas.
+        deficits = [f"{t} ({loc} < {srv})" for t, (srv, loc) in sorted(stats.items())
+                    if loc < srv]
+        if deficits:
+            log("⛔ archive en retard sur le serveur — purge interdite : "
+                + ", ".join(deficits))
         elif args.prune or args.dry_run:
             prune(pg, db, args.dry_run)
     size_mb = os.path.getsize(ARCHIVE) / 1e6

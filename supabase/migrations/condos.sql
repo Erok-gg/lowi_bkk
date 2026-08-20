@@ -66,7 +66,7 @@ on conflict (name) do update set
 
 -- Âge du bâtiment au moment de la lecture : une vue plutôt qu'une colonne,
 -- pour qu'il ne se périme jamais.
-create or replace view condos_age as
+create or replace view condos_age with (security_invoker = true) as
 select
   name, khet, year_built,
   case when year_built is not null

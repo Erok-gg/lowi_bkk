@@ -87,7 +87,7 @@ create table if not exists pois (
 );
 
 -- ─────────────────────── vues agrégées (stats) ──────────────────────
-create or replace view khet_stats as
+create or replace view khet_stats with (security_invoker = true) as
 select
   khet,
   count(*) filter (where status = 'active')                              as active_count,
@@ -98,7 +98,7 @@ from listings
 where khet is not null
 group by khet;
 
-create or replace view street_stats as
+create or replace view street_stats with (security_invoker = true) as
 select
   street,
   count(*) filter (where status = 'active')                  as active_count,
@@ -108,7 +108,7 @@ where street is not null
 group by street;
 
 -- Doublons inter-plateformes (mêmes biens sur 2 sources) — paires candidates.
-create or replace view cross_source_duplicates as
+create or replace view cross_source_duplicates with (security_invoker = true) as
 select
   a.id as id_a, a.source as source_a, a.condo_name as name_a,
   b.id as id_b, b.source as source_b, b.condo_name as name_b,
