@@ -34,14 +34,20 @@ ARCHIVE = os.path.join(ROOT, "archive", "lowi-archive.db")
 SYNC_SCRIPT = os.path.join(ROOT, "ops", "sync_supabase_local.py")
 PY = os.path.join(ROOT, "scraper", ".venv", "Scripts", "python.exe")
 
-TABLES_ATTENDUES = ["listings", "listing_images", "listing_amenities",
-                   "price_history", "scan_runs", "khet_snapshots", "pois"]
+# Liste de SECOURS uniquement : si Supabase est injoignable on retombe dessus.
+# En marche normale les tables attendues sont celles que le SERVEUR expose —
+# une liste figée ici avait le défaut qu'elle prétendait corriger : elle a
+# déclaré « aucune table manquante » pendant des semaines alors que condos,
+# cohort_snapshots et posted_at_history n'étaient pas archivées du tout
+# (mesuré le 2026-08-20, même angle mort que SYNC_TABLES).
+TABLES_SECOURS = ["listings", "listing_images", "listing_amenities",
+                  "price_history", "scan_runs", "khet_snapshots", "pois"]
 RATIO_MIN = 0.90        # archive.listings / supabase.listings en dessous -> rattrapage
 CADENCE_JOURS = 4        # doit rester aligné sur backup-apres-cycle.every_days (agents.json)
 MARGE_JOURS = 1          # tolérance avant de considérer un cycle manqué
 
 
-def _sqlite_ok() -> tuple[bool, dict]:
+def _sqlite_ok(tables_attendues: list[str]) -> tuple[bool, dict]:
     """Intégrité + comptes locaux. Ne lève jamais : une exception EST un
     échec d'intégrité, pas un bug à remonter."""
     import sqlite3
@@ -54,7 +60,7 @@ def _sqlite_ok() -> tuple[bool, dict]:
         detail["integrity_check"] = conn.execute("PRAGMA integrity_check").fetchone()[0]
         tables_presentes = {r[0] for r in conn.execute(
             "select name from sqlite_master where type='table'")}
-        detail["tables_manquantes"] = [t for t in TABLES_ATTENDUES
+        detail["tables_manquantes"] = [t for t in tables_attendues
                                        if t not in tables_presentes]
         detail["n_listings"] = (conn.execute("select count(*) from listings").fetchone()[0]
                                 if "listings" in tables_presentes else 0)
@@ -67,6 +73,31 @@ def _sqlite_ok() -> tuple[bool, dict]:
          and not detail["tables_manquantes"]
          and detail["n_listings"] > 0)
     return ok, detail
+
+
+def _tables_supabase() -> list[str] | None:
+    """Tables réellement exposées par le serveur. None si injoignable."""
+    try:
+        _charger_env()
+        import psycopg
+        dsn = os.environ.get("SUPABASE_DB_URL")
+        if not dsn:
+            return None
+        with psycopg.connect(dsn, connect_timeout=10, autocommit=True) as c:
+            return [r[0] for r in c.execute(
+                "select table_name from information_schema.tables "
+                "where table_schema='public' and table_type='BASE TABLE'")]
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
+def _charger_env() -> None:
+    for line in open(os.path.join(ROOT, "scraper", ".env"), encoding="utf-8"):
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+    sys.path.insert(0, os.path.join(ROOT, "scraper"))
 
 
 def _n_listings_supabase() -> int | None:
@@ -113,7 +144,9 @@ def _dernier_backup_apres_cycle() -> dict:
 
 
 def verifier() -> dict:
-    sqlite_ok, detail_sqlite = _sqlite_ok()
+    tables_serveur = _tables_supabase()
+    sqlite_ok, detail_sqlite = _sqlite_ok(tables_serveur or TABLES_SECOURS)
+    detail_sqlite["tables_attendues_source"] = "serveur" if tables_serveur else "secours"
     n_live = _n_listings_supabase()
     n_archive = detail_sqlite.get("n_listings", 0)
     ratio = (n_archive / n_live) if (n_live and n_live > 0) else None

@@ -1872,3 +1872,100 @@ les 2 WARN `rls_auto_enable` et le WARN `search_path` ont disparu.
 **Non vérifié** : le comportement en production sur Vercel (les tests portent sur
 le serveur de dev local, qui attaque la même base Supabase — le chemin de données
 est identique, l'hébergement non).
+
+## 2026-08-20 (suite) — Sync local↔serveur vérifiée, et le free tier est dépassé
+
+Vérification demandée après le correctif RLS. Le bon test n'est pas « même
+nombre de lignes » : le local a **légitimement plus** (archive historique
+complète) tandis que le serveur n'est qu'une fenêtre chaude. Le seul test qui
+compte est : *aucune ligne du serveur ne manque en local*. Fait clé par clé, sur
+les 11 tables et ~1,3 M de lignes.
+
+### Résultat : 7 584 lignes « manquantes » — et ce n'est pas un trou
+
+| table | serveur | local | écart | manquantes |
+|---|---|---|---|---|
+| cohort_snapshots | 578 683 | 578 683 | 0 | 0 |
+| condos | 4 514 | 4 514 | 0 | 0 |
+| listing_amenities | 613 962 | 608 027 | −5 935 | 5 943 |
+| listing_images | 44 118 | 70 946 | **+26 828** | 518 |
+| listings | 64 080 | 63 632 | −448 | 450 |
+| posted_at_history | 23 826 | 23 604 | −222 | 222 |
+| price_history | 65 333 | 64 882 | −451 | 451 |
+| social_leads | 0 | 179 | **+179** | 0 |
+
+**Cause mesurée, pas supposée** : un scrap tournait *pendant* la vérification.
+`extract-fazwaz` et `extract-ddproperty` étaient `running` depuis 01:57 UTC, la
+dernière annonce datait de 5 secondes avant la requête, et le total est passé de
+64 080 à 64 087 **entre deux requêtes consécutives**. 471 annonces ont été créées
+après l'heure de la sync (04:07 UTC) — soit exactement les ~450 « manquantes ».
+L'archive est un instantané, le serveur continue d'écrire. Rien à corriger : la
+sync doit simplement se relancer *après* la fin du cycle, et le garde-fou élargi
+ce matin refuse déjà la purge tant qu'une table est en retard.
+
+Les écarts positifs sont l'archive faisant son travail : `listing_images`
++26 828 et `social_leads` +179 sont des lignes purgées ou vidées côté serveur et
+conservées en local.
+
+**Deuxième angle mort du même genre, corrigé** : `ops/verifie-backup.py` avait
+lui aussi une liste figée (`TABLES_ATTENDUES`, les mêmes 7 tables). Il annonçait
+donc « aucune table manquante » pendant que 3 tables n'étaient pas archivées du
+tout — un garde-fou qui ne gardait rien, encore. Il lit désormais la liste au
+serveur (11 tables vérifiées en exécution), la liste figée ne servant plus que
+de repli si Supabase est injoignable.
+
+### Le free tier est à 143 %
+
+Plan **free** (vérifié : `get_organization` → `"plan": "free"`), base à
+**681 Mo pour une limite nominale de 500 Mo**. Répartition :
+
+| poste | taille disque |
+|---|---|
+| `listings` | 380 Mo (dont 55 Mo d'index) |
+| `cohort_snapshots` | 149 Mo (dont 60 Mo d'index) |
+| `listing_amenities` | 63 Mo |
+| `storage.objects` (métadonnées des 38 446 images) | 49 Mo |
+
+Dans `listings`, la matière : `page_text` 173 Mo, `description` 73 Mo,
+`raw_data` seulement 11 Mo. Les lignes mortes ne pèsent que 8 % — l'autovacuum
+fait son travail, ce n'est pas du ballonnement.
+
+**Trois choses mesurées qui contredisent l'intuition :**
+
+1. **La purge ne libérerait rien.** 19 951 annonces inactives, mais la plus
+   ancienne `delisted_at` remonte au 2026-06-24, soit 57 jours : avec
+   `RETENTION_DAYS = 90`, **0 candidate**. Le mécanisme de soulagement
+   automatique n'entrera en action que vers le 2026-09-22. À 45 j il y aurait
+   3 725 candidates, à 30 j 10 491 — mais c'est un arbitrage de rétention, pas
+   une décision technique.
+2. **Purger ne viserait pas le bon poids de toute façon.** `page_text` pèse
+   144 Mo sur les annonces **actives** et seulement 29 Mo sur les inactives : la
+   matière est dans la fenêtre chaude, pas dans ce qu'on peut purger.
+3. **Compresser n'est pas le levier.** `supabase_store.py` déclare `page_text`
+   « compressé » en commentaire mais **n'appelle jamais `compresser()`** — seul
+   `SqliteStore._valeur` le fait. Même famille de défaut que `SYNC_TABLES` : la
+   doc affirme ce que le code ne fait pas. MAIS mesuré avant de conclure :
+   PostgreSQL compresse déjà ce champ tout seul (TOAST), 376 Mo de texte réel
+   n'occupant que 173 Mo sur disque. Un zlib préalable donne **66 % de gain
+   mesuré sur 400 pages réelles** (et non les « ~78 % » annoncés dans
+   `page_text.sql`), soit ~129 Mo — donc **~44 Mo gagnés, pas 90**. Le détour
+   rendrait en plus la colonne illisible sans `decompresser()`. Rapport
+   bénéfice/risque défavorable ; non fait.
+
+**Frayeur écartée en la vérifiant** : le `page_text` de l'archive ne se
+décompresse pas en zlib. J'ai d'abord conclu « archive corrompue » — c'était
+faux. Le contenu est du **texte clair parfaitement lisible** (l'échantillon
+commence par `Supalai Place Sukhumvit 39, Bangkok, 175`), simplement non
+compressé, ce qui est cohérent avec le point 3 : rien ne l'a jamais compressé
+sur le chemin Supabase. 376 Mo dans l'archive contre 173 Mo sur le serveur =
+exactement le ratio TOAST. La matière première est donc bien récupérable.
+
+### Non fait, laissé à l'arbitrage
+
+Le dépassement du free tier appelle une décision de posture, pas un correctif :
+baisser `RETENTION_DAYS`, déporter `page_text`/`description` en archive seule
+(l'archive les détient et ils sont lisibles — vérifié ci-dessus), ou passer au
+plan Pro. Aucune de ces options n'a été appliquée. **Non vérifié non plus** : ce
+que Supabase applique réellement au-dessus du quota — le projet est
+`ACTIVE_HEALTHY` malgré les 143 %, je n'ai pas cherché à savoir si un passage en
+lecture seule est imminent ou si la limite est simplement indicative.
