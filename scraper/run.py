@@ -165,6 +165,21 @@ def main() -> None:
     if storage:
         print(f"→ images : upload Storage (bucket '{storage.bucket}')")
 
+    # Sonde de structure AVANT le scan complet : un marqueur absent (JSON-LD,
+    # __NEXT_DATA__…) est aujourd'hui indiscernable d'une recherche vide dans
+    # le reste du pipeline — watch-health finit par le voir, mais seulement
+    # après 2 runs consécutifs à zéro (jusqu'à 8 j de scans pour rien). Ici,
+    # une seule requête tranche avant de lancer 150 pages pour rien.
+    sonde_ok, sonde_diag = adapter.sonder(fetcher)
+    print(f"→ sonde structure : {'OK' if sonde_ok else 'ÉCHEC'} — {sonde_diag}")
+    if not sonde_ok:
+        # Marqueur repris tel quel par orchestrator.py (run_agent) pour
+        # escalader vers Claude sans attendre watch-health, qui lui reste
+        # à sa place normale, en fin de cycle.
+        print(f"[SONDE-ECHEC] {args.source} : {sonde_diag}")
+        store.close()
+        sys.exit(2)
+
     print(f"▶ Scan {args.source} (max_pages={cfg.get('max_pages')}, limit={args.limit})")
 
     excludes = load_excludes()

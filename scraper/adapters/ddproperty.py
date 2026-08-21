@@ -144,6 +144,26 @@ def _parse_address(full: str) -> dict:
 class DdpropertyAdapter(BaseAdapter):
     source = "ddproperty"
 
+    def sonder(self, fetcher: Fetcher) -> tuple[bool, str]:
+        """DDproperty (Next.js) : tout vient du blob `__NEXT_DATA__`. Vérifié
+        AVANT extraction — le chemin exact du tableau d'annonces a déjà
+        bougé une fois dans la journée (`listings` puis `listingsData.items`,
+        cf. journal technique 2026-08-11), d'où l'identification par
+        contenu (`fullAddress`) plutôt que par chemin figé."""
+        searches = self.config.get("searches") or []
+        if not searches:
+            return False, "config sans 'searches'"
+        base = self.config["base_url"]
+        html = fetcher.get_text(f"{base}{searches[0]['path']}")
+        if not html:
+            return False, "page de liste inaccessible (0 octet ou erreur réseau)"
+        data = _next_data(html)
+        if not data:
+            return False, "__NEXT_DATA__ absent ou illisible (JSON invalide)"
+        if next(_walk_listings(data), None) is None:
+            return False, "__NEXT_DATA__ présent mais aucun nœud avec 'fullAddress' — structure du blob changée"
+        return super().sonder(fetcher)
+
     # ───────────────────────── liste ─────────────────────────
     def list_urls(self, fetcher: Fetcher, limit: int | None = None) -> Iterator[dict]:
         base = self.config["base_url"]

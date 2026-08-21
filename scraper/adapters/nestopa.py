@@ -89,6 +89,37 @@ def _khet_slug_map() -> dict[str, str]:
 class NestopaAdapter(BaseAdapter):
     source = "nestopa"
 
+    def sonder(self, fetcher: Fetcher) -> tuple[bool, str]:
+        """Nestopa : flux ld+json, items de type `Product`. Gelée à 1 page
+        (`max_pages`) depuis le 2026-08-11 (403 ailleurs) — le test porte
+        donc sur la SEULE page réellement scrapée en production."""
+        searches = self.config.get("searches") or []
+        if not searches:
+            return False, "config sans 'searches'"
+        base = self.config["base_url"]
+        url = urljoin(base + "/", searches[0]["path"].lstrip("/"))
+        html = fetcher.get_text(url, referer=base)
+        if not html:
+            return False, "page de liste inaccessible (0 octet, erreur réseau, ou 403)"
+        blocks = LD_RE.findall(html)
+        if not blocks:
+            return False, "aucun bloc ld+json sur la page de liste"
+        prods = []
+        for b in blocks:
+            try:
+                prods += list(_products(json.loads(b)))
+            except json.JSONDecodeError:
+                continue
+        if not prods:
+            return False, "ld+json présent mais aucun item '@type':'Product' — structure du flux changée"
+        # PAS de super().sonder() ici : list_urls() ajoute toujours '?page=1'
+        # (page_param, même à max_pages=1), or leur robots.txt interdit TOUTE
+        # requête '?page=' — y compris page 1. La page bare (sans query) que
+        # cette méthode vient de vérifier EST la seule qui répond ; rappeler
+        # list_urls() ne ferait que retomber sur le même blocage robots et
+        # déclarerait à tort une structure cassée. Le test s'arrête donc ici.
+        return True, f"page 1 (bare, sans '?page=') ok — {len(prods)} item(s) Product"
+
     def __init__(self, config: dict):
         super().__init__(config)
         self._khets = _khet_slug_map()

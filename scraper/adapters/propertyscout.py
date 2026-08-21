@@ -89,6 +89,25 @@ def _district(item: dict) -> str | None:
 class PropertyscoutAdapter(BaseAdapter):
     source = "propertyscout"
 
+    def sonder(self, fetcher: Fetcher) -> tuple[bool, str]:
+        """PropertyScout (Next.js) : liste dans `__NEXT_DATA__` →
+        `props.pageProps.rentals.data`."""
+        searches = self.config.get("searches") or []
+        if not searches:
+            return False, "config sans 'searches'"
+        base = self.config["base_url"]
+        base_path = urljoin(base + "/", searches[0]["path"].lstrip("/")).rstrip("/")
+        html = fetcher.get_text(base_path + "/", referer=base)
+        if not html:
+            return False, "page de liste inaccessible (0 octet ou erreur réseau)"
+        data = _next_data(html)
+        if not data:
+            return False, "__NEXT_DATA__ absent ou illisible (JSON invalide)"
+        pp = (data.get("props") or {}).get("pageProps") or {}
+        if not (pp.get("rentals") or {}).get("data"):
+            return False, "__NEXT_DATA__ présent mais props.pageProps.rentals.data introuvable ou vide"
+        return super().sonder(fetcher)
+
     def list_urls(self, fetcher: Fetcher, limit: int | None = None) -> Iterator[dict]:
         base = self.config["base_url"]
         page_param = self.config.get("page_param", "page")

@@ -79,6 +79,21 @@ def statut_marche(html: str) -> str | None:
 class FazwazAdapter(BaseAdapter):
     source = "fazwaz"
 
+    def sonder(self, fetcher: Fetcher) -> tuple[bool, str]:
+        """FazWaz s'appuie sur un JSON-LD par annonce (ou `@graph` depuis
+        juil. 2026) sur la page de liste — vérifié le marqueur AVANT de
+        tenter une extraction complète."""
+        searches = self.config.get("searches") or []
+        if not searches:
+            return False, "config sans 'searches'"
+        base = self.config["base_url"]
+        html = fetcher.get_text(urljoin(base + "/", searches[0]["path"].lstrip("/")))
+        if not html:
+            return False, "page de liste inaccessible (0 octet ou erreur réseau)"
+        if "application/ld+json" not in html:
+            return False, "JSON-LD absent de la page de liste (attendu : 1 bloc par annonce, ou '@graph' depuis juil. 2026)"
+        return super().sonder(fetcher)
+
     # ───────────────────────── liste ─────────────────────────
     def list_urls(self, fetcher: Fetcher, limit: int | None = None) -> Iterator[dict]:
         base = self.config["base_url"]

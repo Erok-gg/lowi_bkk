@@ -95,6 +95,23 @@ class LivinginsiderAdapter(BaseAdapter):
     source = "livinginsider"
 
     # ───────────────────────── liste ─────────────────────────
+    def sonder(self, fetcher: Fetcher) -> tuple[bool, str]:
+        """LivingInsider : flux ld+json `ItemList` d'URLs nues sur la page
+        de liste — aucun prix/surface en liste (contrairement aux 3 autres
+        sources récentes), donc rien d'autre à vérifier à ce stade."""
+        searches = self.config.get("searches") or []
+        if not searches:
+            return False, "config sans 'searches'"
+        base = self.config["base_url"]
+        path = searches[0]["path"].replace("{page}", "1")
+        html = fetcher.get_text(urljoin(base + "/", path.lstrip("/")), referer=base)
+        if not html:
+            return False, "page de liste inaccessible (0 octet ou erreur réseau)"
+        item_list = _find_type(_ld_blocks(html), "ItemList")
+        if not item_list or not item_list.get("itemListElement"):
+            return False, "ld+json 'ItemList' absent ou vide sur la page de liste"
+        return super().sonder(fetcher)
+
     def list_urls(self, fetcher: Fetcher, limit: int | None = None) -> Iterator[dict]:
         base = self.config["base_url"]
         max_pages = self.config.get("max_pages", 1)
