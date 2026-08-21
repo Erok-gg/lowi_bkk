@@ -51,6 +51,8 @@ pitch-assets/
 
 # système d'agents : état d'exécution local, pas du code
 agents/ledger.db
+agents/ledger.db-wal
+agents/ledger.db-shm
 agents/logs/
 agents/audits/
 agents/state/
@@ -64,3 +66,7 @@ verif_tooltip.ts
 ops/widget/etat.json
 ops/widget/widget.log
 ops/widget/.arret
+
+# marqueur PAR MACHINE : ce poste n'heberge aucun modele local (T1 delegue a Claude)
+agents/t1-absent
+agents/state/organize/lots/

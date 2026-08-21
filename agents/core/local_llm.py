@@ -47,6 +47,7 @@ ces règles sans refaire la mesure — chacune corrige une panne observée.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 import urllib.error
@@ -55,6 +56,29 @@ import urllib.request
 HOST = "http://localhost:11434"
 DEFAULT_MODEL = "qwen3:8b"      # mesuré 92 % ; hermes3 82 %, qwen3:4b 3/10
 MODELS_WITH_THINKING = {"qwen3:8b", "qwen3:4b", "qwen3:14b", "qwen3:32b"}
+
+# ───────────────────── absence délibérée du modèle local ─────────────────────
+# Le 2e poste (24/7) est trop faible pour Ollama. Sans déclaration explicite,
+# cette absence se lit comme une PANNE : `ask_safe` journalise un constat de
+# sévérité HAUTE à chaque appel, soit jusqu'à 6 par cycle (1 overseer +
+# 5 watch-health), tous les jours, indéfiniment. C'est le garde-fou qui crie au
+# loup de la règle 2 — le compteur du widget resterait rouge en permanence sans
+# jamais rien signaler de vrai.
+#
+# Le marqueur est un FICHIER, pas une variable d'environnement : il est propre à
+# la MACHINE (le poste principal garde son Ollama, le 2e non) alors que le dépôt
+# est le même des deux côtés. Il est gitignoré pour cette raison.
+MARQUEUR_ABSENT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "t1-absent")
+
+
+def t1_absent() -> bool:
+    """Vrai si CE POSTE n'héberge délibérément aucun modèle local.
+
+    Dans cet état, `ask_safe` rend None SANS journaliser de panne : les deux
+    appelants purement rédactionnels (overseer, watch-health) retombent sur leur
+    texte brut, et `organize` bascule en dépôt de tickets pour Claude."""
+    return os.path.exists(MARQUEUR_ABSENT)
 
 
 class LLMError(RuntimeError):
@@ -194,6 +218,10 @@ def ask_safe(system: str, user: str, schema: dict[str, str], ledger=None,
     """Variante qui journalise la panne en finding et rend None.
     À utiliser en traitement de lot : une annonce illisible ne doit pas
     interrompre les 15 000 autres."""
+    # Absence DÉCLARÉE : ce n'est pas une panne, donc pas de constat. Voir
+    # MARQUEUR_ABSENT — sinon 6 constats hauts par jour, à perpétuité.
+    if t1_absent():
+        return None
     try:
         return ask(system, user, schema, **kw)
     except LLMError as e:
@@ -213,6 +241,10 @@ def available_models() -> list[str]:
 
 def health() -> tuple[bool, str]:
     """Sonde de démarrage : Ollama répond-il, et le modèle par défaut est-il là ?"""
+    # Un poste sans modèle DÉCLARÉ est sain. Rendre False ici afficherait une
+    # croix permanente au `status`, et une croix permanente ne se lit plus.
+    if t1_absent():
+        return True, "T1 déclaré absent sur ce poste — comparaison déléguée à Claude (tickets)"
     models = available_models()
     if not models:
         return False, "Ollama injoignable sur " + HOST

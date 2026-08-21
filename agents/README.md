@@ -25,6 +25,7 @@ scraper/.venv/Scripts/python.exe agents/orchestrator.py status
 
 | Agent | Famille (deck) | Étage | Cadence |
 |---|---|---|---|
+| `garde-veille` | Supervision | T0 | à chaque cycle (`always_run`) |
 | `extract-fazwaz` `extract-ddproperty` `extract-propertyscout` `extract-nestopa` | Extraction ×4 | T0 | 4 j |
 | `watch-health` | Surveillance | T1→T2 | 1 j |
 | `watch-sources` | Surveillance | T1→T2 | 14 j |
@@ -33,6 +34,19 @@ scraper/.venv/Scripts/python.exe agents/orchestrator.py status
 | `report` | Data reporting | T0→T2 | 4 j |
 | `storage` | Security & storage | T0 | 7 j |
 | `overseer` | Overseeing | T1 | 1 j |
+
+> Le deck en compte 12 ; `verifie-backup`, `backup-apres-cycle` et
+> `garde-veille` s'y sont ajoutés depuis, comme infrastructure (backup,
+> anti-veille) plutôt que comme famille métier du pitch.
+
+**`garde-veille`** (ajouté 2026-08-16) tourne en tout premier, avant même le
+Prelude, et pose la demande d'éveil Windows (`SetThreadExecutionState`) pour
+tout le process orchestrateur — `extract-ddproperty` avait été tué deux
+cycles d'affilée par une mise en veille moderne (`Kernel-Power`, « Idle
+Timeout »), `powercfg /requests` vide au moment du constat. Il distingue
+aussi une interruption par veille (`finding` `coupure_veille`, sévérité
+basse) d'une vraie panne — sans quoi watch-health/overseer ne peuvent pas
+faire la différence. Détail : [agents/skills/garde-veille/SKILL.md](skills/garde-veille/SKILL.md).
 
 Chacun a son dossier `skills/<agent>/SKILL.md` : mission, entrées, procédure,
 **contrat de sortie** (que l'overseer vérifie), bandes normales, règles
@@ -50,6 +64,35 @@ faits ; c'est du code qui décide. Voir plus bas.
 **T2 — Claude, par file de tickets.** Il n'y a ni CLI `claude` ni clé API sur la
 machine : les agents déposent des tickets dans `queue/`, qu'une session Claude
 planifiée draine — elle a l'accès au dépôt et peut vraiment réparer un adaptateur.
+
+### T1 absent : le marqueur `agents/t1-absent` (2026-08-21)
+
+Un poste trop faible pour Ollama pose ce fichier — **par machine**, donc gitignoré,
+le dépôt étant le même des deux côtés. Il déclare une absence **délibérée**, ce qui
+n'est pas la même chose qu'une panne :
+
+| | sans marqueur | avec marqueur |
+|---|---|---|
+| `overseer`, `watch_health` (le modèle **rédige** seulement) | texte du modèle | texte brut, **et plus aucun constat `llm_panne`** |
+| `organize` (seul usage **décisionnel**) | 300 paires au modèle local | lot de **60** déposé en ticket |
+| `orchestrator status` | `✓ qwen3:8b disponible` | `✓ T1 déclaré absent — délégué à Claude` |
+
+Sans cette déclaration, `ask_safe` journalise chaque échec en **sévérité haute** :
+jusqu'à **6 constats par cycle, tous les jours, indéfiniment**. Un garde-fou qui crie
+au loup apprend à ignorer les alertes (règle 2).
+
+**Le contrat de décision est inchangé.** Le ticket demande les **six mêmes faits** et
+`decider()` tranche au retour — déléguer la comparaison ne doit pas devenir déléguer
+la décision (verdict direct : 92 % de justesse mais **0 % d'abstention**).
+
+```bash
+scraper/.venv/Scripts/python.exe -m agents.bots.organize --appliquer agents/state/organize/reponses/<ticket>.json
+```
+
+Deux journaux, à ne jamais confondre : `paires-faites.txt` = **tranchée**,
+`paires-en-ticket.txt` = **soumise, en attente**. Une paire omise d'une réponse n'entre
+pas dans le premier et sera re-soumise ; une paire d'un ticket drainé sans réponse est
+libérée au dépôt suivant. Vérifié par `agents/tests/test_tickets.py`.
 
 ## Ce que la mesure a imposé (2026-07-31)
 
