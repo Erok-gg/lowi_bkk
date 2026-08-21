@@ -45,7 +45,8 @@ def iso_utc(txt: str | None) -> datetime | None:
 
 
 def main() -> None:
-    sortie: dict = {"agents": [], "escalades": 0, "constats_hauts": 0, "erreurs": []}
+    sortie: dict = {"agents": [], "escalades": 0, "problemes": 0,
+                    "problemes_detail": [], "constats_hauts": 0, "erreurs": []}
 
     try:
         registre = json.load(open(REGISTRE, encoding="utf-8"))
@@ -107,7 +108,29 @@ def main() -> None:
         try:
             sortie["escalades"] = conn.execute(
                 "select count(*) c from escalations where status='open'").fetchone()["c"]
+
+            # PROBLÈMES DISTINCTS, pas occurrences. Mesuré le 2026-08-13 : 29
+            # constats de sévérité haute sur 7 jours ne recouvrent que 4 vrais
+            # sujets — `agent_muet` de l'overseer s'était répété 22 fois, une
+            # par cycle. Afficher 29 ferait crier au loup (règle 2 du CLAUDE.md)
+            # et le compteur cesserait d'être lu. On regroupe donc par
+            # (agent, nature).
+            # Le registre borne la requête : le ledger garde des traces
+            # d'agents de test (_test_multi_then) qui ne sont plus au registre
+            # et ne sont donc plus des problèmes à régler.
+            noms = [a["nom"] for a in sortie["agents"]]
             depuis = (maintenant - timedelta(days=7)).isoformat()
+            trous = ",".join("?" * len(noms)) or "''"
+            sortie["problemes"] = conn.execute(
+                "select count(*) c from (select distinct agent, kind from findings"
+                f" where created_at >= ? and severity='high' and agent in ({trous}))",
+                (depuis, *noms)).fetchone()["c"]
+            sortie["problemes_detail"] = [
+                f"{r['agent']} — {r['kind']} (x{r['n']})"
+                for r in conn.execute(
+                    "select agent, kind, count(*) n from findings"
+                    f" where created_at >= ? and severity='high' and agent in ({trous})"
+                    " group by agent, kind order by n desc", (depuis, *noms))]
             sortie["constats_hauts"] = conn.execute(
                 "select count(*) c from findings where created_at >= ? and severity='high'",
                 (depuis,)).fetchone()["c"]
@@ -122,6 +145,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:                                  # noqa: BLE001
-        print(json.dumps({"agents": [], "escalades": 0, "constats_hauts": 0,
+        print(json.dumps({"agents": [], "escalades": 0, "problemes": 0,
+                          "problemes_detail": [], "constats_hauts": 0,
                           "erreurs": [f"{type(e).__name__}: {e}"]}, ensure_ascii=False))
         sys.exit(0)

@@ -1,31 +1,39 @@
 {
   "_lisez_moi": "Configuration du widget de bureau. Le widget relit ce fichier à chaque rafraîchissement : une modification est prise en compte sans le redémarrer. Seul 'position' est réécrit par le widget (quand tu le déplaces).",
-
   "_ancrage": "'arriere_plan' = fenêtre normale maintenue au fond de la pile : derrière toutes les applications, visible dès qu'on montre le bureau, et elle reste cliquable (clic droit = menu, glisser l'entête après 'Déplacer'). 'bureau' = peinte DANS le fond d'écran, derrière les icônes : plus intégré, mais la couche des icônes couvre tout le bureau et avale la souris — le widget n'y est plus cliquable, tout passe par l'icône de la zone de notification.",
   "ancrage": "arriere_plan",
-
   "_position": "En pixels physiques. x négatif = distance au bord DROIT de l'écran (par défaut -30, soit collé à droite).",
-  "position": { "x": -30, "y": 60 },
+  "position": {
+    "x": -30,
+    "y": 60
+  },
   "largeur": 285,
   "rafraichissement_minutes": 10,
   "opacite": 0.96,
-
   "_taille_police": "Taille du texte des lignes. Les intitulés de section et la ligne d'alerte s'en déduisent (−2,5) pour garder leur rapport. Pense à élargir 'largeur' si tu montes beaucoup.",
   "taille_police": 12.5,
-
-  "_taches_windows": "Motifs de noms (jokers * et ? acceptés). Ajoute ici toute tâche que tu veux suivre, LowiBKK ou non.",
+  "_compteurs": "LES SEULES LIGNES AFFICHÉES. Chacune est un compte à rebours. 'source' vaut 'tache' (tâche Windows, ref = son nom exact), 'claude' (routine Claude, ref = son id) ou 'agents' (famille d'agents, ref = la famille — on prend son échéance la plus proche). Si la cible n'existe plus, la ligne affiche 'introuvable' en rouge au lieu de se taire.",
+  "compteurs": [
+    {
+      "libelle": "Scrap Lowi",
+      "source": "agents",
+      "ref": "Extraction"
+    },
+    {
+      "libelle": "Veille Equance",
+      "source": "claude",
+      "ref": "veille-prospection-equance"
+    }
+  ],
+  "_seuil_rouge_heures": "En deçà de ce délai, le compte à rebours passe en rouge.",
+  "seuil_rouge_heures": 24,
+  "_taches_windows": "Motifs de noms (jokers * et ? acceptés) : sert à alimenter les compteurs de source 'tache', et à diagnostiquer via collecte.ps1 -Ecran.",
   "taches_windows": [
     "LowiBKK-*"
   ],
-  "_masquer_taches_desactivees": "true : les tâches désactivées ne prennent pas de ligne. Les trois LowiBKK désactivées (LancementComplet, ScrapNocturne, Superviseur) sont des reliquats remplacés par LowiBKK-Agents — les afficher n'apprend rien. Passe à false si tu veux les voir marquées 'off'.",
   "masquer_taches_desactivees": true,
-
-  "_prefixe_a_retirer": "Préfixe commun ôté à l'affichage des noms de tâches (le nom complet reste dans l'infobulle). Vide pour désactiver.",
-  "prefixe_a_retirer": "LowiBKK-",
-
   "_tache_orchestrateur": "Tâche Windows qui lance agents/orchestrator.py --due. C'est ELLE qui donne l'heure réelle de passage des agents : un agent 'dû' n'est pas un agent qui tourne, il attend le prochain déclenchement de cette tâche.",
   "tache_orchestrateur": "LowiBKK-Agents",
-
   "_routines_claude": "Instantané des tâches planifiées Claude, relevé le 2026-08-10. Elles vivent côté serveur Claude, pas sur ce PC : le widget ne peut pas les interroger, il recalcule les échéances à partir du cron ci-dessous. Le cron est exprimé en heure LOCALE et le déclenchement réel est décalé de 'jitter_s' secondes (vérifié sur les trois routines actives). Si tu ajoutes ou modifies une routine Claude, reporte-la ici.",
   "routines_claude": [
     {
@@ -57,10 +65,7 @@
       "actif": false
     }
   ],
-
   "afficher_agents": true,
-  "_agents_detail": "false = seuls les agents dus ou en échec sont détaillés, le reste tient dans un compteur (panneau court). true = les 15 agents, un par ligne.",
-  "agents_detail": false,
   "verifier_ollama": true,
   "modele_local": "qwen3:8b"
 }
