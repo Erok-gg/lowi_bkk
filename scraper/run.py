@@ -268,7 +268,19 @@ def main() -> None:
                 except Exception as e:  # une empreinte manquante n'est pas bloquante
                     print(f"  (empreinte photo ignorée : {e})")
 
-            need_images = (not args.no_images) and bool(norm.get("image_urls")) and (
+            # DEUX interrupteurs distincts, et la distinction compte :
+            #   image.telecharger : recuperer et convertir en webp SUR LE DISQUE
+            #   image.televerser  : pousser le fichier vers Supabase Storage
+            # Mesure du 2026-08-22 : le bucket pesait 1 610 Mo (157 % du quota
+            # free tier de 1 Go) alors que les metadonnees ne font que 11 Mo en
+            # base. C'est le TELEVERSEMENT qui coute, pas la collecte. Le poste
+            # coureur continue donc de constituer sa reserve locale d'images ;
+            # seule la mise en ligne est suspendue. La structure est intacte :
+            # remettre televerser a true puis lancer scraper/upload_images.py
+            # remet tout en ligne depuis le disque, sans re-scraper.
+            images_actives = cfg.get("image", {}).get("telecharger", True)
+            need_images = (not args.no_images) and images_actives and bool(
+                norm.get("image_urls")) and (
                 existing is None or not store.has_images(norm["id"])
             )
             images = None
@@ -278,7 +290,8 @@ def main() -> None:
                                             OUTPUT_DIR, cfg["image"])
 
             # upload des images vers Storage (object path = storage_path)
-            if storage and images:
+            # Suspendu par `image.televerser: false` — cf. le commentaire ci-dessus.
+            if storage and images and cfg.get("image", {}).get("televerser", True):
                 for im in images:
                     with chrono.mesure("transfert_storage"):
                         storage.upload(str(OUTPUT_DIR / im["storage_path"]), im["storage_path"])

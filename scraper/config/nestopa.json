@@ -25,7 +25,10 @@
     "height": 768,
     "format": "webp",
     "quality": 80,
-    "max_per_listing": 1
+    "max_per_listing": 1,
+    "telecharger": true,
+    "televerser": false,
+    "_televerser_pourquoi": "Televersement coupe le 2026-08-22 : le bucket pesait 1 610 Mo, soit 157 % du quota free tier (1 Go), contre 11 Mo de metadonnees en base. Le telechargement reste ACTIF : le poste coureur constitue sa reserve locale dans scraper/output/images/. Remettre a true puis lancer scraper/upload_images.py remet tout en ligne depuis le disque, sans re-scraper."
   },
   "_gel": "GELE le 2026-08-11. La pagination `?page=` est INTERDITE par leur robots.txt (Disallow: /*?page=) — nous la demandions ~300 fois par cycle parce que notre lecteur de robots.txt ne voyait qu'un seul bloc `User-agent: *` sur les deux que contient leur fichier. Corrige dans pipeline/fetch.py (classe Robots, RFC 9309). Tout le reste est inaccessible : navigation par quartier 403, fiches 403 (blocage par empreinte, resiste aux en-tetes navigateur et a la session rechauffee), sitemap des proprietes 502 chez eux. Seule la premiere page de chaque liste repond. Nestopa pesait 91 nouvelles sur 3441 ce cycle (2,6 %) et n'apporte AUCUN champ enrichi : ni descriptif, ni annee, ni etage. Reactiver demanderait un navigateur pilote (Playwright) pour ~164 pages de navigation — mauvais rapport effort/valeur tant que DDproperty coute 5 h par cycle."
 }
