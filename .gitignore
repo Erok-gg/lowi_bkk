@@ -70,3 +70,6 @@ ops/widget/.arret
 # marqueur PAR MACHINE : ce poste n'heberge aucun modele local (T1 delegue a Claude)
 agents/t1-absent
 agents/state/organize/lots/
+
+# miroir de l etat du coureur, rapatrie a la main (jamais dans agents/)
+ops/miroir/

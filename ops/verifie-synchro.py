@@ -82,19 +82,27 @@ def _dt(s):
 def main() -> int:
     ap = argparse.ArgumentParser(description="Verification de synchro serveur / coureur / git")
     ap.add_argument("--jours", type=int, default=5)
+    # Depuis le poste de CONTROLE, on lit le ledger rapatrie par
+    # ops/miroir-coureur.ps1 : le cycle tourne ailleurs, mais le croisement
+    # avec Supabase reste valable puisque la base, elle, est commune.
+    ap.add_argument("--ledger", default=None,
+                    help="ledger a lire (defaut : celui de ce poste)")
     a = ap.parse_args()
+    ledger = os.path.abspath(a.ledger) if a.ledger else LEDGER
+    miroir = bool(a.ledger)
     depuis = datetime.now(timezone.utc) - timedelta(days=a.jours)
 
     print(f"Fenêtre : {a.jours} derniers jours — depuis {depuis:%Y-%m-%d %H:%M} UTC")
-    print(f"Poste   : {os.environ.get('COMPUTERNAME', '?')}")
+    print(f"Poste   : {os.environ.get('COMPUTERNAME', '?')}"
+          + ("   [lecture d'un MIROIR, le cycle tourne ailleurs]" if miroir else ""))
 
     # ───────────────────────────── 1. le cycle a-t-il tourné ?
     titre("1. Cycle local (ledger)")
-    if not os.path.exists(LEDGER):
-        souci("ledger.db absent — ce poste n'est pas le coureur, ou l'import a échoué")
+    if not os.path.exists(ledger):
+        souci(f"ledger introuvable : {ledger}")
         runs = []
     else:
-        led = sqlite3.connect(LEDGER)
+        led = sqlite3.connect(ledger)
         runs = led.execute(
             "select agent, started_at, ended_at, status from agent_runs "
             "where started_at >= ? order by started_at", (depuis.isoformat(),)).fetchall()
