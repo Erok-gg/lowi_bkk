@@ -2554,3 +2554,31 @@ d'environnement posée une fois pour la machine. Non tranché.
   référence n'est pas désignée**. Constats de la note de PC1, non traités ici.
 - **`khet` : 91 valeurs distinctes pour 50 quartiers officiels** — non revérifié, non
   corrigé, `ops/corriger-khet.py` non relancé.
+
+### Suite, même séance — les 11 fichiers ont finalement été supprimés
+
+Le « Non fait » ci-dessus est resté vrai une demi-heure. Sur arbitrage, les onze
+fichiers de la grappe de supervision d'avant les agents ont été retirés, après
+re-vérification sur PC2 :
+
+- **Aucune tâche Windows ne les appelle** — les seules qui pointent vers `C:\Lowi_bkk`
+  sont `LowiBKK-Agents` (`--due`) et `LowiBKK-RattrapageBoot` (`--boot`), toutes deux
+  sur `orchestrator.py`.
+- **Toutes leurs références croisées sont internes au groupe** : ils s'appellent entre
+  eux (`superviseur.py` → `juge-test.py`, `lancement-complet.ps1` → `juge-test.py`,
+  `install-*.ps1` → `superviseur.py`) et rien d'autre ne les cite.
+
+Deux renvois pendants ont été corrigés dans la foulée, parce qu'ils auraient survécu
+aux fichiers : la docstring de `ops/sync_supabase_local.py` annonçait
+« Planifié : ops/sync-archive.ps1 (tâche Windows hebdo) » — ni le wrapper ni la tâche
+n'existent plus, c'est l'agent `backup-apres-cycle` qui l'appelle
+(`agents/agents.json`, vérifié) ; et deux lignes de CLAUDE.md renvoyaient aux wrappers
+`scrap-vente.ps1` / `scrap-location.ps1` et à `LowiBKK-ArchiveSync`, barrées et datées
+plutôt que réécrites.
+
+`.claude/settings.local.json` ajouté au `.gitignore` : réglages par machine, comme
+`agents/t1-absent`. Il faisait crier `verifie-synchro` à chaque passage — un garde-fou
+qui signale un faux positif récurrent apprend à être ignoré (règle 2).
+
+**`LowiBKK-Agents` est repassée `Ready`** entre-temps. Le cycle repart donc de
+lui-même ; le constat de désactivation ci-dessus est levé.

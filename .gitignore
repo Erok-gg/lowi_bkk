@@ -73,3 +73,6 @@ agents/state/organize/lots/
 
 # miroir de l etat du coureur, rapatrie a la main (jamais dans agents/)
 ops/miroir/
+
+# reglages Claude Code PAR MACHINE (permissions, chemins du poste)
+.claude/settings.local.json

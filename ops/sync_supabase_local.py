@@ -17,7 +17,10 @@ Usage :
   scraper/.venv/Scripts/python.exe ops/sync_supabase_local.py            # sync seul
   scraper/.venv/Scripts/python.exe ops/sync_supabase_local.py --prune    # sync + purge
   scraper/.venv/Scripts/python.exe ops/sync_supabase_local.py --prune --dry-run
-Planifié : ops/sync-archive.ps1 (tâche Windows hebdo).
+Planifié : l'agent `backup-apres-cycle` l'appelle en fin de cycle (agents/).
+Le wrapper ops/sync-archive.ps1 et la tâche LowiBKK-ArchiveSync ont été
+retirés le 2026-08-22 : les agents faisaient le même travail. Lancement à
+la main : voir Usage ci-dessus.
 """
 from __future__ import annotations
 
