@@ -1752,3 +1752,711 @@ l'échantillon seul.
   ni `watch-health` n'ont tourné dans le cycle du jour.
 - **Le réveil est en retard de ~2 h** — les deux tâches démarrent vers 03:10 pour
   01:00 et 02:00 prévus. Cause non élucidée.
+
+---
+
+## 2026-08-13 — Widget de bureau : deux compteurs qui auraient menti, et un arrondi qui volait un jour
+
+Panneau posé sur le bureau (`ops/widget/`), livré le 10/08 puis ramené ce jour à
+trois lignes : `Scrap Lowi`, `Veille Equance`, `Agents`. Ce qui suit ne concerne
+pas la fenêtre — elle est accessoire — mais ce qu'elle prétend mesurer.
+
+### « Prochain scrap » n'est pas « prochain déclenchement de la tâche »
+
+Premier réflexe : faire pointer le compteur sur `LowiBKK-Agents`, la tâche
+Windows qui lance l'orchestrateur. Elle part **tous les jours à 01:00**. Or les
+extracteurs ont une cadence de **4 jours** (`every_days: 4`) : l'orchestrateur
+les saute trois nuits sur quatre. Le compteur aurait donc annoncé « scrap dans
+7 h » chaque soir, **faux 75 % du temps** — et faux dans le sens le plus
+trompeur, celui qui rassure.
+
+Vérifié en le construisant : au 13/08 17:26, la tâche annonce le 14/08 01:00,
+les extracteurs le **16/08 01:00**. Deux jours d'écart. Le compteur vise donc la
+famille `Extraction` et reprend le calcul de créneau réel déjà écrit pour les
+agents (premier déclenchement où `is_due` sera vrai, lane du jour comprise, lane
+`weekly` calculée sur l'ordinal **UTC** — à 01:00 à Bangkok on est encore la
+veille en UTC).
+
+### 29 constats, 4 problèmes
+
+La ligne Agents devait porter « le nombre d'escalades et de problèmes à régler ».
+Le chiffre disponible était `findings` de sévérité haute sur 7 jours : **29**.
+Décomposé, il ne recouvre que **4 sujets** :
+
+| agent | nature | occurrences |
+|---|---|---|
+| overseer | agent_muet | 22 |
+| watch-health | llm_panne | 5 |
+| organize | modele_derive | 1 |
+| overseer | llm_panne | 1 |
+
+Les 22 sont le **même** constat, réémis à chaque cycle depuis le 31/07. Un
+compteur à 29 qui ne bouge que d'une unité par jour n'informe de rien et
+s'apprend à ignorer — exactement la règle 2 du CLAUDE.md. Le compteur regroupe
+donc par (agent, nature), et se borne aux agents encore au registre : le ledger
+gardait des traces de `_test_multi_then`, qui n'est plus un problème à régler
+puisqu'il n'existe plus.
+
+À noter, ce compteur n'est pas anodin en soi : **8 escalades ouvertes**, dont six
+`agent_muet` remontant au 31/07, et un `modele_derive` du 11/08. La file
+`agents/queue/` n'est pas drainée aussi bien que la routine quotidienne le
+laisse croire. **Non traité ici** — hors du périmètre demandé.
+
+### Un arrondi qui ajoutait un jour
+
+`[int]` sur un double **arrondit** en PowerShell (à l'entier pair, en prime), il
+ne tronque pas. `[int]3.61` vaut 4 : un délai de 3 j 14 h s'affichait
+**« 4 j 14 h »**. Le compteur était en avance d'un jour, dans le sens qui
+rassure là encore. Repéré en comparant la capture d'écran à l'échéance calculée,
+pas en relisant le code. `[Math]::Floor` partout.
+
+Même famille de piège, découvert le 10/08 : **PowerShell ignore la casse des
+noms de variables**. `$C` (palette) et un `$c` de boucle sont la même variable ;
+`$CFG` (chemin) et `$cfg` (objet de configuration) aussi. Trois pannes muettes
+venaient de là, dont une erreur « paramètre -Raw introuvable » qui n'avait rien
+à voir avec `Get-Content` : le chemin était devenu un objet, donc sans
+fournisseur, donc sans paramètre dynamique.
+
+### Ce qui n'a PAS été fait
+
+- **Les 8 escalades et les 4 problèmes ne sont pas traités.** Le widget les
+  compte, il ne les règle pas. `overseer/agent_muet` traîne depuis le 31/07 et
+  mérite une séance à lui seul.
+- **La détection de réveil n'a jamais été provoquée en test** — impossible à
+  forcer proprement. Elle est en revanche **observée en production** : sept
+  lignes « reveil / deverrouillage -> collecte » dans `widget.log` entre le
+  10/08 et le 13/08.
+- **L'ancrage `bureau`** (fenêtre-fille du WorkerW) reste écrit mais non retenu
+  par défaut : la couche des icônes d'Explorer intercepte la souris, le widget y
+  devient non cliquable. Découvert après avoir proposé ce mode à l'arbitrage —
+  la contrepartie n'avait pas été annoncée, elle l'est maintenant.
+- **Les autres routines Claude ne sont plus affichées** (drain quotidien,
+  rapport mensuel). Elles restent collectées et diagnosticables via
+  `collecte.ps1 -Ecran` ; les remettre = une ligne dans `compteurs`.
+- **Rien ne vérifie que `config.json` suit les routines Claude.** Elles vivent
+  côté serveur, aucune API locale ne les expose ; le cron est recopié à la main.
+  Recontrôlé le 13/08 : toujours exact. Un contrôle automatique demanderait un
+  accès qui n'existe pas sur cette machine.
+
+---
+
+## 2026-08-16 — `garde-veille` : un 14e agent, parce que le portable dort pendant qu'il scrape
+
+### Le constat, mesuré
+
+Le cycle du jour (`LowiBKK-Agents`, parti à 01:00) a tué `extract-ddproperty`
+en pleine extraction, page 95/?, sans erreur ni trace de sortie — le log
+s'arrête net à 07:29. Le journal Système (`Microsoft-Windows-Kernel-Power`)
+donne la cause exacte :
+
+| heure (BKK) | événement | motif |
+|---|---|---|
+| 07:25:11 | réveil | Input Mouse |
+| 07:36:06 | **veille** | Idle Timeout |
+| 07:55:52 | réveil | Input Mouse |
+| 08:02:13 | **veille** | Idle Timeout |
+
+`powercfg /a` : ce portable ne supporte QUE l'état S0 (Veille moderne
+connectée), pas de S1/S2/S3. `powercfg /requests` : **vide** au moment du
+constat — aucun process ne tenait de demande d'éveil, scrap en cours ou pas.
+Plan d'alimentation actif : « Silent » (custom), écran off à 5 min
+d'inactivité sur secteur. Résultat : dès que la souris s'arrête, Windows
+suspend le réseau des process d'arrière-plan, qu'un scrap de 6 h soit en
+cours ou non. Le code retour du process orchestrateur (`0xC000013A`,
+`STATUS_CONTROL_C_EXIT`) confirme une coupure externe, pas une exception.
+
+Ce trou était déjà noté le 11/08 : `ops/superviseur.py` sait reprendre après
+coupure, il est désactivé ; `LowiBKK-Agents` n'a aucune résilience de ce
+genre. Décision prise ce jour, à la demande explicite : pas de réactiver
+l'ancien superviseur (conçu pour l'ancienne architecture SQLite/tests-scrap),
+mais un nouvel agent dans le système à 12 (13 avec `verifie-backup`+
+`backup-apres-cycle`) bots.
+
+### Ce qui a été construit
+
+**`garde-veille`** (T0, famille `Supervision`, `agents/bots/garde_veille.py` +
+`agents/core/wake_lock.py`) — [SKILL.md](../agents/skills/garde-veille/SKILL.md) :
+
+1. Pose `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` — une
+   demande système, pas liée à un process précis : tant qu'UN thread la
+   maintient, la machine ne part pas en veille idle. Pas de `release()`
+   explicite en usage normal : Windows la relâche à la sortie du process, et
+   l'orchestrateur vit du premier au dernier agent de la lane.
+2. Tourne en tout premier, **avant même le Prelude** — un rattrapage de
+   backup qui traîne est tout aussi exposé qu'un extracteur.
+3. Marqué `always_run: true` dans `agents.json`, et l'orchestrateur
+   (`run_lane`) l'exempte du filtre `is_due()` : le verrou est propre au
+   *process*, un succès d'hier ne protège en rien le process du jour. Sans
+   cette exemption, `garde-veille` aurait pu être sauté « à jour » un soir
+   sur deux et laisser le trou revenir sans bruit.
+4. Corrèle les runs `interrompu` récents (fenêtre 30 h) avec le journal
+   `Kernel-Power` (Id 506/507) et pose un `finding` `coupure_veille`
+   (sévérité basse) quand une veille tombe dans la fenêtre du run — pour que
+   watch-health/overseer ne confondent pas une coupure de veille (rien à
+   corriger, la cadence relance déjà l'agent au cycle suivant, cf.
+   `is_due()`) avec une vraie panne de code.
+
+**Il ne relance rien lui-même.** Vérifié en le lisant deux fois avant
+d'écrire : `is_due()` se fonde sur le dernier *succès*, jamais sur le
+dernier run tout court — un `interrompu` n'est jamais un succès, donc
+`extract-ddproperty` était déjà DÛ et reparti de lui-même dans la lane du
+jour, juste après `garde-veille`. Ajouter une relance manuelle aurait été de
+la logique dupliquée, pas un vrai gain.
+
+### Un bug trouvé en testant, avant de le croire fini
+
+Premier passage : sur 2 runs `interrompu` dans la fenêtre, un seul détecté
+comme `coupure_veille` — celui de la veille, pas celui de ce matin (le vrai
+sujet). En inspectant les événements bruts renvoyés par `Get-WinEvent`, la
+fenêtre s'arrêtait ~13 h avant l'heure réelle. Cause : **`Get-WinEvent
+-FilterHashtable` interprète `StartTime`/`EndTime` en heure LOCALE, jamais en
+UTC** — le ledger stocke tout en UTC, je passais du UTC brut, la fenêtre se
+décalait de l'écart local (+7 h à Bangkok) et ratait précisément les
+événements les plus récents, ceux qu'on cherchait. Corrigé
+(`.astimezone()` avant formatage) et revérifié : les deux runs `interrompu`
+(hier et ce matin) sont désormais correctement étiquetés `coupure_veille`.
+
+### Vérifié, et ce qui ne l'est pas
+
+- `wake_lock.acquire()` retourne `True` (succès documenté de l'API) sur ce
+  poste, testé en direct.
+- **Non vérifié en conditions réelles** : confirmer via `powercfg /requests`
+  qu'une demande est bien active PENDANT un cycle complet — la commande
+  exige des privilèges administrateur, indisponibles dans cette session. Le
+  retour de l'API est un indicateur de succès documenté, pas une preuve
+  observée sur le système. À contrôler manuellement à l'occasion (ouvrir un
+  terminal admin pendant le prochain cycle de nuit).
+- **Le cycle du jour reste incomplet** (`extract-ddproperty` interrompu deux
+  fois, `analyze-sale/rent`, `report`, `backup-apres-cycle` jamais partis) —
+  laissé tel quel : la cadence le reprend automatiquement au prochain passage
+  de `LowiBKK-Agents` (01:00), désormais protégé par le verrou. Pas relancé à
+  la main dans cette séance — pas demandé.
+- **Le plan d'alimentation « Silent »** (écran off 5 min sur secteur) n'a pas
+  été changé — hors périmètre : c'est un choix de confort utilisateur, sans
+  rapport avec le fait que le scrap ne doive plus en dépendre.
+
+---
+
+## 2026-08-17 — Sonde de structure avant scan : échouer en 1 requête plutôt qu'en 8 jours
+
+À la demande explicite (suite à une question sur l'agent qui détecte un DOM
+cassé) : `watch-health` existait déjà, mais n'escalade qu'après **2 runs
+consécutifs à zéro** — pour ne pas crier au loup sur un aléa isolé (règle 2
+du CLAUDE.md). Conséquence non mesurée jusqu'ici : un vrai changement de
+structure peut tourner dans le vide pendant **2 cycles complets (~8 jours)**
+avant qu'un ticket parte à Claude.
+
+### Ce qui a été construit
+
+`BaseAdapter.sonder(fetcher)` (`scraper/adapters/base.py`) : test d'UNE seule
+page, avant le scan complet. Implémentation par défaut : rappelle
+`list_urls(limit=1)` — le VRAI parseur, pas une copie qui pourrait diverger.
+**Chaque adaptateur surcharge** avec un test de SON marqueur de structure
+propre, à la demande explicite (« que les tests soient différents pour que ça
+puisse remonter à Claude ») :
+
+| adaptateur | marqueur vérifié |
+|---|---|
+| fazwaz | présence de JSON-LD sur la page de liste |
+| ddproperty | `__NEXT_DATA__` + un nœud avec `fullAddress` (identification par CONTENU, pas par chemin — le chemin a déjà bougé une fois, cf. 2026-08-11) |
+| propertyscout | `__NEXT_DATA__` → `props.pageProps.rentals.data` |
+| nestopa | ld+json, item `@type: Product` |
+| livinginsider | ld+json `ItemList` avec `itemListElement` |
+
+`scraper/run.py` appelle `adapter.sonder()` juste après construction de
+l'adaptateur ; en échec, imprime `[SONDE-ECHEC] <source> : <diagnostic>` et
+sort (`exit 2`) **avant** de lancer 150 pages pour rien.
+`agents/orchestrator.py` (`run_agent`) repère ce marqueur dans la sortie de
+CHAQUE étape (principal + tous les `then`) et dépose directement un ticket
+d'escalade (`agents.core.escalation.create`, kind `parser_break`, sévérité
+`high`) — sans attendre les 2 runs de `watch-health`. **`watch-health` reste
+à sa place normale, en fin de cycle** — précisé explicitement par
+l'utilisateur : ce n'est pas un remplacement, c'est une détection plus
+précoce en amont, `watch-health` restant le filet qui couvre tout le reste
+(dérive de volume, images perdues…).
+
+### Un vrai bug de production trouvé en vérifiant, PAS corrigé
+
+En testant la sonde sur les 5 sources réelles (une requête par source),
+**nestopa a d'abord échoué** — pas pour un DOM cassé, mais parce que
+`list_urls()` construit TOUJOURS l'URL avec `?page=1` (la boucle
+`range(1, max_pages+1)` avec `page_param="page"`), et leur robots.txt
+interdit **toute** requête `?page=`, y compris page 1 (`Disallow: /*?page=`,
+cf. note `_gel` du 2026-08-11 dans `scraper/config/nestopa.json`). Le test
+direct de `run.py --source nestopa --limit 3` en conditions réelles confirme
+: `scannées : 0` — **nestopa ne ramène actuellement RIEN en production**,
+alors que le gel du 11/08 visait à garder la page 1 (bare, sans `?page=`)
+qui, elle, répond.
+
+Corrigé dans la sonde (le test de nestopa vérifie la page bare directement,
+sans rappeler `list_urls()`, pour ne pas se faire bloquer par le même
+robots.txt et crier au loup sur un problème déjà connu). **Le bug réel dans
+`list_urls()` n'est PAS corrigé** — hors périmètre de cette séance (le sujet
+demandé était la sonde, pas cet adaptateur), à trancher : soit un correctif
+d'une ligne (n'ajouter `?page=` que si `page > 1`), soit laisser tel quel vu
+le rapport effort/valeur déjà négatif noté le 11/08 (2,6 % du volume, aucun
+champ enrichi). Signalé, pas décidé à la place de l'utilisateur.
+
+### Vérifié
+Sonde testée en direct sur les 5 sources réelles (requête page 1 chacune) :
+fazwaz, ddproperty, propertyscout, livinginsider → `OK`. nestopa → `OK` après
+correction (page bare). Détection du marqueur `[SONDE-ECHEC]` par
+`orchestrator.py` testée par regex isolée. `escalation.create()` testé en
+direct (ticket créé puis supprimé, mécanisme déjà éprouvé par
+`watch-health`). **Non testé** : le chemin d'échec de bout en bout sur un
+vrai site cassé (aucune des 5 sources n'était cassée au moment du test) —
+la logique est vérifiée par construction (mêmes fonctions que le chemin
+`watch-health`, déjà en production), pas observée sur un vrai cas.
+
+### Complément same-day — `--skip-extraction` / `--boot`, et Ollama trouvé éteint
+
+À la demande explicite (clôturer le cycle du jour à la main, agent par agent,
+dans l'ordre lu dans `orchestrator.py`, a mené à la question : pourquoi pas
+un mode qui fait ça tout seul). Ajout de `run_lane(..., skip_extraction=bool)` :
+rejoue Supervision → (Prelude et Extraction sautés) → suite (`watch-health`,
+`analyze-sale/rent`, `organize`, `report`, `backup-apres-cycle`, `overseer`)
+sans retoucher au scrap. `verifie-backup` est sauté aussi — son seul rôle est
+de préparer une extraction qui n'aura pas lieu, et il peut déclencher un
+rattrapage (`sync_supabase_local.py`) pour rien.
+
+Deux points d'entrée : `run-lane <lane> --skip-extraction` (manuel) et
+`--boot` (mode automatique, même logique que `--due` mais avec
+`skip_extraction=True` forcé). **Tâche Windows `LowiBKK-RattrapageBoot`**
+créée (`ops/install-boot-task.ps1`, même méthode par cmdlets que
+`install-agents-task.ps1` — évite le bug des guillemets échappés de juillet),
+déclenchée à l'ouverture de session : si `LowiBKK-Agents` a manqué son
+créneau de 01:00 (machine éteinte/en veille), la suite du cycle repart au
+logon SANS déclencher un scrap complet à une heure imprévisible.
+Enregistrement testé par l'utilisateur en admin (hors de portée de cette
+session) — XML vérifié conforme (pas de `\"`, exécutable présent).
+
+**Panne réelle trouvée en route, pas cherchée** : en relançant `organize`
+pour finir la séquence manuelle, **270 pannes sur 275 paires** — Ollama
+n'était simplement pas lancé (`localhost:11434` refusait la connexion,
+confirmé par `Get-Process ollama` vide). Le process tournait donc depuis
+plusieurs minutes en accumulant des échecs sans rien produire d'utile.
+Repéré aux métriques de progression (`0 abstentions, 270 pannes` — le
+garde-fou d'abstention n'aurait de toute façon pas laissé passer un taux
+aussi anormal en `modele_derive`, mais le repérage manuel a été plus rapide
+que d'attendre la fin du lot). Ollama relancé (`ollama serve`), le run
+`interrompu` manuellement (process tué) marqué à la main dans le ledger pour
+débloquer le garde-fou anti-double-run (`led.last_run(...).status=='running'`
+ne se referme qu'au prochain `Ledger.reap_stale()`, pas à un `kill`
+externe). Relancé proprement : 0 panne, ~8,6 s/paire, taux d'abstention
+cohérent avec la bande (≥70 %).
+
+**Effet de bord non corrigé, à garder en tête** : `reprise.marquer(cle)`
+dans `organize.py` s'exécute APRÈS le traitement, qu'il ait réussi ou non —
+les 270 paires « pannes » de la tentative ratée sont donc marquées comme
+déjà traitées dans `state/organize/paires-faites.txt`, alors qu'elles n'ont
+jamais reçu de vrai verdict. Elles ne seront plus retirées du tirage
+aléatoire des cycles futurs. Pas corrigé cette fois (hors périmètre de la
+question posée) — si le volume de paires jamais résolues devient un
+problème, c'est le premier endroit à regarder.
+
+### `LowiBKK-RattrapageBoot` : elle marche, et ça s'est vu tout de suite
+
+Enregistrée par l'utilisateur (droits admin nécessaires, hors de portée de
+cette session). Preuve qu'elle fonctionne, trouvée sans la chercher :
+`schtasks /Query` montre un déclenchement à 17:15:33 (heure locale), exécution
+d'`organize` confirmée dans le ledger au même horodatage en UTC. **Mais tuée
+en cours de route** — même signature qu'un incident précédent
+(`STATUS_CONTROL_C_EXIT`, code retour `-1073741510`). Cause probable : la
+tâche est `LogonType Interactive`, liée à la session ; la session
+PowerShell admin ouverte pour l'enregistrer s'est refermée pendant que la
+tâche tournait encore, et a emporté son process avec elle.
+
+**Pas corrigé** — la tâche reste `LogonType Interactive` (nécessaire pour
+qu'elle ait accès au réseau/à Ollama comme documenté dans le script). Le
+risque ne concerne que la fenêtre étroite où quelqu'un ferme la session qui a
+servi à l'enregistrer ; les ouvertures de session normales (démarrage du
+matin) ne sont pas concernées. À surveiller si ça se reproduit hors de ce
+contexte particulier.
+
+Deux runs `interrompu` d'`organize` de suite (celui tué manuellement en
+pause, celui tué par la fermeture de session) ont chacun nécessité une
+correction manuelle du ledger (`status='running'` ne se referme qu'au
+prochain `Ledger.reap_stale()`, jusqu'à 12 h plus tard) avant de pouvoir
+relancer — `run_agent()` refuse à raison de relancer un agent qu'il croit
+encore actif. Troisième tentative : **300/300 paires, 0 panne, 98,3 %
+d'abstention** — le cycle du jour est complet (`report` et
+`backup-apres-cycle` déjà à jour des lancements manuels précédents,
+`overseer` pas encore dû).
+
+### Complément same-day — réglages d'alimentation et reprise du cycle coupé
+
+À la demande explicite : un second agent, **`regle-alimentation`**
+(`ops/regle-alimentation.py`, T0, `lanes: []` — invocation manuelle
+seulement, ne s'ajoute pas à la cadence automatique). Trois réglages sur le
+plan actif (`powercfg /setacvalueindex SCHEME_CURRENT ...`, fonctionne SANS
+élévation, vérifié) : écran off 5 min (déjà la valeur du plan « Silent »),
+veille après 5 h (**filet de sécurité**, pas la protection principale — c'est
+`garde-veille` qui empêche la veille pendant un cycle actif), processeur
+plafonné à 60 % / plancher 5 % pour limiter bruit et chaleur.
+
+**Un écart mesure/hypothèse trouvé en vérifiant** : le levier « attendu »
+pour un ventilateur silencieux est la politique de refroidissement
+(`SYSCOOLPOL`). `powercfg /setacvalueindex ... SYSCOOLPOL 1` rend le code 0
+(aucune erreur), mais `powercfg /query` sur ce réglage renvoie une liste
+**vide** juste après — le réglage n'existe pas sur ce matériel (probablement
+piloté par un utilitaire OEM hors de portée de `powercfg`). Un code retour 0
+n'est PAS une preuve que le réglage a pris ; revérifié avec `/query`, pas
+supposé. Le plafond de fréquence (`PROCTHROTTLEMAX`) est le seul levier
+confirmé présent et modifiable ici — c'est lui qui est utilisé, documenté
+comme tel dans le SKILL.md plutôt que de prétendre que SYSCOOLPOL marche.
+
+Appliqué et vérifié par relecture `powercfg /query` : veille AC = 0x4650
+(18000 s = 5 h), écran = 0x12c (300 s = 5 min), CPU AC min/max = 5 %/60 %.
+
+**Cycle coupé relancé** : `extract-ddproperty` repart (sale, page 2 au
+moment d'écrire, dédup active — les annonces déjà vues ce cycle sont
+sautées). Lancé avec le verrou d'éveil posé dans le MÊME process Python que
+l'orchestrateur (le verrou est par process, pas par lane — un `orchestrator.py
+run <agent>` isolé ne passe pas par `garde-veille`, donc pas de verrou sans
+ce wrapper explicite). **Non couvert par cette relance manuelle** : les
+`then` de `extract-ddproperty` (location, puis passe ciblée corridors)
+s'enchaînent normalement dans la même invocation `run`, mais `analyze-sale`,
+`analyze-rent`, `report`, `backup-apres-cycle` ne partiront QUE si le cycle
+automatique de 01:00 les retrouve dus demain — cette relance manuelle ne
+couvre que l'extracteur, pas toute la lane.
+
+## 2026-08-20 — Une porte dérobée par-dessus le RLS : les vues étaient SECURITY DEFINER
+
+Les alertes de sécurité Supabase remontaient 30 lignes. Une seule était une
+vraie faille — et elle était exploitable. Le reste était soit le comportement
+voulu, soit de l'hygiène.
+
+### Le mécanisme, mesuré et non déduit du linter
+
+Les 15 vues de `public` avaient `pg_class.reloptions = NULL` : `security_invoker`
+n'avait jamais été posé, donc comportement **SECURITY DEFINER** par défaut. Elles
+appartiennent toutes à `postgres`, et `pg_roles` donne `postgres.rolbypassrls =
+true`. Conséquence : une requête `anon` sur une vue s'exécutait avec les droits
+de `postgres` et **ignorait entièrement le RLS deny-all** des tables. Les tables
+faisaient leur travail ; les vues ouvraient une porte au-dessus.
+
+Trois de ces vues sont en plus *auto-updatable* (simple `SELECT` sur une table
+unique, `information_schema.views.is_updatable = YES`) et `anon` détenait
+`INSERT/UPDATE/DELETE` dessus : `listings_sane`→`listings`,
+`condos_age`→`condos`, `social_leads_opportunites`→`social_leads`.
+
+**Preuve d'abord, correctif ensuite.** Via l'API REST avec la clé anon :
+`GET /rest/v1/listings` renvoyait `[]` (RLS actif) pendant que
+`GET /rest/v1/listings_sane` renvoyait les annonces. Puis, en SQL, dans une
+transaction annulée et avec une écriture **no-op** (`title = title`, pour
+qu'un rollback raté ne change rien) :
+
+```
+set local role anon;
+update listings_sane set title=title where id='fazwaz:sale:5995772';  -- 1 ligne
+update listings      set title=title where id='fazwaz:sale:5995772';  -- 0 ligne
+```
+
+Même rôle, même ligne, même transaction : la vue laissait passer l'écriture, la
+table la bloquait. Après correctif, la même requête échoue en
+`42501 permission denied for view listings_sane`.
+
+**Un test que j'avais mal conçu, corrigé en le relisant** : la première version
+prenait l'id via `(select id from listings limit 1)` — sous-requête exécutée en
+`anon`, donc bloquée par le RLS, donc `id = NULL`, donc 0 ligne partout et
+« faille absente ». Le garde-fou testait le garde-fou. Refait avec un id
+littéral. Deuxième sonde trompeuse : un `PATCH` REST sur un id inexistant
+renvoie `204` aussi bien quand l'écriture est autorisée que quand le RLS filtre
+à 0 ligne — il ne distingue rien, c'est la transaction SQL qui tranche.
+
+### Ce qui a été fait
+
+`supabase/migrations/2026-08-20_rls_hardening.sql` : `security_invoker = true`
+sur les 15 vues (le correctif de fond — sans lui, révoquer les grants laisserait
+la lecture ouverte) ; `revoke all` pour `anon`/`authenticated` sur tout `public` ;
+**et** `alter default privileges ... revoke all` — sans ce dernier point le trou
+se rouvrait en silence, puisque `pg_default_acl` accordait `anon=arwdDxtm` sur
+toute table créée par `postgres` (c'est ce défaut qui avait posé les grants sur
+les 26 relations existantes). Plus le `revoke execute` sur `rls_auto_enable()` et
+un `search_path` fixe sur `lowi_norm_condo(text)`.
+
+Les 14 `create or replace view` du dépôt reçoivent `with (security_invoker =
+true)` : **`CREATE OR REPLACE VIEW` remet `reloptions` à zéro**, donc rejouer un
+seul de ces fichiers aurait rouvert la faille sans rien signaler.
+
+Fail-safe : `2026-08-20_rollback_rls_hardening.sql`, **généré depuis le
+catalogue live avant d'appliquer** (reloptions, `role_table_grants`,
+`pg_default_acl`, `proacl`), pas reconstruit de mémoire.
+
+### Ce qui n'a PAS été fait, et pourquoi
+
+- **Aucune policy RLS créée.** Les 11 alertes `rls_enabled_no_policy` (INFO)
+  subsistent après coup et c'est voulu : le deny-all est la protection, l'app et
+  le pipeline passent par la connexion Postgres directe en `postgres`
+  (BYPASSRLS), jamais par PostgREST. Ajouter une policy rouvrirait l'accès.
+- **Bucket Storage `listings` laissé public** (38 446 objets, 0 policy) : lecture
+  publique des photos assumée, les envois passent par `SUPABASE_SERVICE_KEY`.
+- **Dérive fichiers ↔ serveur constatée, non résolue** : 4 vues vivent sur le
+  serveur sans aucun fichier de migration (`rent_stats`, `yield_by_khet`,
+  `sold_and_rented`, `listing_matches`) et `details_couverture` est définie dans
+  `details_descriptif.sql` mais **absente du serveur**. La migration les traite
+  quand même (elle vise les vues par leur nom réel), mais leur définition n'est
+  reproductible depuis aucun fichier. Laissé à l'arbitrage.
+- **Portée réelle de l'exposition, non tranchée** : la faille exigeait de
+  connaître la clé anon, qui n'est utilisée nulle part dans le code (0 occurrence
+  de `supabase-js` ou `/rest/v1` hors Storage), n'est pas déployée sur Vercel et
+  n'a jamais été commitée (seul `.env.example` vide est dans l'historique git).
+  Probabilité d'exploitation donc faible — mais faire reposer la protection des
+  données sur le secret d'une clé *publishable* n'est pas une protection.
+- **`opportunites` dépasse le statement timeout** en lecture directe (erreur
+  `57014` rencontrée pendant les tests). Constaté en passant, pas creusé.
+
+### L'archive locale n'était pas complète — le fail-safe supposé ne l'était pas
+
+Vérification demandée avant d'agir, et elle a payé. `SYNC_TABLES`
+(`ops/sync_supabase_local.py`) était une **liste figée de 7 tables** : l'«
+introspection qui résiste aux évolutions de schéma » annoncée dans CLAUDE.md
+n'existait qu'au niveau des **colonnes**. Trois tables n'avaient donc **jamais**
+été archivées — `condos` (4 514), `cohort_snapshots` (578 683),
+`posted_at_history` (23 604) — soit ~607 000 lignes hors de l'archive censée
+autoriser la purge du serveur.
+
+Corrigé : les tables, les colonnes **et les clés primaires** sont désormais lues
+au catalogue à chaque run. Deuxième défaut trouvé au passage : le code supposait
+`id` comme clé. `condos` a pour PK `name` — elle aurait reçu un `UNIQUE INDEX`
+sur ses **19 colonnes** avec `INSERT OR IGNORE`, donc une ligne de plus à chaque
+changement d'agrégat (`n_listings`, `n_sale`… bougent à chaque scan) au lieu d'un
+upsert. Troisième : le garde-fou anti-purge ne contrôlait que `listings` ; il
+porte maintenant sur toutes les tables.
+
+Sync relancée **sans `--prune`** : 11/11 tables, chacune ≥ serveur, archive
+588 → 742 Mo.
+
+### Vérifications
+
+`npm run typecheck` propre, `npm test` 6/6. Les 3 pages chargent en HTTP 200
+avec leurs données (`/for-sale` 11,2 Mo, `/to-rent` 9,8 Mo, `/rendements`
+8,8 Mo), 0 `permission denied`, 0 erreur serveur. En `postgres`, les vues se
+lisent toujours (`listings_sane` 62 363, `cohort_tension` 17 959). Le linter ne
+renvoie plus que les 11 INFO attendues : les 15 ERROR `security_definer_view`,
+les 2 WARN `rls_auto_enable` et le WARN `search_path` ont disparu.
+
+**Non vérifié** : le comportement en production sur Vercel (les tests portent sur
+le serveur de dev local, qui attaque la même base Supabase — le chemin de données
+est identique, l'hébergement non).
+
+## 2026-08-20 (suite) — Sync local↔serveur vérifiée, et le free tier est dépassé
+
+Vérification demandée après le correctif RLS. Le bon test n'est pas « même
+nombre de lignes » : le local a **légitimement plus** (archive historique
+complète) tandis que le serveur n'est qu'une fenêtre chaude. Le seul test qui
+compte est : *aucune ligne du serveur ne manque en local*. Fait clé par clé, sur
+les 11 tables et ~1,3 M de lignes.
+
+### Résultat : 7 584 lignes « manquantes » — et ce n'est pas un trou
+
+| table | serveur | local | écart | manquantes |
+|---|---|---|---|---|
+| cohort_snapshots | 578 683 | 578 683 | 0 | 0 |
+| condos | 4 514 | 4 514 | 0 | 0 |
+| listing_amenities | 613 962 | 608 027 | −5 935 | 5 943 |
+| listing_images | 44 118 | 70 946 | **+26 828** | 518 |
+| listings | 64 080 | 63 632 | −448 | 450 |
+| posted_at_history | 23 826 | 23 604 | −222 | 222 |
+| price_history | 65 333 | 64 882 | −451 | 451 |
+| social_leads | 0 | 179 | **+179** | 0 |
+
+**Cause mesurée, pas supposée** : un scrap tournait *pendant* la vérification.
+`extract-fazwaz` et `extract-ddproperty` étaient `running` depuis 01:57 UTC, la
+dernière annonce datait de 5 secondes avant la requête, et le total est passé de
+64 080 à 64 087 **entre deux requêtes consécutives**. 471 annonces ont été créées
+après l'heure de la sync (04:07 UTC) — soit exactement les ~450 « manquantes ».
+L'archive est un instantané, le serveur continue d'écrire. Rien à corriger : la
+sync doit simplement se relancer *après* la fin du cycle, et le garde-fou élargi
+ce matin refuse déjà la purge tant qu'une table est en retard.
+
+Les écarts positifs sont l'archive faisant son travail : `listing_images`
++26 828 et `social_leads` +179 sont des lignes purgées ou vidées côté serveur et
+conservées en local.
+
+**Deuxième angle mort du même genre, corrigé** : `ops/verifie-backup.py` avait
+lui aussi une liste figée (`TABLES_ATTENDUES`, les mêmes 7 tables). Il annonçait
+donc « aucune table manquante » pendant que 3 tables n'étaient pas archivées du
+tout — un garde-fou qui ne gardait rien, encore. Il lit désormais la liste au
+serveur (11 tables vérifiées en exécution), la liste figée ne servant plus que
+de repli si Supabase est injoignable.
+
+### Le free tier est à 143 %
+
+Plan **free** (vérifié : `get_organization` → `"plan": "free"`), base à
+**681 Mo pour une limite nominale de 500 Mo**. Répartition :
+
+| poste | taille disque |
+|---|---|
+| `listings` | 380 Mo (dont 55 Mo d'index) |
+| `cohort_snapshots` | 149 Mo (dont 60 Mo d'index) |
+| `listing_amenities` | 63 Mo |
+| `storage.objects` (métadonnées des 38 446 images) | 49 Mo |
+
+Dans `listings`, la matière : `page_text` 173 Mo, `description` 73 Mo,
+`raw_data` seulement 11 Mo. Les lignes mortes ne pèsent que 8 % — l'autovacuum
+fait son travail, ce n'est pas du ballonnement.
+
+**Trois choses mesurées qui contredisent l'intuition :**
+
+1. **La purge ne libérerait rien.** 19 951 annonces inactives, mais la plus
+   ancienne `delisted_at` remonte au 2026-06-24, soit 57 jours : avec
+   `RETENTION_DAYS = 90`, **0 candidate**. Le mécanisme de soulagement
+   automatique n'entrera en action que vers le 2026-09-22. À 45 j il y aurait
+   3 725 candidates, à 30 j 10 491 — mais c'est un arbitrage de rétention, pas
+   une décision technique.
+2. **Purger ne viserait pas le bon poids de toute façon.** `page_text` pèse
+   144 Mo sur les annonces **actives** et seulement 29 Mo sur les inactives : la
+   matière est dans la fenêtre chaude, pas dans ce qu'on peut purger.
+3. **Compresser n'est pas le levier.** `supabase_store.py` déclare `page_text`
+   « compressé » en commentaire mais **n'appelle jamais `compresser()`** — seul
+   `SqliteStore._valeur` le fait. Même famille de défaut que `SYNC_TABLES` : la
+   doc affirme ce que le code ne fait pas. MAIS mesuré avant de conclure :
+   PostgreSQL compresse déjà ce champ tout seul (TOAST), 376 Mo de texte réel
+   n'occupant que 173 Mo sur disque. Un zlib préalable donne **66 % de gain
+   mesuré sur 400 pages réelles** (et non les « ~78 % » annoncés dans
+   `page_text.sql`), soit ~129 Mo — donc **~44 Mo gagnés, pas 90**. Le détour
+   rendrait en plus la colonne illisible sans `decompresser()`. Rapport
+   bénéfice/risque défavorable ; non fait.
+
+**Frayeur écartée en la vérifiant** : le `page_text` de l'archive ne se
+décompresse pas en zlib. J'ai d'abord conclu « archive corrompue » — c'était
+faux. Le contenu est du **texte clair parfaitement lisible** (l'échantillon
+commence par `Supalai Place Sukhumvit 39, Bangkok, 175`), simplement non
+compressé, ce qui est cohérent avec le point 3 : rien ne l'a jamais compressé
+sur le chemin Supabase. 376 Mo dans l'archive contre 173 Mo sur le serveur =
+exactement le ratio TOAST. La matière première est donc bien récupérable.
+
+### Non fait, laissé à l'arbitrage
+
+Le dépassement du free tier appelle une décision de posture, pas un correctif :
+baisser `RETENTION_DAYS`, déporter `page_text`/`description` en archive seule
+(l'archive les détient et ils sont lisibles — vérifié ci-dessus), ou passer au
+plan Pro. Aucune de ces options n'a été appliquée. **Non vérifié non plus** : ce
+que Supabase applique réellement au-dessus du quota — le projet est
+`ACTIVE_HEALTHY` malgré les 143 %, je n'ai pas cherché à savoir si un passage en
+lecture seule est imminent ou si la limite est simplement indicative.
+
+
+## 2026-08-21 — Transfert vers un 2e poste : ce qui ne se copie pas, et T1 délégué à Claude
+
+Un 2e PC destiné à tourner 24/7 arrive. Trois questions : que faut-il transporter,
+que croit-on à tort devoir transporter, et que devient le modèle local sur une
+machine trop faible pour Ollama.
+
+### La question de départ n'était pas la bonne
+
+« Récupérer tous les connecteurs et MCP » : **il n'y a rien à récupérer.** Vérifié
+dans `~/.claude.json` — `mcpServers` est **vide**, au niveau global comme au niveau du
+projet. Les six connecteurs utilisés ici (Supabase, Gmail, Drive, Vercel, Agenda,
+visualize) sont des connecteurs **de compte claude.ai**, hébergés côté serveur ; ils
+suivent le login, pas la machine. Le seul MCP réellement local est
+`sui-knowledge-docs`, sans rapport avec Lowi. Même chose pour les routines
+planifiées : `~/.claude/scheduled-tasks/` n'en contient que les `SKILL.md`, les
+routines tournent côté serveur et **ne doivent pas être recréées** sous peine de
+doublon.
+
+Ce qui se transporte vraiment est ailleurs, et c'est moins visible : mémoire de
+Claude, permissions du projet, état d'exécution des agents, secrets, cache de
+géocodage. `ops/migration/exporte-poste.ps1` et `importe-poste.ps1` s'en chargent
+(2,8 Mo sans les secrets, mesuré). Détail et tableau des conséquences dans
+[ops/migration/README.md](../ops/migration/README.md).
+
+Trois piqûres de rappel encodées dans les scripts :
+
+1. **`agents/ledger.db` est en WAL.** Une copie brute du seul `.db` perdrait les
+   dernières transactions. L'export passe par l'API `backup` de sqlite. Vérifié :
+   121 runs relus dans la copie, dernier run identique à la source.
+2. **Le dossier de mémoire porte le chemin du projet dans son nom**
+   (`C--Users-schoe---FILES---Lowi-bkk` — tout caractère non alphanumérique devient
+   un tiret). L'import le **recalcule** pour la machine cible ; réutiliser le nom
+   d'origine déposerait la mémoire dans un dossier que Claude n'ouvrirait jamais.
+   Panne muette.
+3. **Les tâches Windows sont exportées en XML pour référence seulement.** La
+   réinstallation passe par `ops/install-agents-task.ps1`, qui dérive ses chemins de
+   son propre emplacement. Réimporter le XML figerait les chemins de l'ancienne
+   machine — exactement le défaut du 2026-07-11, trois tâches mortes vingt jours.
+
+Sans `agents/ledger.db`, `is_due()` croit que rien n'a jamais tourné et relance les
+cinq extracteurs en `--full` dès le premier cycle : **6 h 30**, mesuré le 2026-08-20.
+
+### Le coût réel de perdre Ollama n'est pas celui qu'on croit
+
+Trois modules appellent le modèle local. Deux ne l'utilisent que pour **rédiger**
+(`overseer`, `watch_health`) et ont déjà leur repli sur le texte brut. Le troisième,
+`organize`, est le seul usage décisionnel. Rendement relevé au ledger sur les cinq
+runs aboutis du 31/07 au 17/08 :
+
+| Run | Soumises | Abstentions | Taux | **Ajoutées à la revue** | Reste ambigu |
+|---|---|---|---|---|---|
+| 31/07 | 40 | 34 | 0,85 | 6 | 22 071 |
+| 06/08 | 300 | 300 | 1,00 | 0 | 23 566 |
+| 11/08 | 300 | 27 | 0,09 | 1 | 25 848 |
+| 12/08 | 40 | 40 | 1,00 | 0 | 26 108 |
+| 17/08 | 300 | 295 | 0,983 | 0 | 28 306 |
+
+**980 paires soumises, SEPT entrées de revue en trois semaines**, pendant que le stock
+ambigu montait de 22 071 à 28 306. Le tri SQL, lui, tranche 39 852 paires sur 68 458
+(58 %) sans aucun modèle. Le goulot n'est pas le volume soumis — c'est pourquoi le lot
+en mode ticket est posé à **60** et non 300.
+
+**Le vrai coût de l'absence était ailleurs, et c'était un garde-fou qui crie au
+loup.** `ask_safe` journalise chaque échec en constat de **sévérité HAUTE**. Sans
+déclaration d'absence, un poste sans Ollama produirait **jusqu'à 6 constats hauts par
+cycle, tous les jours, indéfiniment** (1 overseer + 5 watch-health) — et le compteur
+du widget resterait rouge en permanence sans jamais rien signaler de vrai. Règle 2
+appliquée : l'absence délibérée est un **état**, pas une panne.
+
+### Ce qui a été câblé
+
+Marqueur **par machine** `agents/t1-absent` (gitignoré : le dépôt est le même des deux
+côtés, le poste principal garde son modèle). `importe-poste.ps1` **sonde** Ollama et
+ne pose le marqueur que s'il ne répond pas. Avec marqueur : `ask_safe` rend `None`
+sans journaliser, `health()` rend un état sain explicite, et `organize` dépose un lot
+de 60 paires en ticket, drainé par `drain-agent-queue-lowi-bkk`.
+
+**Le contrat de décision ne change pas** : le ticket demande les **six mêmes faits**,
+et `decider()` tranche au retour. Déléguer la comparaison ne doit pas devenir déléguer
+la décision — le verdict direct atteint 92 % de justesse mais **0 % d'abstention**
+(0/30 sur les cas indécidables), l'extraction 91 % et **77 %**. L'abstention vient du
+code ; c'est pour ça qu'elle est fiable.
+
+**Deux journaux distincts, et c'est le point délicat** : `paires-faites.txt`
+(TRANCHÉE) et `paires-en-ticket.txt` (SOUMISE, en attente). Une paire omise de la
+réponse n'entre pas dans le premier ; une paire d'un ticket drainé sans réponse est
+libérée au dépôt suivant. Les confondre reproduirait le défaut du 2026-08-17.
+
+`agents/tests/test_tickets.py` verrouille les six propriétés, en dossier temporaire.
+
+### Défaut trouvé en testant, corrigé
+
+`escalation.create()` horodate à la **seconde**. Deux escalades du même agent et du
+même motif dans la même seconde portaient le même nom, et **la seconde écrasait la
+première sans bruit** — une escalade perdue, donc invisible. Suffixe numérique ajouté.
+Le défaut existait depuis le 2026-07-31 ; aucun cas de production identifié (les
+agents n'escaladent qu'une fois par cycle), c'est le test qui l'a fait sortir.
+
+### Non fait, non vérifié
+
+- **Rien n'a tourné en production dans le mode ticket.** Il est vérifié de bout en
+  bout sur des paires **synthétiques**, en dossier temporaire. Le premier vrai ticket
+  naîtra du premier cycle sur le 2e poste.
+- **Le débit de la boucle de retour n'est pas mesuré.** 60 paires par ticket est une
+  estimation de ce qu'une session traite sans se dégrader, pas une mesure. À
+  recalibrer après trois ou quatre tickets réels.
+- **`agents/tests/test_local_llm.py` ne tournera pas sur le 2e poste** (pas d'Ollama).
+  Il doit être **sauté explicitement, jamais assoupli** : ses seuils (≥ 90/100,
+  ≥ 70 % d'abstention) resserviront tels quels si un modèle local revient. Aucun
+  mécanisme de saut n'a été écrit — laissé en l'état.
+- **Le run `organize` du 11/08 reste inexpliqué** (taux d'abstention 0,09 contre ~1,0
+  ailleurs). Déjà repéré par `agents/tests/echantillon_neuf.py`, non élucidé.
+- **Aucun colis n'a été produit avec les secrets.** L'export a été essayé sans
+  `-AvecSecrets`, dans un dossier temporaire.
+- **La bascule des tâches d'un poste à l'autre n'est pas automatisée.** Si les
+  `LowiBKK-*` de l'ancien poste ne sont pas éteintes à la main, **les deux machines
+  scrapent la même chose en parallèle** — requêtes doublées vers les cinq sources.
+  L'import le rappelle en fin de rapport, il ne le fait pas.
+- **La question du créneau de 01:00 n'est pas tranchée.** Sur le poste actuel, le
+  déclencheur est raté deux nuits sur deux (machine en veille) et tout glisse vers
+  ~09:00 par rattrapage. Un poste 24/7 règle le symptôme sans qu'on ait décidé de la
+  posture (avancer l'heure, autoriser `WakeToRun`, ou assumer).

@@ -218,7 +218,7 @@ foreach ($r in $cfg.routines_claude) {
 $claude = @($claude | Sort-Object { if ($_.prochain) { $_.prochain } else { '9999' } })
 
 # 3 — agents Lowi
-$agents = @(); $escalades = 0; $constats = 0
+$agents = @(); $escalades = 0; $problemes = 0; $problemesDetail = @()
 if ($cfg.afficher_agents) {
     $py = Join-Path $PROJET 'scraper\.venv\Scripts\python.exe'
     if (-not (Test-Path $py)) { $py = 'python' }
@@ -226,8 +226,9 @@ if ($cfg.afficher_agents) {
         $brut = & $py (Join-Path $ICI 'etat_agents.py') 2>$null
         $etat = $brut | ConvertFrom-Json
         foreach ($e in $etat.erreurs) { $erreurs += "agents : $e" }
-        $escalades = [int]$etat.escalades
-        $constats  = [int]$etat.constats_hauts
+        $escalades       = [int]$etat.escalades
+        $problemes       = [int]$etat.problemes
+        $problemesDetail = @($etat.problemes_detail)
 
         $creneaux = Get-DeclenchementsTache -Nom $cfg.tache_orchestrateur
         foreach ($a in $etat.agents) {
@@ -257,19 +258,58 @@ if ($cfg.afficher_agents) {
     } catch { $erreurs += "etat_agents.py : $_" }
 }
 
-# 4 — modèle local
+# 4 — compteurs à rebours
+# Le widget n'affiche que ces lignes-là ; tout ce qui précède sert à les
+# calculer. Trois sources possibles :
+#   tache  — une tâche Windows, par son nom exact
+#   claude — une routine Claude, par son id
+#   agents — la plus proche échéance d'une FAMILLE d'agents
+# La troisième existe pour « Scrap Lowi » : la tâche orchestrateur part tous les
+# jours à 01:00, mais les extracteurs n'ont une cadence que de 4 jours. Pointer
+# le compteur sur la tâche annoncerait un scrap chaque nuit — faux trois nuits
+# sur quatre. On vise donc les extracteurs eux-mêmes.
+$compteurs = @()
+foreach ($k in $cfg.compteurs) {
+    $prochain = $null; $trouve = $false
+    switch ($k.source) {
+        'tache' {
+            $cible = $taches | Where-Object { $_.nom -eq $k.ref } | Select-Object -First 1
+            if ($cible) { $trouve = $true; $prochain = $cible.prochain }
+        }
+        'claude' {
+            $cible = $claude | Where-Object { $_.id -eq $k.ref } | Select-Object -First 1
+            if ($cible -and $cible.actif) { $trouve = $true; $prochain = $cible.prochain }
+        }
+        'agents' {
+            $famille = @($agents | Where-Object { $_.famille -eq $k.ref -and $_.prochain })
+            if ($famille.Count) {
+                $trouve = $true
+                $prochain = @($famille | Sort-Object { [datetime]$_.prochain })[0].prochain
+            }
+        }
+    }
+    # trouve=false n'est pas anodin : c'est une cible renommée ou supprimée, et
+    # sans ce drapeau le widget afficherait un tiret sans rien signaler.
+    $compteurs += [ordered]@{ libelle = $k.libelle; prochain = $prochain; trouve = $trouve }
+}
+
+# 5 — modèle local
 $ollama = @{ ok = $null; message = 'non verifie' }
 if ($cfg.verifier_ollama) { $ollama = Test-Ollama -Modele $cfg.modele_local }
 
 $resultat = [ordered]@{
-    genere_le      = (Get-Date).ToString('o')
-    taches         = $taches
-    claude         = $claude
-    agents         = $agents
-    escalades      = $escalades
-    constats_hauts = $constats
-    ollama         = $ollama
-    erreurs        = $erreurs
+    genere_le        = (Get-Date).ToString('o')
+    compteurs        = $compteurs
+    escalades        = $escalades
+    problemes        = $problemes
+    problemes_detail = $problemesDetail
+    ollama           = $ollama
+    erreurs          = $erreurs
+    # Sources brutes conservées : elles ne sont plus affichées, mais elles
+    # rendent `collecte.ps1 -Ecran` diagnosticable quand un compteur se tait.
+    taches           = $taches
+    claude           = $claude
+    agents           = $agents
 }
 
 $json = $resultat | ConvertTo-Json -Depth 6

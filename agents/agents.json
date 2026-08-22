@@ -13,6 +13,42 @@
   },
   "agents": [
     {
+      "name": "garde-veille",
+      "famille": "Supervision",
+      "tier": "T0",
+      "lanes": [
+        "daily",
+        "weekly"
+      ],
+      "every_days": 1,
+      "module": "agents.bots.garde_veille",
+      "always_run": true,
+      "_pourquoi": "Pose la demande d'éveil Windows (SetThreadExecutionState) pour tout le process orchestrateur AVANT le premier extracteur — 2026-08-16 : extract-ddproperty tué deux cycles d'affilée par une mise en veille moderne (Kernel-Power, 'Idle Timeout'), powercfg /requests vide au moment du constat. Doit tourner à CHAQUE invocation, pas seulement quand 'dû' : le verrou est propre au process, un ancien succès ne protège pas le process du jour. D'où 'always_run' — ignore le filtre is_due() de run_lane (voir orchestrator.py). Distingue aussi au passage une interruption par veille (finding 'coupure_veille', sévérité basse, rien à corriger) d'une vraie panne, pour ne pas polluer watch-health/overseer.",
+      "bandes": {
+        "traces_erreur": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "regle-alimentation",
+      "famille": "Supervision",
+      "tier": "T0",
+      "lanes": [],
+      "cmd": [
+        "@py",
+        "ops/regle-alimentation.py"
+      ],
+      "_pourquoi": "Écran off 5 min, veille 5 h (filet de sécurité, pas la protection principale — c'est garde-veille qui empêche la veille pendant un cycle actif), processeur plafonné 60 % (bruit/chaleur du ventilateur — SYSCOOLPOL absent sur ce matériel, mesuré le 2026-08-16, voir ops/regle-alimentation.py). 'lanes' VIDE à dessein : change une préférence persistante, pas une correction de bug détectée en cycle — invocation manuelle seulement (orchestrator.py run regle-alimentation), jamais via --due.",
+      "bandes": {
+        "traces_erreur": [
+          0,
+          0
+        ]
+      }
+    },
+    {
       "name": "verifie-backup",
       "famille": "Prelude",
       "tier": "T0",

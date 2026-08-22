@@ -30,7 +30,7 @@ create index if not exists idx_listings_description_fts
 
 -- Couverture : à surveiller après chaque scrape. Une source qui reste à 0 %
 -- signale un extracteur muet, pas une absence de descriptif côté site.
-create or replace view description_couverture as
+create or replace view description_couverture with (security_invoker = true) as
 select source,
        count(*)                                             as annonces,
        count(description)                                   as avec_description,

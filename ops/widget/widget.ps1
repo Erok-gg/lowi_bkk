@@ -217,26 +217,28 @@ function Ecrire-Position([int]$X, [int]$Y) {
 }
 
 # ──────────────────────────── mise en page ────────────────────────────
-function Format-Echeance {
+function Reste {
+    <# Délai restant, ou $null si la date manque. Séparé du formatage : la
+       couleur du compteur se décide sur ce nombre d'heures. #>
     param($T)
-    if (-not $T) { return '—' }
+    if (-not $T) { return $null }
     $t = if ($T -is [datetime]) { $T }
          else { [datetime]::Parse([string]$T, [cultureinfo]::InvariantCulture,
                                   [System.Globalization.DateTimeStyles]::RoundtripKind) }
-    $d = $t - (Get-Date)
-    if ($d.TotalSeconds -lt 0)       { return 'imminent' }
-    if ($d.TotalMinutes -lt 90)      { return "{0} min" -f [int]$d.TotalMinutes }
-    if ($t.Date -eq (Get-Date).Date) { return $t.ToString('HH:mm', $FR) }
-    if ($t.Date -eq (Get-Date).Date.AddDays(1)) { return $t.ToString("'dem.' HH:mm", $FR) }
-    if ($d.TotalDays -lt 6)          { return $t.ToString('ddd HH:mm', $FR) }
-    return $t.ToString('dd/MM HH:mm', $FR)
+    return $t - (Get-Date)
 }
 
-function Titre([string]$Texte) {
-    $t = [Windows.Controls.TextBlock]::new()
-    $t.Text = $Texte; $t.FontSize = (Taille) - 2.5; $t.Foreground = $P.violet
-    $t.Margin = if ($Corps.Children.Count) { '0,7,0,2' } else { '0,0,0,2' }
-    $Corps.Children.Add($t) | Out-Null
+function Format-Compte {
+    param($D)
+    # [Math]::Floor et surtout PAS [int] : sur un double, [int] ARRONDIT (et à
+    # l'entier pair, en prime). Un délai de 3,61 jours s'affichait « 4 j 14 h »,
+    # soit un jour de plus que la réalité — un compte à rebours qui arrondit
+    # vers le haut ne sert à rien.
+    if ($null -eq $D)          { return '—' }
+    if ($D.TotalMinutes -lt 1) { return 'imminent' }
+    if ($D.TotalHours   -lt 1) { return '{0} min' -f [Math]::Floor($D.TotalMinutes) }
+    if ($D.TotalHours   -lt 24){ return '{0} h {1:00}' -f [Math]::Floor($D.TotalHours), $D.Minutes }
+    return '{0} j {1} h' -f [Math]::Floor($D.TotalDays), $D.Hours
 }
 
 function Ligne {
@@ -271,63 +273,44 @@ function Construire {
 
     if (-not $E) { Ligne 'en attente de la collecte' '' $P.faible; return }
 
-    # Le préfixe commun se répète sur chaque ligne sans rien apprendre : on
-    # l'ôte de l'affichage, le nom complet reste dans l'infobulle.
-    $prefixe = [string]$script:reglages.prefixe_a_retirer
+    $seuil = if ($script:reglages.seuil_rouge_heures) { [double]$script:reglages.seuil_rouge_heures } else { 24 }
 
-    if ($E.taches.Count) {
-        Titre 'WINDOWS'
-        foreach ($t in $E.taches) {
-            $court = if ($prefixe -and $t.nom.StartsWith($prefixe)) { $t.nom.Substring($prefixe.Length) } else { $t.nom }
-            if ($t.desactivee) { Ligne $court 'off' $P.faible $t.nom; continue }
-            $val  = if ($t.encours) { 'en cours' } else { Format-Echeance $t.prochain }
-            $coul = if ($t.echec) { $P.rouge } else { $P.texte }
-            $info = "$($t.nom) — dernier : $(if ($t.dernier) { ([datetime]$t.dernier).ToString('dd/MM HH:mm', $FR) } else { 'jamais' })"
-            if ($t.echec) { $info += " (code $($t.resultat))" }
-            Ligne $court $val $coul $info
+    foreach ($k in $E.compteurs) {
+        if (-not $k.trouve) {
+            # Cible renommée ou supprimée. Le dire, plutôt qu'un tiret muet :
+            # c'est précisément le cas où un widget se met à mentir sans bruit.
+            Ligne $k.libelle 'introuvable' $P.rouge 'Cible absente — verifier compteurs dans config.json'
+            continue
         }
+        $d = Reste $k.prochain
+        $coul = if ($null -eq $d) { $P.faible }
+                elseif ($d.TotalHours -lt $seuil) { $P.rouge }
+                else { $P.texte }
+        $quand = if ($null -eq $d) { '' }
+                 else { 'le ' + ((Get-Date).Add($d)).ToString('ddd d MMM HH:mm', $FR) }
+        Ligne $k.libelle (Format-Compte $d) $coul $quand
     }
 
-    $actives = @($E.claude | Where-Object { $_.actif })
-    if ($actives.Count) {
-        Titre 'CLAUDE'
-        foreach ($r in $actives) { Ligne $r.nom (Format-Echeance $r.prochain) $P.texte $r.id }
+    # Les agents ne portent pas d'échéance ici : ils portent la charge à traiter.
+    # « escalades » = tickets ouverts en attente d'une décision ; « problèmes » =
+    # sujets DISTINCTS de sévérité haute sur 7 jours (agent + nature), pas les
+    # occurrences — 29 occurrences ne recouvraient que 4 sujets le 2026-08-13.
+    $n = [int]$E.escalades; $m = [int]$E.problemes
+    if ($n -eq 0 -and $m -eq 0) {
+        Ligne 'Agents' 'rien a regler' $P.faible
+    } else {
+        $info = if ($E.problemes_detail.Count) { $E.problemes_detail -join "`n" } else { $null }
+        Ligne 'Agents' "$n escalades · $m problemes" $P.ambre $info
     }
 
-    if ($E.agents.Count) {
-        Titre 'AGENTS'
-        $prochain = @($E.agents | Where-Object { $_.prochain } |
-                      Sort-Object { [datetime]$_.prochain } | Select-Object -First 1).prochain
-        Ligne 'cycle' (Format-Echeance $prochain) $P.or `
-              'Les agents dus partent au prochain declenchement de la tache orchestrateur.'
-
-        $rates = @($E.agents | Where-Object { $_.statut -and $_.statut -notin @('ok', 'skipped') })
-        if ($script:reglages.agents_detail) {
-            foreach ($a in $E.agents) {
-                $mauvais = $a.statut -and $a.statut -notin @('ok', 'skipped')
-                $coul = if ($mauvais) { $P.rouge } elseif ($a.du) { $P.ambre } else { $P.faible }
-                $val  = if ($mauvais) { $a.statut } else { Format-Echeance $a.prochain }
-                Ligne $a.nom $val $coul "$($a.tier) — cadence $($a.every_days) j"
-            }
-        } else {
-            $dus = @($E.agents | Where-Object { $_.du }).Count
-            if ($dus)         { Ligne 'dus au cycle' "$dus/$($E.agents.Count)" $P.ambre }
-            foreach ($a in $rates) { Ligne $a.nom $a.statut $P.rouge }
-        }
-    }
-
-    # Pied réduit à ce qui mérite le coup d'œil : rien à signaler, rien affiché.
-    $alertes = @()
-    if ($null -ne $E.ollama.ok -and -not $E.ollama.ok) { $alertes += "qwen $($E.ollama.message)" }
-    if ($E.escalades -gt 0)      { $alertes += "$($E.escalades) escalade(s)" }
-    if ($E.constats_hauts -gt 0) { $alertes += "$($E.constats_hauts) constat(s) haut(s)" }
-    if ($E.erreurs.Count)        { $alertes += "$($E.erreurs.Count) erreur(s) de collecte" }
-    if ($alertes.Count) {
+    # Ne parle que si la collecte elle-même est en panne — sinon le panneau
+    # afficherait des chiffres périmés sans le dire.
+    if ($E.erreurs.Count) {
         $a = [Windows.Controls.TextBlock]::new()
-        $a.Text = $alertes -join ' · '
-        $a.FontSize = (Taille) - 2.5; $a.Foreground = $P.ambre; $a.Margin = '0,6,0,0'
+        $a.Text = "collecte : $($E.erreurs.Count) erreur(s)"
+        $a.FontSize = (Taille) - 2.5; $a.Foreground = $P.rouge; $a.Margin = '0,5,0,0'
         $a.TextWrapping = 'Wrap'
-        if ($E.erreurs.Count) { $a.ToolTip = ($E.erreurs -join "`n") }
+        $a.ToolTip = ($E.erreurs -join "`n")
         $Corps.Children.Add($a) | Out-Null
     }
 }
@@ -486,8 +469,10 @@ $minuterie.Add_Tick({
         $script:reglages = (Lire-Config) ?? $script:reglages
         Lancer-Collecte
     }
-    elseif ($script:tics % ($parMinute * 2) -eq 0) {
-        Charger-Etat -Force      # réécrit les échéances relatives
+    elseif ($script:tics % $parMinute -eq 0) {
+        # Chaque minute : les compteurs affichent les minutes, ils doivent
+        # descendre à vue. Reconstruire 3 lignes est sans effet mesurable.
+        Charger-Etat -Force
     }
 
     if (-not $script:libre) {

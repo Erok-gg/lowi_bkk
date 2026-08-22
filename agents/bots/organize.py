@@ -32,6 +32,27 @@ REVUE = os.path.join(STATE, "revue.jsonl")
 # Plafond par cycle : 28 000 paires ambiguës × 3,6 s ≈ 28 h. On traite par lots.
 LOT_MAX = 300
 
+# ───────────────────────── mode « T1 absent » ─────────────────────────
+# Le 2e poste (24/7) ne peut pas héberger Ollama. La comparaison part alors en
+# TICKET, drainé par la routine `drain-agent-queue-lowi-bkk` (quotidienne).
+#
+# Lot volontairement petit — 60 et non 300. Ce n'est plus le débit du GPU qui
+# borne, c'est ce qu'une session de revue traite d'un coup sans se dégrader.
+# Le rendement mesuré ne réclame d'ailleurs pas 300 : sur les 5 runs aboutis du
+# 2026-07-31 au 2026-08-17, 980 paires soumises au modèle local ont produit
+# SEPT entrées de revue. Le goulot n'est pas le volume soumis.
+TICKET_LOT = 60
+
+# DEUX journaux distincts, et c'est le point délicat.
+#   paires-faites.txt   → paire TRANCHÉE, ne jamais retirer
+#   paires-en-ticket.txt → paire SOUMISE, réponse en attente
+# Les confondre reproduirait le défaut du 2026-08-17 : des paires marquées
+# « traitées » alors qu'elles avaient échoué, donc jamais re-tirées. Une paire
+# déposée n'entre dans `paires-faites` qu'au retour effectif de sa réponse.
+EN_TICKET = os.path.join(STATE, "paires-en-ticket.txt")
+FAITES = os.path.join(STATE, "paires-faites.txt")
+LOTS = os.path.join(STATE, "lots")
+
 # PROMPT EN ANGLAIS — mesuré le 2026-08-01 sur 90 paires ambiguës réelles, en
 # ciblant la configuration qui échoue (A sans date de retrait, B retirée) :
 #
@@ -225,6 +246,169 @@ def verifier_bornes(led, run_id: int) -> bool:
     return True
 
 
+# ───────────────── délégation à Claude quand T1 est absent ─────────────────
+def _purger_en_ticket() -> int:
+    """Rend tirables les paires d'un ticket drainé qui n'ont jamais reçu de réponse.
+
+    Sans ça, une paire déposée dans un ticket clos sans réponse resterait à
+    jamais dans `paires-en-ticket` sans jamais entrer dans `paires-faites` :
+    elle disparaîtrait du tirage en silence. Rend le nombre de paires libérées."""
+    if not os.path.exists(EN_TICKET) or not os.path.isdir(LOTS):
+        return 0
+    en_attente = {t.get("ticket") for t in escalation.pending()}
+    encore = set()
+    for nom in os.listdir(LOTS):
+        if nom not in en_attente:
+            continue
+        try:
+            with open(os.path.join(LOTS, nom), encoding="utf-8") as f:
+                encore |= {p["cle"] for p in json.load(f).get("paires", [])}
+        except (json.JSONDecodeError, KeyError, OSError):
+            continue
+
+    with open(EN_TICKET, encoding="utf-8") as f:
+        avant = {l.strip() for l in f if l.strip()}
+    garde = avant & encore
+    if len(garde) == len(avant):
+        return 0
+    tmp = EN_TICKET + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("".join(f"{c}\n" for c in sorted(garde)))
+    os.replace(tmp, EN_TICKET)      # remplacement atomique : jamais de fichier à moitié écrit
+    return len(avant) - len(garde)
+
+
+def deposer_en_ticket(led, run_id: int, ambigues: list[dict]) -> dict:
+    """Dépose un lot de paires en ticket au lieu de l'envoyer au modèle local.
+
+    Le contrat NE CHANGE PAS : on demande les six mêmes faits, et c'est
+    `decider()` qui tranche au retour. C'est de là que vient l'abstention — la
+    mesure du 2026-07-31 est formelle, le verdict direct atteint 92 % mais ne
+    s'abstient JAMAIS (0/30 sur les cas indécidables). Déléguer la comparaison
+    ne doit pas devenir déléguer la DÉCISION."""
+    os.makedirs(LOTS, exist_ok=True)
+    taille = int(os.environ.get("ORGANIZE_TICKET_LOT", TICKET_LOT))
+    liberees = _purger_en_ticket()
+
+    with gpu.Reprise(FAITES) as faites, gpu.Reprise(EN_TICKET) as deposees:
+        lot = []
+        for p in ambigues:
+            cle = f"{p['ida']}|{p['idb']}"
+            if cle in faites or cle in deposees:
+                continue
+            lot.append((cle, p))
+            if len(lot) >= taille:
+                break
+
+        if not lot:
+            return {"mode": "tickets", "paires_deposees": 0, "ticket": None,
+                    "paires_liberees": liberees,
+                    "note": "rien de nouveau à soumettre"}
+
+        paires = [{
+            "cle": cle,
+            "ida": p["ida"], "idb": p["idb"], "source": p["source"],
+            "condo": p["condo_name"], "khet": p["khet"],
+            "texte": fmt(p),
+            # Dates RÉELLES : `decider()` recalcule la chronologie en code au
+            # retour. Cas #21 — B vue le 02/07, A retirée le 16/07, et un modèle
+            # affirmait pourtant b_apres_a=true.
+            "dates": {"da": str(p.get("da") or ""), "fsb": str(p.get("fsb") or "")},
+        } for cle, p in lot]
+
+        ticket = escalation.create(
+            agent="organize", kind="comparaison_deleguee", severity="low",
+            subject=f"{len(paires)} paires ambiguës à comparer (poste sans modèle local)",
+            evidence={"paires": paires, "schema_attendu": SCHEMA,
+                      "consigne_extraction": SYSTEM,
+                      "reste_ambigues": len(ambigues)},
+            asked_of_claude=(
+                "CONSTATER, PAS CONCLURE. Pour chaque paire, rendre les 6 champs de "
+                "`schema_attendu` en lisant `texte` — rien d'autre. Ne PAS rendre de "
+                "verdict : c'est `decider()` qui tranche au retour, et c'est de là que "
+                "vient l'abstention (mesuré : verdict direct 92 % de justesse mais 0 % "
+                "d'abstention ; extraction 91 % et 77 % d'abstention).\n"
+                "Écrire les réponses dans agents/state/organize/reponses/<ticket>.json :\n"
+                '  {"ticket": "<nom du ticket>", "reponses": [{"cle": "<cle>", '
+                '"a_active": bool, "b_active": bool, "a_retiree": bool, "b_retiree": bool, '
+                '"b_apres_a": bool, "ecart_prix_pct": number}, ...]}\n'
+                "Puis appliquer :\n"
+                "  scraper/.venv/Scripts/python.exe -m agents.bots.organize "
+                "--appliquer agents/state/organize/reponses/<ticket>.json\n"
+                "Une paire dont on ne sait rien : l'OMETTRE. Elle sera re-soumise. "
+                "Ne jamais inventer un fait pour compléter le lot."),
+            ledger=led)
+
+        # Sidecar : la copie du lot survit au déplacement du ticket vers
+        # queue/done/. Sans elle, appliquer une réponse après drainage
+        # perdrait les dates réelles, donc la chronologie.
+        with open(os.path.join(LOTS, ticket), "w", encoding="utf-8") as f:
+            json.dump({"ticket": ticket, "paires": paires}, f,
+                      ensure_ascii=False, indent=1)
+
+        for cle, _ in lot:
+            deposees.marquer(cle)
+
+    return {"mode": "tickets", "paires_deposees": len(paires), "ticket": ticket,
+            "paires_liberees": liberees}
+
+
+def appliquer_reponses(chemin: str) -> dict:
+    """Referme la boucle : réponses → `decider()` → file de revue.
+
+    Sans ce chemin de retour, le dépôt de tickets serait un mécanisme à moitié
+    câblé — exactement ce que le journal reproche au T2 promis le 2026-07-31 et
+    que rien ne drainait avant le 2026-08-05."""
+    with open(chemin, encoding="utf-8") as f:
+        rep = json.load(f)
+    ticket = rep.get("ticket") or os.path.basename(chemin)
+
+    sidecar = os.path.join(LOTS, ticket)
+    if not os.path.exists(sidecar):
+        raise SystemExit(f"Lot introuvable pour ce ticket : {sidecar}")
+    with open(sidecar, encoding="utf-8") as f:
+        lot = {p["cle"]: p for p in json.load(f)["paires"]}
+
+    abstentions, revue, rejets = 0, 0, 0
+    os.makedirs(STATE, exist_ok=True)
+    with gpu.Reprise(FAITES) as faites, open(REVUE, "a", encoding="utf-8") as fh:
+        for r in rep.get("reponses", []):
+            cle = r.get("cle")
+            p = lot.get(cle)
+            if p is None:
+                rejets += 1
+                continue
+            faits = {k: r.get(k) for k in SCHEMA}
+            try:
+                # Même validation que pour le modèle local : un champ manquant
+                # ou d'un type faux est REJETÉ, jamais complété par défaut.
+                faits = local_llm.validate(faits, SCHEMA)
+            except local_llm.LLMError:
+                rejets += 1
+                continue
+
+            verdict = decider(faits, p.get("dates"))
+            if verdict == "insufficient":
+                abstentions += 1
+            else:
+                fh.write(json.dumps({
+                    "ida": p["ida"], "idb": p["idb"], "source": p["source"],
+                    "condo": p["condo"], "khet": p["khet"],
+                    "verdict_modele": verdict, "faits": faits,
+                    "origine": f"ticket:{ticket}",
+                    "statut_revue": "en_attente",
+                }, ensure_ascii=False, default=str) + "\n")
+                fh.flush()
+                revue += 1
+            # TRANCHÉE seulement maintenant. Une paire absente du fichier de
+            # réponses ou rejetée reste en `paires-en-ticket` sans entrer ici :
+            # elle ressortira au prochain nettoyage, elle n'est pas perdue.
+            faites.marquer(cle)
+
+    return {"ticket": ticket, "reponses": len(rep.get("reponses", [])),
+            "abstentions": abstentions, "revue_ajoutee": revue, "rejets": rejets}
+
+
 # ───────────────────── point d'entrée ─────────────────────
 def run(led, run_id: int, lane: str, spec: dict) -> dict:
     os.makedirs(STATE, exist_ok=True)
@@ -251,6 +435,17 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
     # même lot repassait à chaque cycle et les 25 848 autres n'auraient jamais
     # été traitées. Le journal de reprise (`gpu.Reprise`) l'a corrigé le même jour.
     random.shuffle(ambigues)
+
+    # Poste sans modèle local : on dépose, on ne compare pas ici. Le tirage
+    # aléatoire ci-dessus vaut pour les deux modes — c'est lui qui garantit que
+    # l'échantillon soumis représente la population, pas un coin de la base.
+    if local_llm.t1_absent():
+        m = deposer_en_ticket(led, run_id, ambigues)
+        m.update({"backfills": 0, "bornes_alignees": bornes_ok,
+                  "paires_candidates": len(paires), "paires_sql": tranchees_sql,
+                  "reste_ambigues": len(ambigues) - m["paires_deposees"]})
+        return m
+
     lot = ambigues[:int(os.environ.get("ORGANIZE_LOT", LOT_MAX))]
     abstentions, pannes, revue = 0, 0, 0
     t0 = time.time()
@@ -259,7 +454,7 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
     # sont disputé le GPU treize minutes sans que rien ne le signale.
     # `Reprise` note chaque paire tranchée : une coupure ne fait pas repartir de
     # zéro, et l'utilisateur peut reprendre sa machine quand il veut.
-    reprise = gpu.Reprise(os.path.join(STATE, "paires-faites.txt"))
+    reprise = gpu.Reprise(FAITES)
     cessions = 0
     with gpu.Verrou("organize"), reprise, open(REVUE, "a", encoding="utf-8") as fh:
         for i, p in enumerate(lot, 1):
@@ -326,3 +521,19 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
             "paires_modele": traites, "abstentions": abstentions,
             "taux_abstention": round(taux, 3), "revue_ajoutee": revue,
             "pannes_llm": pannes, "reste_ambigues": len(ambigues) - len(lot)}
+
+
+# ───────────────────── application des réponses déléguées ─────────────────────
+# Appelé par la session Claude qui draine `agents/queue/`. Volontairement un
+# point d'entrée séparé : appliquer une réponse ne doit JAMAIS pouvoir relancer
+# un scan ni toucher à la base des annonces.
+if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser(description="organize — application des réponses déléguées")
+    ap.add_argument("--appliquer", metavar="FICHIER",
+                    help="fichier de réponses JSON produit pour un ticket")
+    a = ap.parse_args()
+    if not a.appliquer:
+        ap.error("rien à faire : préciser --appliquer <fichier>")
+    print(json.dumps(appliquer_reponses(a.appliquer), ensure_ascii=False, indent=2))

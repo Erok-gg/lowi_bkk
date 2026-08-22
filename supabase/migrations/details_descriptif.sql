@@ -86,7 +86,7 @@ comment on column listings.d_annee_construction is
 
 -- Couverture par source — à surveiller après chaque scrape. Une source qui
 -- tombe à 0 signale un changement de gabarit chez elle, pas une absence de donnée.
-create or replace view details_couverture as
+create or replace view details_couverture with (security_invoker = true) as
 select source,
        count(*)                                                  as annonces,
        round(100.0 * count(d_etage)              / nullif(count(*),0), 1) as pct_etage,

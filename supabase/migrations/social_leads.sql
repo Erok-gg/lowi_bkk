@@ -77,7 +77,7 @@ create index if not exists idx_social_posted  on social_leads (posted_at desc);
 -- une tour dont la médiane est tirée par des 2-3 chambres ressort à -60 % sans
 -- être une affaire. D'où le tri par surface renseignée, et la comparaison par
 -- strate (cf. lib/yields.ts) à appliquer avant toute conclusion.
-create or replace view social_leads_opportunites as
+create or replace view social_leads_opportunites with (security_invoker = true) as
 select
   id, source_url, posted_at, author,
   deal_type, condo_name, khet, station,

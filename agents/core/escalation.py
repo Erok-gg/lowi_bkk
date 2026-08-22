@@ -29,6 +29,14 @@ def create(agent: str, kind: str, severity: str, subject: str,
     os.makedirs(DONE, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%S")
     name = f"{stamp}-{agent}-{kind}.json"
+    # L'horodatage est à la SECONDE : deux escalades du même agent et du même
+    # motif dans la même seconde portaient le même nom, et la seconde écrasait
+    # la première SANS BRUIT — une escalade perdue, donc invisible. Trouvé en
+    # testant le dépôt de tickets le 2026-08-21.
+    n = 2
+    while os.path.exists(os.path.join(QUEUE, name)):
+        name = f"{stamp}-{agent}-{kind}-{n}.json"
+        n += 1
 
     payload = {
         "ticket": name,

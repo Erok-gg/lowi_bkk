@@ -23,6 +23,7 @@ import argparse
 import importlib
 import json
 import os
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
@@ -31,8 +32,15 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(ROOT)
 sys.path.insert(0, PROJECT)
 
-from agents.core import alert, shell                      # noqa: E402
+from agents.core import alert, escalation, shell           # noqa: E402
 from agents.core.ledger import Ledger                     # noqa: E402
+
+#: Marqueur émis par scraper/run.py quand la sonde de structure (page 1)
+#: échoue AVANT le scan complet — voir scraper/adapters/base.py:sonder().
+#: Repris ici pour escalader tout de suite, sans attendre watch-health (qui
+#: reste à sa place normale, en fin de cycle, et n'escalade qu'après 2 runs
+#: consécutifs à zéro — jusqu'à 8 j de scans pour rien sinon).
+SONDE_ECHEC_RE = re.compile(r"^\[SONDE-ECHEC\] (\S+) : (.+)$", re.M)
 
 REGISTRY = json.load(open(os.path.join(ROOT, "agents.json"), encoding="utf-8"))
 AGENTS = {a["name"]: a for a in REGISTRY["agents"]}
@@ -157,6 +165,27 @@ def run_agent(led: Ledger, name: str, lane: str | None = None,
                 metrics["etapes"].append({"etape": label, "exit": c_code, **m})
                 if c_code != 0:
                     code = c_code   # code final = dernier echec rencontre
+
+                sonde = SONDE_ECHEC_RE.search(out)
+                if sonde:
+                    source, diag = sonde.group(1), sonde.group(2)
+                    metrics["etapes"][-1]["sonde_echec"] = diag
+                    ticket = escalation.create(
+                        agent=name, kind="parser_break", severity="high",
+                        subject=f"{name} ({label}) : sonde de structure en échec avant scan — {diag}",
+                        evidence={"source": source, "diagnostic": diag, "etape": label, "log": lg},
+                        asked_of_claude=(
+                            f"Le marqueur de structure attendu sur la page de liste de {source} "
+                            f"a changé ou disparu : « {diag} ». Inspecter une page de liste réelle, "
+                            f"identifier le changement, corriger scraper/adapters/{source}.py "
+                            f"SUR UNE BRANCHE."),
+                        ledger=led)
+                    led.finding(name, "high", "sonde_echec",
+                               f"{name} ({label}) : {diag}", {"ticket": ticket}, run_id)
+                    alert.alert(name, f"{name} : sonde de structure en échec ({source})",
+                               f"{diag}\nTicket : {ticket}\nLog : {lg}")
+                    print(f"  ⚠ sonde de structure en échec — ticket {ticket} déposé "
+                         f"(pas d'attente des 2 runs de watch-health)")
     except Exception as e:                                   # noqa: BLE001
         led.end_run(run_id, "failed", 1, {"exception": f"{type(e).__name__}: {e}"})
         led.finding(name, "high", "exception", f"{name} a levé {type(e).__name__}",
@@ -177,8 +206,21 @@ def run_agent(led: Ledger, name: str, lane: str | None = None,
 
 
 def run_lane(led: Ledger, lane: str, dry: bool = False, only_due: bool = True,
-             local: str | None = None, parallele: bool = True) -> None:
+             local: str | None = None, parallele: bool = True,
+             skip_extraction: bool = False) -> None:
+    """`skip_extraction` (2026-08-17) : rejoue la séquence normale — analyse,
+    organisation, rapport, backup, overseer — SANS retoucher aux extracteurs.
+
+    Sert à deux cas où re-scraper serait du temps perdu ou pire : (1) un
+    rattrapage manuel après une extraction déjà faite hors du `--due` normal
+    (ex. relancée à la main suite à une coupure) ; (2) le rattrapage au boot
+    (voir `--boot`) — si la machine était éteinte au moment du cycle de nuit,
+    on veut que analyse/rapport/backup partent au réveil SANS déclencher un
+    scrap complet à une heure imprévisible. `is_due()` continue de filtrer
+    normalement : si rien n'est dû, ce mode ne fait rien (pas de forçage)."""
     mode = f" — LOCAL → {local}" if local else ""
+    if skip_extraction:
+        mode += " — SANS EXTRACTION"
     print(f"\n═══ Lane « {lane} » — {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC{mode} ═══")
     ordered = [a for a in REGISTRY["agents"] if lane in a.get("lanes", [])]
     # l'overseer relit le cycle : toujours en dernier
@@ -187,17 +229,31 @@ def run_lane(led: Ledger, lane: str, dry: bool = False, only_due: bool = True,
     a_lancer = []
     for spec in ordered:
         due, why = is_due(led, spec)
+        if spec.get("always_run") and not due:
+            why = f"{why} — lancé quand même (always_run : {spec['name']} agit sur CE process, pas sur l'état laissé par le précédent)"
+            due = True
         if only_due and not due:
             print(f"  · {spec['name']} — {why}")
             continue
         a_lancer.append(spec)
+
+    # SUPERVISION (garde-veille) : avant même le Prelude. Pose le verrou
+    # d'éveil sur le process AVANT que quoi que ce soit de long ne démarre —
+    # un Prelude qui prend du temps (rattrapage backup) est tout aussi exposé
+    # à une mise en veille que les extracteurs.
+    supervision = [s for s in a_lancer if s.get("famille") == "Supervision"]
+    for spec in supervision:
+        run_agent(led, spec["name"], lane, dry, local)
 
     # PRELUDE : avant toute extraction, séquentiel. Sert au backup local
     # (ops/sync_supabase_local.py, agent backup-avant-cycle) — un point de
     # retour en arrière pris juste avant que le cycle ne touche la base.
     # Ne DOIT PAS tourner en parallèle des extracteurs ni entre agents Prelude
     # eux-mêmes : c'est un point de repère, pas un travail concurrent.
-    prelude = [s for s in a_lancer if s.get("famille") == "Prelude"]
+    # verifie-backup n'a de sens que juste AVANT une extraction (c'est tout
+    # son rôle) — inutile en skip_extraction, et pas anodin (peut déclencher
+    # un rattrapage ops/sync_supabase_local.py pour rien).
+    prelude = [] if skip_extraction else [s for s in a_lancer if s.get("famille") == "Prelude"]
     for spec in prelude:
         run_agent(led, spec["name"], lane, dry, local)
 
@@ -207,8 +263,13 @@ def run_lane(led: Ledger, lane: str, dry: bool = False, only_due: bool = True,
     # plus lourde au lieu de la somme (mesuré : 31 h → ~16 h).
     # Tout le reste (analyse, organisation, audit) reste séquentiel : ces agents
     # lisent l'état laissé par les extracteurs.
-    extracteurs = [s for s in a_lancer if s.get("famille") == "Extraction"]
-    suite = [s for s in a_lancer if s.get("famille") not in ("Extraction", "Prelude")]
+    extracteurs = [] if skip_extraction else [s for s in a_lancer if s.get("famille") == "Extraction"]
+    suite = [s for s in a_lancer if s.get("famille") not in ("Extraction", "Prelude", "Supervision")]
+
+    if skip_extraction:
+        sautes = [s["name"] for s in a_lancer if s.get("famille") in ("Extraction", "Prelude")]
+        if sautes:
+            print(f"  ⏭ sautés (skip_extraction) : {', '.join(sautes)}")
 
     if extracteurs and not dry and parallele and len(extracteurs) > 1:
         print(f"  ⇉ {len(extracteurs)} extracteurs en parallèle "
@@ -272,6 +333,14 @@ def main() -> None:
     ap.add_argument("--local", metavar="DOSSIER", default=None,
                     help="scrap vers un store SQLite isolé (aucune écriture Supabase) ; "
                          "les agents qui lisent Supabase sont sautés")
+    ap.add_argument("--skip-extraction", action="store_true",
+                    help="run-lane : rejoue analyse/organisation/rapport/backup/overseer "
+                         "SANS toucher aux extracteurs ni à verifie-backup")
+    ap.add_argument("--boot", action="store_true",
+                    help="mode rattrapage au démarrage/logon : comme --due, mais SANS "
+                         "extraction (voir --skip-extraction) — rattrape la suite du cycle "
+                         "si la machine était éteinte au moment du cycle de nuit, sans "
+                         "déclencher un scrap complet à une heure imprévisible")
     a = ap.parse_args()
 
     if a.local:
@@ -280,7 +349,10 @@ def main() -> None:
 
     led = Ledger()
     try:
-        if a.due:
+        if a.boot:
+            run_lane(led, current_lane(), a.dry_run, only_due=True, local=a.local,
+                     skip_extraction=True)
+        elif a.due:
             run_lane(led, current_lane(), a.dry_run, only_due=True, local=a.local)
         elif a.command == "status":
             cmd_status(led)
@@ -296,7 +368,8 @@ def main() -> None:
         elif a.command == "run-lane":
             if not a.target:
                 ap.error("run-lane demande sale|rent|weekly")
-            run_lane(led, a.target, a.dry_run, only_due=not a.all, local=a.local)
+            run_lane(led, a.target, a.dry_run, only_due=not a.all, local=a.local,
+                     skip_extraction=a.skip_extraction)
     finally:
         led.close()
 
