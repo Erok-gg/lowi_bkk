@@ -50,6 +50,17 @@ vont ensemble, sinon le scrap suivant échoue sur une colonne inconnue.
 ## Objectif
 Outil **perso, non public** : carte interactive de Bangkok découpée par quartiers, cliquable (zoom au clic), thème dark violet/anthracite, alimentée par des annonces immobilières scrapées (condos **vente + location**, **foreigner & thai quota**), avec fiches biens et statistiques agrégées (ville / quartier / rue).
 
+## Les deux postes (nommer avant d'agir)
+| | `$env:COMPUTERNAME` | Rôle |
+|---|---|---|
+| **PC1** | **`BB-12`** | **Sauvegarde.** Ne scrape plus (tâches `LowiBKK-*` `Disabled`). Détient les images locales purgées de Storage et une archive figée. Ollama y tourne. |
+| **PC2** | **`REMIZDABOSS`** | **Coureur.** Exécute le cycle : ledger vivant, `state/`, `queue/`, archive à jour. Pas d'Ollama → marqueur `agents/t1-absent`, T1 délégué à Claude par tickets. |
+
+Toute consigne dépendant de la machine (désactiver des tâches, supprimer des
+sorties locales, juger une archive « en retard ») **se vérifie d'abord par
+`$env:COMPUTERNAME`** : la même phrase est juste sur un poste et destructrice
+sur l'autre.
+
 ## Stack & choix architecturaux (verrouillés)
 | Domaine | Choix | Raison |
 |---|---|---|

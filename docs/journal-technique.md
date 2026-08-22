@@ -2460,3 +2460,97 @@ agents n'escaladent qu'une fois par cycle), c'est le test qui l'a fait sortir.
   déclencheur est raté deux nuits sur deux (machine en veille) et tout glisse vers
   ~09:00 par rattrapage. Un poste 24/7 règle le symptôme sans qu'on ait décidé de la
   posture (avancer l'heure, autoriser `WakeToRun`, ou assumer).
+
+## 2026-08-22 — Le ménage de PC1 rejoué sur PC2 : presque aucun de ses chiffres ne tenait
+
+Une note de passation écrite depuis **PC1 (`BB-12`)** listait le ménage à refaire ici.
+Elle prévenait elle-même qu'il fallait re-mesurer. Bien lui en a pris : **sur les six
+suppressions annoncées, deux seulement avaient un objet sur PC2 (`REMIZDABOSS`)**, et
+l'ordre proposé était faux.
+
+### Ce que la mesure a corrigé
+
+| Cible | PC1 | PC2, mesuré le 2026-08-22 |
+|---|---|---|
+| `scraper/output/fiches` | 55 649 fichiers, 117,2 Mo | **4 247 fichiers, 8,6 Mo** |
+| `tests-scrap` | 1,25 Go | **absent** (clone récent, dossier gitignoré) |
+| `.next/cache` | 185 Mo | **absent** (l'app n'est pas buildée ici) |
+| `*.log` dans `scraper/output` | à purger | **aucun** |
+| `LowiBKK-ArchiveSync` | supprimée | **n'a jamais existé ici** |
+| `scraper/output/images` | 3,87 Go | 158,9 Mo — **à ne pas toucher**, seule copie |
+
+**Gain réel du ménage disque : 8,6 Mo.** Pas 1,4 Go. Le ménage n'avait ici aucune
+valeur d'espace ; ce qu'il a acheté est ailleurs (voir les lanceurs, plus bas).
+
+### L'ordre était faux, parce que la route A n'existait pas
+
+La note proposait « fusionner la branche de PC1, *puis* supprimer les fiches ».
+`git fetch` : **la branche `menage/grappe-supervision-pre-agents` n'est pas sur
+`origin`**, et `main` est aligné. Route B, donc — et route B change l'ordre : le
+drapeau `--fiches` n'existait pas ici, si bien que supprimer d'abord aurait laissé le
+cycle suivant réécrire les 4 000 fiches. Le drapeau a été ajouté avant la suppression.
+
+Un second préalable, absent de la note : **six fichiers modifiés non commités**, dont
+trois correctifs de fond du jour qui n'existent nulle part ailleurs (forçage UTF-8 des
+sous-processus, déblocage nestopa, en-tête d'upload menteur). La note supposait un
+dépôt propre.
+
+### Ce qui rend les fiches supprimables — vérifié ici, pas repris de PC1
+
+1. Les **4 247** fiches avaient **toutes** leur ligne dans `archive/lowi-archive.db`
+   (0 absente). Aucune n'était le dernier témoin de quoi que ce soit.
+2. **Aucun lecteur** : croisement sur `.py`/`.ts`/`.tsx`/`.ps1`/`.json` — les seules
+   occurrences sont l'écrivain lui-même et des commentaires.
+3. **Rien d'embarqué** : HTML + CSS, image référencée par chemin relatif, **0 base64**.
+4. Côté serveur, les **48 907 `listing_images` sont à 100 % des `.webp`, 0 HTML** — le
+   bucket n'en contient pas non plus.
+
+### La seule suppression qui achetait quelque chose
+
+`scraper/_run-scrape.ps1` et les deux `.bat` du double-clic bouclaient sur **quatre
+sources** (`fazwaz`, `ddproperty`, `propertyscout`, `nestopa`) en `--full` :
+LivingInsider, ajoutée le 2026-08-05, n'y figurait pas. Un double-clic lançait donc un
+**scan partiel avec délistage**, ce que le projet interdit. Sur PC1 ils étaient
+inertes ; **ici c'est la machine qui scrape**. Aucune tâche Windows ni aucun script ne
+les appelait — vérifié avant suppression.
+
+### Deux constats de surveillance, non traités
+
+- **`LowiBKK-Agents` est `Disabled` sur PC2**, alors que c'est elle qui fait tourner le
+  cycle. Le cycle du jour n'a tourné que par `LowiBKK-RattrapageBoot` au logon. En
+  l'état, **plus aucun cycle ne part sans ouverture de session**. Cause non établie —
+  ménage joué en croyant être sur PC1, ou désactivation volontaire. Laissé à
+  l'arbitrage (règle 5).
+- **`ops/verifie-synchro.py` signale 1 écriture en base sans run local** (`nestopa`,
+  03:27 UTC). Le ledger montre le run nestopa du cycle terminé à 03:17 UTC : l'écriture
+  est **dix minutes plus tard**, ce qui pointe le test manuel de la nouvelle config
+  nestopa du jour, pas un double coureur. **Non vérifié formellement** — ça se
+  confirmerait en constatant que les `LowiBKK-*` de `BB-12` sont bien `Disabled`.
+
+### Défaut trouvé en route, non corrigé
+
+Le forçage UTF-8 commité aujourd'hui ne couvre que les **sous-processus lancés par
+`agents/core/shell.py`**. Lancé à la main depuis un terminal, `ops/verifie-synchro.py`
+meurt toujours sur le premier caractère de son premier titre (`UnicodeEncodeError`
+cp1252) ; il faut `$env:PYTHONUTF8="1"` devant. Le défaut vaut pour **tout script
+`ops/` lancé à la main sur ce poste**, pas seulement celui-là. Correctif possible :
+`sys.stdout.reconfigure(encoding="utf-8")` en tête des scripts `ops/`, ou une variable
+d'environnement posée une fois pour la machine. Non tranché.
+
+### Non fait
+
+- **Rien n'a été poussé sur `origin`** : les cinq commits du jour sont locaux.
+- **Le marqueur `agents/coureur`** (qui empêcherait durablement PC1 de relancer une
+  lane) reste non écrit — c'était déjà un point en suspens de la note de PC1.
+- **Les 11 autres fichiers morts** listés par la note (grappe de supervision d'avant
+  les agents : `ops/superviseur.py`, `install-superviseur.ps1`,
+  `install-scrap-nocturne.ps1`, `lancement-complet.ps1`, `test-session.ps1`,
+  `juge-test.py`, `comparer-local-prod.py`, `backfill-details.py`, `scrap-vente.ps1`,
+  `scrap-location.ps1`, `sync-archive.ps1`) **sont toujours présents ici**. Ils sont
+  inertes — aucune tâche `LowiBKK-*` ne les appelle — et n'ont donc pas la même
+  urgence que les lanceurs. Suppression laissée à l'arbitrage.
+- **Le corpus d'images reste coupé en deux** (PC1 détient ce que Storage a purgé, PC2
+  ce qui est arrivé depuis la bascule, le téléversement est suspendu) et **l'archive de
+  référence n'est pas désignée**. Constats de la note de PC1, non traités ici.
+- **`khet` : 91 valeurs distinctes pour 50 quartiers officiels** — non revérifié, non
+  corrigé, `ops/corriger-khet.py` non relancé.
