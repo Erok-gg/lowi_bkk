@@ -2582,3 +2582,61 @@ qui signale un faux positif récurrent apprend à être ignoré (règle 2).
 
 **`LowiBKK-Agents` est repassée `Ready`** entre-temps. Le cycle repart donc de
 lui-même ; le constat de désactivation ci-dessus est levé.
+
+### Suite (2) — le créneau de 01:00 tranché, avec sa contrepartie
+
+Le « non tranché » du 2026-08-21 (« avancer l'heure, autoriser `WakeToRun`, ou
+assumer ») est décidé : **01:00, quotidienne, réveil à l'aller et rendormissement au
+retour**.
+
+**L'heure.** La tâche vivante était à **06:00** alors que `ops/install-agents-task.ps1`
+a `01:00` en défaut depuis sa création — elle a dérivé, probablement re-enregistrée à
+la main lors du transfert. Réinstallée par le script, jamais par réimport de XML
+(chemins figés, défaut du 2026-07-11). Relu après coup : `Ready`, déclencheur
+`01:00`, `DaysInterval 1`, `WakeToRun`, prochain passage le 23/08 à 01:00.
+
+**Le rendormissement, et pourquoi il ne pouvait pas être inconditionnel.** Réveiller
+sans rendormir laisse le poste allumé jusqu'au matin : `garde-veille` tient un verrou
+`SetThreadExecutionState` pendant tout le cycle, et la veille par inactivité du plan
+est à 5 h. Mais le même orchestrateur tourne en `--boot` (rattrapage au logon) et à la
+main : endormir la machine sous les doigts de quelqu'un serait pire que le défaut
+corrigé. D'où **deux verrous** dans `agents/core/veille.py` :
+
+1. l'appelant doit poser `--veille-a-la-fin` — la seule tâche planifiée le fait,
+   `--boot` jamais ;
+2. le module **refuse** si clavier ou souris ont bougé dans les 15 min
+   (`GetLastInputInfo`). C'est la garantie qui ne dépend pas de la bonne foi de
+   l'appelant, et la seule des deux qui soit vérifiable sans attendre 01:00 : appelé
+   pendant cette séance, il rend « veille sautée : quelqu'un utilise la machine ».
+
+Le verrou d'éveil est relâché avant la suspension, et `led.close()` la précède — un
+SQLite laissé ouvert au moment d'une coupure ne survivrait pas, et le ledger est la
+seule mémoire de ce qui est dû.
+
+### Un contrôle qui ne regardait qu'une valeur sur deux
+
+`powercfg /query SCHEME_CURRENT SUB_SLEEP RTCWAKE` rend **deux** index : secteur et
+batterie. Sur `REMIZDABOSS` : **AC = 0x1 (autorisé), DC = 0x0 (interdit)**. Le contrôle
+de fin d'installeur ne lisait que `$valeurs[0]` — la valeur secteur — et affichait donc
+« Minuteurs de reveil autorises » sur un poste qui ne se réveille pas sur batterie. Un
+réveil qui ne survient qu'une fois sur deux selon que le câble est branché est
+exactement le genre de panne qu'on ne remarque pas (règle 2). L'installeur lit les deux
+et le dit. **Non modifié** : la valeur batterie elle-même — c'est une préférence
+d'alimentation, elle relève de l'arbitrage (`powercfg /setdcvalueindex SCHEME_CURRENT
+SUB_SLEEP RTCWAKE 1`). En l'état, endormie sur batterie, la machine repart au logon par
+`LowiBKK-RattrapageBoot`.
+
+### Non vérifié
+
+**La suspension elle-même n'a pas été testée.** On ne déclenche pas une mise en veille
+depuis une session de travail. Deux inconnues restent, mesurées mais pas levées :
+`powercfg /a` ne donne que l'état **S0** sur ce poste (ni S1, ni S2, ni S3) et
+**l'hibernation est active** — or `SetSuspendState(bHibernate=FALSE, …)` est documenté
+comme pouvant mettre en veille prolongée quand même dans ce cas. Si la machine hiberne
+au lieu de dormir, ce n'est pas une panne du cycle : le réveil RTC fonctionne aussi
+depuis l'hibernation, le retour est seulement plus lent. La vérification viendra du
+premier cycle réel — `LastRunTime` à 01:00 le 23/08 dira si le réveil a eu lieu, et
+l'état de la machine au matin si le rendormissement a eu lieu.
+
+`powercfg /waketimers`, qui listerait les minuteurs réellement armés, **exige une
+console administrateur** et n'a pas pu être lu.
