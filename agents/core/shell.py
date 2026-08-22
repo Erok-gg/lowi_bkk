@@ -30,9 +30,28 @@ def run(cmd: list[str], cwd: str | None = None, log: str | None = None,
     `env_extra` sert au mode local : LOWI_OUTPUT_DIR redirige base, images et
     fiches vers un dossier de test sans toucher à la production."""
     cmd = [VENV_PY if part == "@py" else part for part in cmd]
-    env = None
+    # ENCODAGE DES SOUS-PROCESSUS — force en UTF-8, toujours.
+    #
+    # Releve le 2026-08-22 sur le 2e poste : `report` et `backup-apres-cycle`
+    # echouaient a CHAQUE cycle depuis le transfert (4 runs 'failed' d'affilee,
+    # dernier succes il y a 4,7 j) sur un UnicodeEncodeError cp1252.
+    # study/run_study.py et ops/sync_supabase_local.py meurent sur le « ▶ » de
+    # leur PREMIERE ligne, avant tout travail : ni l'etude de marche ni la
+    # sauvegarde locale ne se faisaient plus.
+    #
+    # CAUSE : le parent lit deja le pipe en utf-8 (voir Popen ci-dessous), mais
+    # l'ENFANT choisit son encodage de sortie selon la locale — ACP=1252 sur ce
+    # poste, PYTHONUTF8 absent. L'ancien poste tournait en UTF-8 : le defaut
+    # etait invisible avant la migration, et le code n'a pas change.
+    #
+    # POURQUOI PERSONNE NE L'A VU : l'orchestrateur, lui, survit. Lance par le
+    # planificateur il n'a pas de console, ses prints partent au vide. Seuls les
+    # enfants, dont le stdout est un vrai pipe, plantent — d'ou un `--due` qui
+    # rend 0 pendant que deux agents tombent, cycle apres cycle.
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     if env_extra:
-        env = os.environ.copy()
         env.update(env_extra)
     buf: list[str] = []
     fh = open(log, "w", encoding="utf-8", errors="replace") if log else None
