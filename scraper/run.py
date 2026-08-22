@@ -129,6 +129,17 @@ def main() -> None:
                     help="complète street/coords manquants via Nominatim (1 req/s, caché)")
     ap.add_argument("--config", default=None,
                     help="config JSON alternative (scrap ciblé, ex. config/targets/…)")
+    # Fiche HTML par annonce : sortie DÉRIVÉE, coupée par défaut le 2026-08-22.
+    # Mesuré ce jour-là sur PC1 : 55 649 fichiers pour 112 Mo, dont 13 487 écrits
+    # sur la seule semaine précédente — et AUCUN lecteur, ni l'app, ni les agents,
+    # ni les études. Vérifié aussi sur PC2 le même jour : les 4 247 fiches
+    # présentes avaient toutes leur ligne dans archive/lowi-archive.db, et le
+    # fichier n'embarque rien (image référencée par chemin relatif, 0 base64).
+    # C'est du rendu, pas de la donnée. Le module pipeline/fiche.py reste en
+    # place, ce drapeau le rallume tel quel.
+    ap.add_argument("--fiches", action="store_true",
+                    help="écrit une fiche HTML par annonce dans output/fiches/ "
+                         "(coupé par défaut : sortie dérivée, sans lecteur)")
     args = ap.parse_args()
 
     prevent_sleep()  # pas de veille système pendant le scrap (écran libre)
@@ -316,10 +327,12 @@ def main() -> None:
                 n_unchanged += 1
 
             # fiche HTML (relit les images stockées si on n'en a pas reprocessé)
-            imgs_for_fiche = images or [
-                {"storage_path": f"images/{norm['id'].replace(':', '_')}/0.webp"}
-            ] if norm.get("image_urls") else []
-            write_fiche(norm, imgs_for_fiche, OUTPUT_DIR)
+            # — plus rien n'est écrit sans --fiches : voir le drapeau dans main().
+            if args.fiches:
+                imgs_for_fiche = images or [
+                    {"storage_path": f"images/{norm['id'].replace(':', '_')}/0.webp"}
+                ] if norm.get("image_urls") else []
+                write_fiche(norm, imgs_for_fiche, OUTPUT_DIR)
 
             print(f"  [{status:9}] {norm['id']} — {norm.get('condo_name')} "
                   f"({norm.get('price')} {norm['currency']}, {norm.get('khet')})")
@@ -401,7 +414,10 @@ def main() -> None:
                   f"prix/m² moyen : {s['avg_price_per_sqm']}")
 
     print(f"\n✓ DB : {OUTPUT_DIR / 'bangkok.db'}")
-    print(f"✓ Fiches : {OUTPUT_DIR / 'fiches'}  |  Images : {OUTPUT_DIR / 'images'}")
+    if args.fiches:
+        print(f"✓ Fiches : {OUTPUT_DIR / 'fiches'}  |  Images : {OUTPUT_DIR / 'images'}")
+    else:
+        print(f"✓ Images : {OUTPUT_DIR / 'images'}  (fiches HTML coupées, --fiches pour les rallumer)")
     store.close()
 
 
