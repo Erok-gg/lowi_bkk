@@ -341,6 +341,15 @@ def main() -> None:
                          "extraction (voir --skip-extraction) — rattrape la suite du cycle "
                          "si la machine était éteinte au moment du cycle de nuit, sans "
                          "déclencher un scrap complet à une heure imprévisible")
+    # Contrepartie du réveil de 01:00 : sans elle, la machine réveillée pour un
+    # cycle de ~5 h reste allumée jusqu'au matin (garde-veille tient un verrou
+    # d'éveil tout du long, et la veille par inactivité du plan est à 5 h).
+    # Réservé à la tâche planifiée : jamais posé par --boot, qui part au logon,
+    # utilisateur présent. agents/core/veille.py refuse de toute façon si
+    # clavier ou souris ont bougé récemment — deux verrous, pas un.
+    ap.add_argument("--veille-a-la-fin", action="store_true",
+                    help="rendort la machine quand la lane est finie (tâche "
+                         "planifiée uniquement ; sauté si quelqu'un utilise le poste)")
     a = ap.parse_args()
 
     if a.local:
@@ -372,6 +381,15 @@ def main() -> None:
                      skip_extraction=a.skip_extraction)
     finally:
         led.close()
+
+    # APRÈS led.close() : la base doit être fermée proprement avant que le
+    # système se suspende. En veille moderne (S0) le process survit, mais un
+    # SQLite laissé ouvert au moment d'une coupure d'alimentation ne survivrait
+    # pas — et le ledger est la seule mémoire de ce qui est dû.
+    if a.veille_a_la_fin:
+        from agents.core import veille
+        dormi, raison = veille.endort(dry_run=a.dry_run)
+        print(f"[veille] {raison}")
 
 
 if __name__ == "__main__":

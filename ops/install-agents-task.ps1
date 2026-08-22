@@ -23,7 +23,13 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [string]$Heure = "01:00",
-    [switch]$GarderAnciennes
+    [switch]$GarderAnciennes,
+    # Contrepartie du reveil : la machine reveillee a 01:00 pour un cycle de
+    # ~5 h restait allumee jusqu'au matin. --veille-a-la-fin la rendort quand la
+    # lane est finie. Cote Python, agents/core/veille.py REFUSE si clavier ou
+    # souris ont bouge dans les 15 min : la tache peut demander la veille sans
+    # risque de l'imposer a quelqu'un qui travaille.
+    [switch]$SansVeilleALaFin
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,7 +66,9 @@ foreach ($t in $anciennes) {
 # `--due` : l'orchestrateur lit le ledger, calcule ce qui est du, et ne lance que
 # ca. Le rattrapage vient de la BASE, pas de StartWhenAvailable - qui ne rattrape
 # rien quand c'est la tache elle-meme qui est cassee.
-$action = New-ScheduledTaskAction -Execute $py -Argument "`"$orch`" --due" -WorkingDirectory $root
+$argOrch = "`"$orch`" --due"
+if (-not $SansVeilleALaFin) { $argOrch += " --veille-a-la-fin" }
+$action = New-ScheduledTaskAction -Execute $py -Argument $argOrch -WorkingDirectory $root
 $trigger = New-ScheduledTaskTrigger -Daily -At $Heure
 # Declencheur QUOTIDIEN : la cadence de 4 jours (et le "decale au lendemain si
 # manque") vit dans orchestrator.py --due (is_due() lit le LEDGER), pas ici -
@@ -86,7 +94,8 @@ if ($PSCmdlet.ShouldProcess($nom, "Register-ScheduledTask")) {
     Register-ScheduledTask -TaskName $nom -Action $action -Trigger $trigger `
         -Settings $settings -Principal $principal -Force `
         -Description "Orchestrateur des 12 agents Lowi BKK. Lit agents/agents.json et le ledger, lance ce qui est du. Cadence reelle par agent geree par le ledger (every_days dans agents.json), pas par ce declencheur." | Out-Null
-    Write-Host "`n  $nom enregistree (quotidienne a $Heure, reveil demande)"
+    $mentionVeille = if ($SansVeilleALaFin) { "sans rendormissement" } else { "rendort la machine en fin de cycle" }
+    Write-Host "`n  $nom enregistree (quotidienne a $Heure, reveil demande, $mentionVeille)"
 }
 
 # -- 3. VERIFIER le XML reellement enregistre ------------------------------
@@ -118,14 +127,29 @@ Write-Host "  Puis verifier : $py $orch status"
 
 # Les minuteurs de reveil sont-ils reellement autorises au niveau du plan
 # d'alimentation ? WakeToRun sur la tache ne suffit pas sans ca.
+# Deux valeurs, pas une : secteur ET batterie. Le controle d'origine ne lisait
+# que la premiere ($valeurs[0]) et declarait donc "autorises" un poste qui ne se
+# reveille pas sur batterie - mesure du 2026-08-22 sur REMIZDABOSS : AC=0x1,
+# DC=0x0. Un reveil qui ne survient qu'une fois sur deux selon que le cable est
+# branche est exactement le genre de panne qu'on ne remarque pas.
 $rtc = (powercfg /query SCHEME_CURRENT SUB_SLEEP RTCWAKE) -join "`n"
 $valeurs = [regex]::Matches($rtc, '0x0000000\d') | ForEach-Object { $_.Value }
-if ($valeurs -and $valeurs[0] -eq '0x00000000') {
-    Write-Host "`n  !! LES MINUTEURS DE REVEIL SONT DESACTIVES AU NIVEAU DU PLAN D'ALIMENTATION." -ForegroundColor Yellow
+$ac = if ($valeurs.Count -ge 1) { $valeurs[0] } else { $null }
+$dc = if ($valeurs.Count -ge 2) { $valeurs[1] } else { $null }
+Write-Host ""
+if ($ac -eq '0x00000000') {
+    Write-Host "  !! MINUTEURS DE REVEIL DESACTIVES SUR SECTEUR." -ForegroundColor Yellow
     Write-Host "     La tache ne se declenchera QUE si le PC est deja allume a l'heure dite."
-    Write-Host "     A executer une fois, en console ADMINISTRATEUR :"
-    Write-Host "         powercfg /setacvalueindex SCHEME_CURRENT SUB_SLEEP RTCWAKE 1"
-    Write-Host "         powercfg /setactive SCHEME_CURRENT"
+    Write-Host "     A executer une fois :  powercfg /setacvalueindex SCHEME_CURRENT SUB_SLEEP RTCWAKE 1"
+    Write-Host "                            powercfg /setactive SCHEME_CURRENT"
 } else {
-    Write-Host "`n  Minuteurs de reveil autorises. Verifier avec : powercfg /waketimers"
+    Write-Host "  Minuteurs de reveil autorises SUR SECTEUR."
 }
+if ($dc -eq '0x00000000') {
+    Write-Host "  !  Sur BATTERIE ils restent interdits : endormie sur batterie, la machine" -ForegroundColor Yellow
+    Write-Host "     ne se reveillera pas a $Heure - le cycle repartira au prochain logon"
+    Write-Host "     via LowiBKK-RattrapageBoot. Pour l'autoriser aussi sur batterie :"
+    Write-Host "         powercfg /setdcvalueindex SCHEME_CURRENT SUB_SLEEP RTCWAKE 1"
+    Write-Host "         powercfg /setactive SCHEME_CURRENT"
+}
+Write-Host "  Minuteurs armes (console ADMINISTRATEUR) :  powercfg /waketimers"

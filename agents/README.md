@@ -144,9 +144,24 @@ pour faire passer le test — ils viennent d'une mesure. Dernier passage :
 
 ## Planification
 
-**Une seule** tâche Windows : `LowiBKK-Agents`, quotidienne à 08:00 →
-`orchestrator.py --due`. L'orchestrateur lit le ledger et décide ce qui est dû ;
-le rattrapage vient de la base, pas de `StartWhenAvailable`.
+**Une seule** tâche Windows : `LowiBKK-Agents`, **quotidienne à 01:00** →
+`orchestrator.py --due --veille-a-la-fin`. L'orchestrateur lit le ledger et décide
+ce qui est dû ; le rattrapage vient de la base, pas de `StartWhenAvailable`.
+
+**Réveil et rendormissement (2026-08-22)** : la tâche porte `WakeToRun`, donc elle
+réveille la machine à 01:00 — à condition que les minuteurs RTC soient autorisés au
+niveau du plan d'alimentation (`powercfg /query SCHEME_CURRENT SUB_SLEEP RTCWAKE`).
+Mesuré sur `REMIZDABOSS` : **autorisés sur secteur, interdits sur batterie** ; sur
+batterie, le cycle repart au logon par `LowiBKK-RattrapageBoot`.
+
+`--veille-a-la-fin` rendort la machine quand la lane est finie
+(`agents/core/veille.py`) — sans quoi un réveil à 01:00 pour ~5 h de cycle laisse le
+poste allumé jusqu'au matin. **Deux verrous** avant de suspendre : l'appelant doit
+poser le drapeau (jamais `--boot`, qui part au logon), et le module refuse si clavier
+ou souris ont bougé dans les 15 min. La suspension elle-même
+(`SetSuspendState`) **n'a pas été vérifiée en conditions réelles** : ce poste n'a que
+l'état S0 et l'hibernation est active, cas où l'API peut hiberner au lieu de dormir.
+Le réveil RTC fonctionne dans les deux cas, le retour est simplement plus lent.
 
 Réinstaller / vérifier :
 
