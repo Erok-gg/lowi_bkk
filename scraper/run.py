@@ -163,7 +163,14 @@ def main() -> None:
     from pipeline.storage import SupabaseStorage
     storage = SupabaseStorage.from_env() if args.store == "supabase" else None
     if storage:
-        print(f"→ images : upload Storage (bucket '{storage.bucket}')")
+        # Le flag `televerser` est coupe depuis le 2026-08-22 (le bucket depassait
+        # son quota, images gardees en local). L'entete annoncait pourtant
+        # « upload Storage » a chaque scan, quel que soit le flag : un indicateur
+        # qui affirme une action qui n'a pas lieu. On lit donc la config.
+        if cfg.get("image", {}).get("televerser", True):
+            print(f"→ images : upload Storage (bucket '{storage.bucket}')")
+        else:
+            print("→ images : LOCAL uniquement (televerser=false, rien vers Storage)")
 
     # Sonde de structure AVANT le scan complet : un marqueur absent (JSON-LD,
     # __NEXT_DATA__…) est aujourd'hui indiscernable d'une recherche vide dans
