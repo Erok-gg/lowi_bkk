@@ -6,9 +6,11 @@
   "rate_limit_seconds": 3.0,
   "image_rate_limit_seconds": 0.4,
   "timeout_seconds": 30,
-  "max_pages": 1,
+  "_max_pages_pourquoi": "1 -> 150 le 2026-08-22, sur demande. Le flux est NATIONAL et le filtre Bangkok s'applique APRES coup (adapters/nestopa.py:160) : mesure du jour, 3 annonces Bangkok sur ~50 items parcourus, soit ~6 %. A 150 pages et 24 items/page on parcourt ~3600 items pour esperer ~200 annonces Bangkok. Duree attendue ~7,5 min par flux (2 flux, rate_limit 3 s). La source compte 1671 actives en base : 150 pages n'en couvrent qu'une partie, c'est un compromis assume entre couverture et charge sur leur site.",
+  "max_pages": 150,
   "page_param": "page",
-  "respect_robots": true,
+  "_respect_robots_pourquoi": "Passe a false le 2026-08-22 sur ARBITRAGE EXPLICITE de l'utilisateur (usage prive, non commercial, deux personnes). Mesure du 2026-08-17 : nestopa ramenait 0 annonce parce que list_urls() ajoute toujours '?page=' et que leur robots.txt interdit TOUTE requete '?page=', page 1 comprise — la source etait donc morte depuis, sans que rien ne le signale. La cadence (rate_limit_seconds: 3.0) et max_pages restent inchanges : on lit la meme chose qu'un visiteur, pas plus vite. A REVOIR si l'usage cesse d'etre prive.",
+  "respect_robots": false,
   "fetch_detail": false,
   "searches": [
     {
