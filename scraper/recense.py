@@ -57,6 +57,16 @@ def _maintenant() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _message_trous(trous: int, derniere: int) -> str:
+    """Message de conclusion quand le parcours est troué (cf. main()).
+
+    Isolé du corps de main() pour être testable sans réseau — c'est ici que le
+    2026-08-26 a plante en production (NameError: 'atteinte' n'existait pas,
+    la variable s'appelle `derniere`) : then_2 de extract-ddproperty a échoué
+    après 2 724 pages lues, sans qu'aucun test ne l'attrape avant le cycle réel."""
+    return f"partielle — {trous} pages manquantes sur {derniere} : comparaison au stock impossible"
+
+
 class Recensement:
     """Un flux (source + deal_type) parcouru par N onglets en parallèle.
 
@@ -101,12 +111,24 @@ class Recensement:
         sep = "&" if "?" in chemin else "?"
         param = self.config.get("page_param", "page")
         url = f"{self.config['base_url']}{chemin}{sep}{param}={self.max_pages + 1000}"
-        html = f.get_text(url, referer=self.config["base_url"])
-        if not html:
-            return None
-        data = _next_data(html)
-        stubs = self.adaptateur._parse_list(data, "sale") if data else []
-        return tuple(sorted(str(s["source_id"]) for s in stubs)) or None
+        # PLUSIEURS ESSAIS : cette requête unique commande tout l'arrêt du
+        # parcours. Mesuré la nuit du 2026-08-26 : elle a échoué une fois, la
+        # signature est restée vide, plus aucun onglet n'a su reconnaître la fin
+        # — les deux flux ont couru jusqu'au plafond de 3 200 pages et le
+        # recensement s'est abstenu pour rien. Un aléa d'une seconde coûtait
+        # 1 h 37 de parcours inutile.
+        for tentative in range(1, ESSAIS_PAR_PAGE + 1):
+            html = f.get_text(url, referer=self.config["base_url"])
+            if html:
+                data = _next_data(html)
+                stubs = self.adaptateur._parse_list(data, "sale") if data else []
+                if stubs:
+                    return tuple(sorted(str(s["source_id"]) for s in stubs))
+            if tentative < ESSAIS_PAR_PAGE:
+                time.sleep(2 * tentative)
+        print("  [recense] signature de fin introuvable — le parcours ira "
+              "jusqu'au plafond et s'abstiendra", flush=True)
+        return None
 
     def _fetcher(self) -> Fetcher:
         f = Fetcher(base_url=self.config["base_url"],
@@ -287,8 +309,7 @@ def main() -> int:
                 # on ne peut pas distinguer « retirée » de « pas regardée ».
                 # Défaut mesuré le 2026-08-25 : 790 pages lues sur 1 495
                 # atteintes, et 12 348 annonces déclarées absentes à tort.
-                ligne["conclusion"] = (f"partielle — {trous} pages manquantes sur "
-                                       f"{atteinte} : comparaison au stock impossible")
+                ligne["conclusion"] = _message_trous(trous, derniere)
                 ligne["annonces_vues"] = len(vus)
                 print(f"   {json.dumps(ligne, ensure_ascii=False)}", flush=True)
                 bilan["flux"].append(ligne)
@@ -326,9 +347,14 @@ def main() -> int:
     # Bilan JSON terminal : lu par agents/core/shell.py (_bilan_json) et vérifié
     # par l'overseer contre le contrat de sortie du SKILL.
     print(json.dumps(bilan, ensure_ascii=False, indent=1))
-    # Sortie non nulle si un flux n'a rien pu lire : un recensement muet doit se
-    # voir dans le code retour, pas seulement dans le corps du rapport.
-    return 1 if bilan["flux_non_conclusifs"] else 0
+    # CODE RETOUR 0 MÊME QUAND ON S'ABSTIENT. Erreur de conception du
+    # 2026-08-25, mesurée la nuit suivante : le recensement rendait 1 quand il
+    # refusait de conclure, et l'orchestrateur marquait donc `extract-ddproperty`
+    # EN ÉCHEC alors que ses trois passes de scrap avaient parfaitement réussi.
+    # Une abstention honnête affichée comme une panne, chaque nuit, c'est le
+    # garde-fou qui crie au loup (règle 2). L'abstention se lit dans
+    # `flux_non_conclusifs` — c'est là qu'elle doit être regardée.
+    return 0
 
 
 if __name__ == "__main__":
