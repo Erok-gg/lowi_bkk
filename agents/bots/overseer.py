@@ -16,6 +16,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from agents.core import alert, escalation, local_llm
+from agents.core.metrics import aplatir
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS = os.path.join(ROOT, "skills")
@@ -79,7 +80,11 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
         vus.add(agent)
         attendus = contrat_de(agent)
         try:
-            metrics = json.loads(r["metrics"] or "{}")
+            # APLATI : les champs de contrat d'un agent T0 vivent sous `etapes`
+            # depuis le chainage du 2026-08-06. 13 contrats sur 23 etaient
+            # comptes violes le 2026-08-22 pour cette seule raison, champs
+            # presents un etage plus bas (voir agents/core/metrics.py).
+            metrics = aplatir(json.loads(r["metrics"] or "{}"))
         except json.JSONDecodeError:
             metrics = {}
 

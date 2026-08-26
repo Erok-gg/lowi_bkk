@@ -16,10 +16,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SNAPSHOTS = os.path.join(os.path.dirname(ROOT), "study", "snapshots")
 
 # Double médiane par condo : 1 immeuble = 1 voix. Neutralise vétusté, vue, étage.
-SQL = """
+SQL = f"""
 with par_condo as (
   select khet, condo_name,
-         percentile_cont(0.5) within group (order by price_per_sqm) as ppsqm
+         {db.MEDIANE("price_per_sqm")} as ppsqm
   from listings_sane
   where deal_type = 'sale' and status = 'active'
     and price_per_sqm is not null and condo_name is not null
@@ -28,7 +28,7 @@ with par_condo as (
 )
 select khet,
        count(*) as n_condos,
-       percentile_cont(0.5) within group (order by ppsqm) as median_ppsqm
+       {db.MEDIANE("ppsqm")} as median_ppsqm
 from par_condo
 group by khet
 having count(*) >= 5

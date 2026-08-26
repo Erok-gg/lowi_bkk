@@ -26,13 +26,14 @@ import os
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(ROOT)
 sys.path.insert(0, PROJECT)
 
 from agents.core import alert, escalation, shell           # noqa: E402
+from agents.core.metrics import aplatir                    # noqa: E402
 from agents.core.ledger import Ledger                     # noqa: E402
 
 #: Marqueur émis par scraper/run.py quand la sonde de structure (page 1)
@@ -42,12 +43,35 @@ from agents.core.ledger import Ledger                     # noqa: E402
 #: consécutifs à zéro — jusqu'à 8 j de scans pour rien sinon).
 SONDE_ECHEC_RE = re.compile(r"^\[SONDE-ECHEC\] (\S+) : (.+)$", re.M)
 
+#: Signature d'une panne RÉSEAU dans la sortie d'un scan. Sert à ne pas
+#: confondre « le site a changé » et « on n'a pas pu joindre le site » —
+#: distinction que la sonde elle-même ne peut pas faire (elle ne voit qu'une
+#: page vide), mais que la trace de l'exception, elle, porte noir sur blanc.
+RESEAU_RE = re.compile(
+    r"NameResolutionError|getaddrinfo failed|Max retries exceeded|"
+    r"ConnectionError|Connection refused|Temporary failure in name resolution",
+    re.I)
+
 REGISTRY = json.load(open(os.path.join(ROOT, "agents.json"), encoding="utf-8"))
 AGENTS = {a["name"]: a for a in REGISTRY["agents"]}
 
 
 # ───────────────────────── cadence ─────────────────────────
+def jour_local(iso: str) -> date:
+    """Date LOCALE d'un horodatage du ledger (stocké en UTC).
+
+    Le fuseau du poste est le fuseau de référence de la cadence : le cycle part
+    à 01:00 à Bangkok, soit 18:00 la VEILLE en UTC. Compter en UTC décalerait le
+    calendrier d'un jour — même piège que `current_lane()` et le widget."""
+    t = datetime.fromisoformat(iso)
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t.astimezone().date()
+
+
 def days_since_ok(led: Ledger, name: str) -> float | None:
+    """Heures écoulées depuis le dernier succès, en jours décimaux. Sert au
+    DIAGNOSTIC affiché, plus à la décision — cf. is_due()."""
     row = led.last_run(name, only_ok=True)
     if not row:
         return None
@@ -56,13 +80,125 @@ def days_since_ok(led: Ledger, name: str) -> float | None:
 
 
 def is_due(led: Ledger, spec: dict) -> tuple[bool, str]:
-    d = days_since_ok(led, spec["name"])
-    if d is None:
+    """Cadence en JOURS CALENDAIRES LOCAUX, pas en heures écoulées.
+
+    Corrigé le 2026-08-25. `every_days: 1` veut dire « tous les jours, au
+    créneau de 01:00 » ; la comparaison en heures écoulées en faisait « au moins
+    24 h après le DÉPART du dernier succès ». Dès qu'un cycle glissait dans la
+    journée — rattrapage au logon, coupure réseau, lancement à la main — le
+    01:00 suivant tombait sous les 24 h et TOUT était sauté : une nuit sur deux
+    perdue, sans qu'aucune alerte ne se déclenche (le cycle se terminait
+    « normalement », simplement vide).
+
+    Mesuré ce jour-là : cycle parti à 08:24 faute de réveil, extracteurs à
+    10:00 ; à 01:00 la nuit suivante il ne s'était écoulé que 0,6 j et les 12
+    agents de la lane se déclaraient « à jour ». Aucun scrap.
+
+    En jours calendaires, un succès daté d'HIER rend l'agent dû AUJOURD'HUI
+    quelle que soit l'heure — ce qui est la définition de « tous les jours ».
+    Le pendant de ce choix est le garde-fou `scrap_en_cours()` : c'est lui, et
+    non la cadence, qui empêche de repartir sur un scrap encore en vol."""
+    row = led.last_run(spec["name"], only_ok=True)
+    if row is None:
         return True, "jamais exécuté"
     every = spec.get("every_days", 1)
-    if d >= every:
-        return True, f"{d:.1f} j depuis le dernier succès (cadence {every} j)"
-    return False, f"à jour ({d:.1f} j / {every} j)"
+    ecart = (datetime.now().date() - jour_local(row["started_at"])).days
+    h = (days_since_ok(led, spec["name"]) or 0) * 24
+    if ecart >= every:
+        return True, (f"dernier succès il y a {ecart} j calendaire(s) "
+                      f"(cadence {every} j — {h:.0f} h)")
+    return False, f"à jour ({ecart} j / {every} j — dernier succès il y a {h:.0f} h)"
+
+
+def scrap_en_cours(led: Ledger) -> str | None:
+    """Un scrap tourne-t-il DÉJÀ ? Rend sa description, ou None.
+
+    C'est la contrepartie de la cadence en jours calendaires (cf. is_due) :
+    « tous les jours à 01:00 » ne doit jamais vouloir dire « quitte à couper
+    celui d'hier ». Un extracteur tué en vol est pire qu'un cycle manqué — la
+    passe `--full` en cours n'a vu qu'une partie du site, et ce qu'elle n'a pas
+    revu, le diff le compte comme délisté. On perdrait des annonces vivantes.
+
+    Deux sondes, par ordre de fiabilité :
+
+    1. LE LEDGER — un run de famille Extraction resté `running` dont le PID vit
+       encore. Couvre le cas qui compte : le cycle précédent n'a pas fini. Les
+       runs orphelins (process tué) sont déjà refermés en `interrompu` par le
+       nettoyage d'ouverture du ledger, donc ne font pas de faux positif.
+    2. LES LIGNES DE COMMANDE du poste — un `scraper/run.py` ou
+       `scraper/recense.py` lancé à la main, que le ledger ne connaît pas.
+       Coûte ~1 s, une fois par cycle. **En cas d'échec de la sonde on laisse
+       passer, en le disant** : bloquer un cycle entier sur un hoquet de
+       PowerShell serait un garde-fou pire que le défaut (règle 2)."""
+    moi = os.getpid()
+    for r in led.conn.execute(
+            "select agent, started_at, pid from agent_runs where status='running'"):
+        spec = AGENTS.get(r["agent"], {})
+        if spec.get("famille") != "Extraction":
+            continue
+        if r["pid"] and int(r["pid"]) != moi and led._processus_vivant(r["pid"]):
+            return (f"{r['agent']} tourne encore (démarré {r['started_at']}, "
+                    f"PID {r['pid']}) — ledger")
+
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
+             "ForEach-Object { \"$($_.ProcessId)|$($_.CommandLine)\" }"],
+            capture_output=True, text=True, timeout=25).stdout
+    except Exception as e:                                  # noqa: BLE001
+        print(f"  ⚠ sonde « scrap manuel » indisponible ({type(e).__name__}) — "
+              f"on ne bloque pas le cycle sur ça")
+        return None
+
+    for ligne in out.splitlines():
+        pid, _, cmd = ligne.partition("|")
+        bas = cmd.replace("\\", "/").lower()
+        if not pid.strip().isdigit() or int(pid) == moi:
+            continue
+        if "scraper/run.py" in bas or "scraper/recense.py" in bas:
+            return f"scrap lancé hors cycle : PID {pid.strip()} — {cmd.strip()[:110]}"
+    return None
+
+
+def ouvre_dashboard(led: Ledger) -> None:
+    """Affiche `ops/dashboard.py` pour toute la durée du scrap.
+
+    Demandé le 2026-08-25 : « tant que le scrap n'est pas terminé, je veux que
+    le dashboard soit affiché ». La fenêtre n'est PAS refermée à la fin — le
+    dashboard bascule alors de lui-même sur le résultat du cycle, qui est
+    justement ce qu'on vient lire le matin.
+
+    Ne fait rien si une fenêtre est déjà ouverte (témoin `agents/state/
+    dashboard.pid`, posé par le dashboard, relu ici) : sans ça, un cycle par
+    nuit finirait par empiler autant de fenêtres que de nuits. Le témoin d'un
+    dashboard fermé de force (session tuée) reste sur le disque : on vérifie
+    donc que le PID VIT, on ne se fie pas à la seule présence du fichier."""
+    temoin = os.path.join(PROJECT, "agents", "state", "dashboard.pid")
+    try:
+        if os.path.exists(temoin):
+            pid = int(open(temoin, encoding="utf-8").read().strip() or 0)
+            if pid and led._processus_vivant(pid):
+                print(f"  ▤ dashboard déjà ouvert (PID {pid})")
+                return
+    except (OSError, ValueError):
+        pass
+
+    pyw = os.path.join(PROJECT, "scraper", ".venv", "Scripts", "pythonw.exe")
+    script = os.path.join(PROJECT, "ops", "dashboard.py")
+    if not (os.path.exists(pyw) and os.path.exists(script)):
+        print("  ⚠ dashboard introuvable — le cycle continue sans")
+        return
+    try:
+        import subprocess
+        # DETACHED_PROCESS : le dashboard doit SURVIVRE à l'orchestrateur, sinon
+        # il disparaîtrait juste au moment où il affiche le résultat du cycle.
+        subprocess.Popen([pyw, script], cwd=PROJECT,
+                         creationflags=0x00000008 | 0x00000200)
+        print("  ▤ dashboard ouvert (suivi du scrap)")
+    except Exception as e:                                  # noqa: BLE001
+        print(f"  ⚠ dashboard non lancé ({type(e).__name__}: {e}) — sans effet sur le cycle")
 
 
 def current_lane() -> str:
@@ -70,9 +206,27 @@ def current_lane() -> str:
     location sur des jours différents retardait chaque catégorie de 4 jours
     supplémentaires pour rien — chaque source enchaîne maintenant sale PUIS
     rent elle-même, cf. agents.json 'then'). "weekly" reste une cadence à part
-    (archivage + purge + sondage de nouvelles sources)."""
-    day = datetime.now(timezone.utc).toordinal()
+    (archivage + purge + sondage de nouvelles sources).
+
+    ⚠ JOUR LOCAL, PAS UTC. Corrigé le 2026-08-25 : le cycle part à 01:00 à
+    Bangkok, soit 18:00 la VEILLE en UTC. Le calendrier hebdomadaire était donc
+    décalé d'un jour, et le cycle du 2026-08-24 — le premier de la cadence
+    quotidienne — a été classé « weekly » et n'a lancé AUCUN extracteur. Même
+    piège que celui déjà documenté pour le widget de bureau."""
+    day = datetime.now().toordinal()
     return "weekly" if day % 7 == 0 else "daily"
+
+
+def lanes_actives(lane: str) -> set[str]:
+    """Agents concernés par la lane du jour.
+
+    LE JOUR HEBDOMADAIRE S'AJOUTE AU QUOTIDIEN, il ne le remplace pas. Corrigé
+    le 2026-08-25 : `weekly` ne sélectionnait que les agents portant ce mot,
+    donc ni extraction ni analyse ni sauvegarde un jour sur sept. Invisible tant
+    que l'extraction tournait tous les 4 jours (elle repartait la nuit
+    suivante) ; avec la cadence quotidienne du 2026-08-23, c'est une journée de
+    marché perdue chaque semaine."""
+    return {"daily", "weekly"} if lane == "weekly" else {lane}
 
 
 # ───────────────────────── exécution ─────────────────────────
@@ -167,7 +321,27 @@ def run_agent(led: Ledger, name: str, lane: str | None = None,
                     code = c_code   # code final = dernier echec rencontre
 
                 sonde = SONDE_ECHEC_RE.search(out)
-                if sonde:
+                if sonde and RESEAU_RE.search(out):
+                    # PANNE RÉSEAU, PAS STRUCTURE CHANGÉE. Le 2026-08-25, une
+                    # coupure DNS de quelques minutes a fait échouer la sonde de
+                    # DEUX sources : quatre escalades de sévérité HAUTE ont été
+                    # ouvertes vers Claude pour « parseur cassé » alors que les
+                    # sites n'avaient pas bougé d'un octet — le résolveur ne
+                    # répondait plus. Envoyer quelqu'un chercher un bug de
+                    # parsing quand le réseau est coupé, c'est exactement le
+                    # garde-fou qui crie au loup (règle 2).
+                    # Une coupure réseau se reprend seule au cycle suivant : on
+                    # le CONSIGNE, on n'escalade pas.
+                    source, diag = sonde.group(1), sonde.group(2)
+                    metrics["etapes"][-1]["sonde_reseau"] = diag
+                    led.finding(name, "low", "panne_reseau",
+                                f"{name} ({label}) : site injoignable — "
+                                f"résolution DNS ou connexion refusée, structure "
+                                f"non mise en cause", {"diagnostic": diag,
+                                                       "etape": label, "log": lg}, run_id)
+                    print(f"  ⚠ {name} ({label}) : panne réseau, pas de ticket "
+                          f"(reprise au prochain cycle)")
+                elif sonde:
                     source, diag = sonde.group(1), sonde.group(2)
                     metrics["etapes"][-1]["sonde_echec"] = diag
                     ticket = escalation.create(
@@ -195,6 +369,12 @@ def run_agent(led: Ledger, name: str, lane: str | None = None,
         return False
 
     status = "ok" if code == 0 else "failed"
+    # Les compteurs des etapes chainees remontent AUSSI a la racine (l'agregat
+    # s'ajoute a la trace, il ne la remplace pas). Sans ca, tout lecteur des
+    # metriques doit connaitre la forme imbriquee : les deux surveillances ne la
+    # connaissaient pas et sont restees inertes du 2026-08-06 au 2026-08-23,
+    # 24 runs d'extraction (voir agents/core/metrics.py).
+    metrics = aplatir(metrics)
     led.end_run(run_id, status, code, metrics)
     alert.log(name, "info" if status == "ok" else "high",
               f"{status} — {json.dumps(metrics, ensure_ascii=False)[:200]}")
@@ -222,7 +402,8 @@ def run_lane(led: Ledger, lane: str, dry: bool = False, only_due: bool = True,
     if skip_extraction:
         mode += " — SANS EXTRACTION"
     print(f"\n═══ Lane « {lane} » — {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC{mode} ═══")
-    ordered = [a for a in REGISTRY["agents"] if lane in a.get("lanes", [])]
+    actives = lanes_actives(lane)
+    ordered = [a for a in REGISTRY["agents"] if actives & set(a.get("lanes", []))]
     # l'overseer relit le cycle : toujours en dernier
     ordered.sort(key=lambda a: a["name"] == "overseer")
 
@@ -244,6 +425,25 @@ def run_lane(led: Ledger, lane: str, dry: bool = False, only_due: bool = True,
     supervision = [s for s in a_lancer if s.get("famille") == "Supervision"]
     for spec in supervision:
         run_agent(led, spec["name"], lane, dry, local)
+
+    # NE JAMAIS COUPER UN SCRAP EN VOL. Depuis le passage de la cadence en jours
+    # calendaires (is_due, 2026-08-25), le créneau de 01:00 rend TOUT dû dès que
+    # le dernier succès date de la veille — y compris quand le cycle d'hier
+    # tourne encore, parce qu'il est parti en retard ou qu'une source a traîné
+    # (mesuré le 2026-08-25 : ddproperty seul, 10:00 → 15:56).
+    # On reporte alors le cycle ENTIER, pas seulement l'extraction : `report` et
+    # surtout `backup-apres-cycle` (copie de 1 Go du SQLite) liraient une base
+    # en cours d'écriture. La garde `MultipleInstances=IgnoreNew` de la tâche
+    # Windows ne couvre que la tâche elle-même, pas un scrap lancé à la main.
+    if not dry:
+        occupe = scrap_en_cours(led)
+        if occupe:
+            print(f"  ⏸ CYCLE REPORTÉ — {occupe}")
+            print("     (rien n'est lancé : le prochain créneau reprendra ce qui est dû)")
+            led.finding("orchestrator", "medium", "cycle_reporte",
+                        "cycle sauté : un scrap était encore en cours",
+                        {"raison": occupe, "lane": lane})
+            return
 
     # PRELUDE : avant toute extraction, séquentiel. Sert au backup local
     # (ops/sync_supabase_local.py, agent backup-avant-cycle) — un point de
@@ -270,6 +470,9 @@ def run_lane(led: Ledger, lane: str, dry: bool = False, only_due: bool = True,
         sautes = [s["name"] for s in a_lancer if s.get("famille") in ("Extraction", "Prelude")]
         if sautes:
             print(f"  ⏭ sautés (skip_extraction) : {', '.join(sautes)}")
+
+    if extracteurs and not dry:
+        ouvre_dashboard(led)
 
     if extracteurs and not dry and parallele and len(extracteurs) > 1:
         print(f"  ⇉ {len(extracteurs)} extracteurs en parallèle "
@@ -357,12 +560,18 @@ def main() -> None:
         os.makedirs(a.local, exist_ok=True)
 
     led = Ledger()
+    # Seuls les modes qui EXÉCUTENT une lane déposent le témoin de vie. Une
+    # consultation (`status`, `due`) ne doit surtout pas faire croire qu'un
+    # cycle est passé — le témoin sert justement à distinguer les deux.
+    a_tourne = False
     try:
         if a.boot:
             run_lane(led, current_lane(), a.dry_run, only_due=True, local=a.local,
                      skip_extraction=True)
+            a_tourne = True
         elif a.due:
             run_lane(led, current_lane(), a.dry_run, only_due=True, local=a.local)
+            a_tourne = True
         elif a.command == "status":
             cmd_status(led)
         elif a.command == "due":
@@ -374,11 +583,13 @@ def main() -> None:
             if not a.target:
                 ap.error("run demande un nom d'agent")
             run_agent(led, a.target, a.lane, a.dry_run, a.local)
+            a_tourne = True
         elif a.command == "run-lane":
             if not a.target:
                 ap.error("run-lane demande sale|rent|weekly")
             run_lane(led, a.target, a.dry_run, only_due=not a.all, local=a.local,
                      skip_extraction=a.skip_extraction)
+            a_tourne = True
     finally:
         led.close()
 
@@ -386,6 +597,20 @@ def main() -> None:
     # système se suspende. En veille moderne (S0) le process survit, mais un
     # SQLite laissé ouvert au moment d'une coupure d'alimentation ne survivrait
     # pas — et le ledger est la seule mémoire de ce qui est dû.
+    # TÉMOIN DE VIE — déposé à la fin de TOUT passage de l'orchestrateur, quel
+    # que soit le mode et même si rien n'était dû. C'est ce témoin qu'une tâche
+    # Windows séparée relit plusieurs fois par jour (ops/pouls.py --verifier) :
+    # les 24 et 25 août 2026, deux nuits sans scrap n'ont produit AUCUN signal,
+    # parce que les surveillances existantes sont des agents — elles tournent
+    # DANS le cycle et ne peuvent pas constater son absence.
+    try:
+        if a_tourne and not a.dry_run:
+            from ops.pouls import battement
+            battement(current_lane())
+    except Exception as e:                                   # noqa: BLE001
+        # Un témoin qui plante ne doit jamais faire échouer un cycle réussi.
+        print(f"[pouls] témoin non déposé : {type(e).__name__}: {e}")
+
     if a.veille_a_la_fin:
         from agents.core import veille
         dormi, raison = veille.endort(dry_run=a.dry_run)

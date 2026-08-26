@@ -6,6 +6,7 @@ les exécute, capture leur sortie dans agents/logs/, et en tire des métriques.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -89,10 +90,13 @@ def run(cmd: list[str], cwd: str | None = None, log: str | None = None,
 _RESUME = re.compile(
     r"scannées\s*:\s*(\d+).*?nouvelles\s*:\s*(\d+).*?changées\s*:\s*(\d+)"
     r".*?retirées\s*:\s*(\d+)", re.S)
+_INCHANGEES = re.compile(
+    r"inchangées\s*:\s*(\d+)\s*\(dont\s*(\d+)\s*dédup")
 _SNAPSHOT = re.compile(r"snapshot\s*:\s*(\S+)")
 _RAPPORT = re.compile(r"rapport\s*:\s*(\S+)")
 _ARCHIVE = re.compile(r":\s*(\d+)\s+lignes serveur\s*→\s*(\d+)\s+en archive")
 _PURGE = re.compile(r"(\d+)\s+annonces purgées")
+_CANDIDATES = re.compile(r"candidates à la purge[^:]*:\s*\d+")
 _HTTP_ERR = re.compile(r"HTTP\s*(?:error\s*)?(4\d\d|5\d\d)", re.I)
 
 # ÉCHECS SUR LES IMAGES — comptés à part du scraping.
@@ -121,6 +125,15 @@ def metrics_from_output(text: str) -> dict:
         m["changees"] = int(r.group(3))
         m["retirees"] = int(r.group(4))
 
+    # PART DE DEDUP — combien d'annonces le scan a evite de re-visiter parce que
+    # leur prix n'avait pas bouge dans la liste. C'est LA mesure qui dit si
+    # resserrer la cadence coute moins cher : a cadence quotidienne, presque
+    # tout devrait tomber dans ce panier. Non capturee jusqu'au 2026-08-23,
+    # alors que la ligne l'imprimait depuis toujours.
+    if (r := _INCHANGEES.search(text)):
+        m["inchangees"] = int(r.group(1))
+        m["dedup"] = int(r.group(2))
+
     if (r := _SNAPSHOT.search(text)):
         m["snapshot"] = r.group(1)
     if (r := _RAPPORT.search(text)):
@@ -135,10 +148,44 @@ def metrics_from_output(text: str) -> dict:
     elif "purge ANNULÉE" in text or "purge interdite" in text:
         m["lignes_purgees"] = 0
         m["purge_refusee"] = True
+    elif _CANDIDATES.search(text):
+        # « 0 candidate » n'imprime aucune ligne de purge : sans ce cas, un run
+        # qui a fait exactement son travail sortait SANS `lignes_purgees` et
+        # l'overseer comptait son contrat viole (releve le 2026-08-23 sur le
+        # storage du jour, 0 inactive de plus de 90 j).
+        m["lignes_purgees"] = 0
 
     m["erreurs_http"] = len(_HTTP_ERR.findall(text))
     m["erreurs_images"] = len(_IMG_ERR.findall(text))
     m["lignes_log"] = text.count("\n")
     low = text.lower()
     m["traces_erreur"] = low.count("traceback") + low.count("[erreur]")
+
+    # Un script qui rend son bilan en JSON a raison ; les regexes ci-dessus sont
+    # un pis-aller pour ceux qui ne le font pas. Releve le 2026-08-23 :
+    # ops/verifie-backup.py imprime ses neuf champs de contrat en JSON depuis le
+    # 2026-08-06 et PERSONNE ne les lisait — l'overseer comptait son contrat
+    # viole a chaque cycle (sqlite_ok, n_archive, n_live, ratio, cadence_ok,
+    # raisons, rattrapage_*) alors que la sortie les contenait tous.
+    m.update(_bilan_json(text))
     return m
+
+
+def _bilan_json(text: str) -> dict:
+    """Objet JSON terminal de la sortie, s'il y en a un ({} sinon).
+
+    On ne cherche QUE le dernier bloc, et seulement s'il commence en colonne 0 :
+    un JSON imprime au fil de l'eau (une fiche, une annonce) n'est pas un bilan
+    de run et n'a rien a faire dans ses metriques."""
+    fin = text.rstrip()
+    if not fin.endswith("}"):
+        return {}
+    lignes = fin.splitlines()
+    for i in range(len(lignes) - 1, -1, -1):
+        if lignes[i].startswith("{"):
+            try:
+                bilan = json.loads(chr(10).join(lignes[i:]))
+            except json.JSONDecodeError:
+                return {}
+            return bilan if isinstance(bilan, dict) else {}
+    return {}

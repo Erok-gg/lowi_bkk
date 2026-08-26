@@ -83,7 +83,41 @@ class Ledger:
     def __init__(self, path: str | None = None):
         self.conn = connect(path)
         self._verrou = threading.Lock()   # écritures sérialisées (extracteurs parallèles)
+        self._migrer_pid()
         self.reap_stale()
+
+    def _migrer_pid(self) -> None:
+        """Ajoute `pid` aux runs. Migration douce : la table existe en production.
+
+        Sans le PID, un run reste « en cours » pendant `max_hours` même quand le
+        processus est mort depuis longtemps — et l'agent concerné est alors
+        SAUTÉ à chaque cycle (orchestrator.run_agent refuse de relancer un agent
+        déjà en cours). Constaté le 2026-08-25 : deux extracteurs tués à 09:05
+        ont été écartés du cycle de 09:35, sans qu'aucune alerte ne le dise.
+        Avec le PID, la question « ce run est-il vivant ? » se mesure au lieu de
+        se déduire d'une durée arbitraire."""
+        cols = {r[1] for r in self.conn.execute("pragma table_info(agent_runs)")}
+        if "pid" not in cols:
+            self.conn.execute("alter table agent_runs add column pid integer")
+            self.conn.commit()
+
+    @staticmethod
+    def _processus_vivant(pid) -> bool:
+        """Le processus existe-t-il encore ? Windows : OpenProcess via ctypes."""
+        if not pid:
+            return True          # PID inconnu (run d'avant la migration) → on ne tranche pas
+        try:
+            import ctypes
+            SYNCHRONIZE = 0x00100000
+            h = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
+            if not h:
+                return False
+            # 0 = toujours actif ; 0x80 (WAIT_ABANDONED)/0 signalé = terminé
+            etat = ctypes.windll.kernel32.WaitForSingleObject(h, 0)
+            ctypes.windll.kernel32.CloseHandle(h)
+            return etat != 0
+        except Exception:                                # noqa: BLE001
+            return True          # dans le doute, on ne referme pas un run vivant
 
     def reap_stale(self, max_hours: int = 12) -> int:
         """Referme les runs restés en 'running'.
@@ -91,22 +125,34 @@ class Ledger:
         Un processus tué (arrêt de tâche, redémarrage, coupure) ne referme jamais
         sa ligne. Sans ce nettoyage, l'agent concerné resterait éternellement
         'en cours' et l'orchestrateur ne le relancerait plus — la panne serait
-        silencieuse, exactement le mode de défaillance qu'on cherche à éliminer."""
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_hours)).isoformat()
-        cur = self.conn.execute(
-            "update agent_runs set status='interrompu', ended_at=? "
-            "where status='running' and started_at < ?", (now(), cutoff))
-        self.conn.commit()
-        return cur.rowcount
+        silencieuse, exactement le mode de défaillance qu'on cherche à éliminer.
+
+        DEUX CRITÈRES, et le premier est une MESURE (2026-08-25) : un run dont le
+        processus n'existe plus est mort, quelle que soit son ancienneté. Le
+        délai de 12 h ne reste que comme filet pour les runs sans PID (ceux
+        d'avant la migration) et pour un PID recyclé par le système."""
+        ferme = 0
+        for r in self.conn.execute(
+                "select id, pid, started_at from agent_runs where status='running'").fetchall():
+            trop_vieux = r["started_at"] < (
+                datetime.now(timezone.utc) - timedelta(hours=max_hours)).isoformat()
+            if trop_vieux or not self._processus_vivant(r["pid"]):
+                self.conn.execute(
+                    "update agent_runs set status='interrompu', ended_at=? where id=?",
+                    (now(), r["id"]))
+                ferme += 1
+        if ferme:
+            self.conn.commit()
+        return ferme
 
     # ── runs ────────────────────────────────────────────────────────────
     def start_run(self, agent: str, tier: str, lane: str | None = None,
                   log_path: str | None = None) -> int:
         with self._verrou:
             cur = self.conn.execute(
-                "insert into agent_runs(agent,tier,lane,started_at,status,log_path)"
-                " values(?,?,?,?, 'running', ?)",
-                (agent, tier, lane, now(), log_path))
+                "insert into agent_runs(agent,tier,lane,started_at,status,log_path,pid)"
+                " values(?,?,?,?, 'running', ?, ?)",
+                (agent, tier, lane, now(), log_path, os.getpid()))
             self.conn.commit()
         return int(cur.lastrowid)
 

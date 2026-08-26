@@ -23,10 +23,20 @@
       "libelle": "Veille Equance",
       "source": "claude",
       "ref": "veille-prospection-equance"
+    },
+    {
+      "libelle": "Pouls du scrap",
+      "source": "tache",
+      "ref": "LowiBKK-Pouls"
+    },
+    {
+      "libelle": "Reparation auto",
+      "source": "claude",
+      "ref": "lowi-reparation-autonome"
     }
   ],
-  "_seuil_rouge_heures": "En deçà de ce délai, le compte à rebours passe en rouge.",
-  "seuil_rouge_heures": 24,
+  "_seuil_rouge_heures": "Sous ce nombre d'heures, le compte a rebours passe en rouge. Abaisse de 24 h a 3 h le 2026-08-25 : avec la cadence quotidienne du 2026-08-23, un seuil a 24 h laissait toutes les lignes rouges en permanence. Un voyant toujours allume n'informe plus.",
+  "seuil_rouge_heures": 3,
   "_taches_windows": "Motifs de noms (jokers * et ? acceptés) : sert à alimenter les compteurs de source 'tache', et à diagnostiquer via collecte.ps1 -Ecran.",
   "taches_windows": [
     "LowiBKK-*"
@@ -36,6 +46,13 @@
   "tache_orchestrateur": "LowiBKK-Agents",
   "_routines_claude": "Instantané des tâches planifiées Claude, relevé le 2026-08-10. Elles vivent côté serveur Claude, pas sur ce PC : le widget ne peut pas les interroger, il recalcule les échéances à partir du cron ci-dessous. Le cron est exprimé en heure LOCALE et le déclenchement réel est décalé de 'jitter_s' secondes (vérifié sur les trois routines actives). Si tu ajoutes ou modifies une routine Claude, reporte-la ici.",
   "routines_claude": [
+    {
+      "id": "lowi-reparation-autonome",
+      "libelle": "Reparation auto",
+      "cron": "0 2 * * *",
+      "jitter_s": 600,
+      "actif": true
+    },
     {
       "id": "drain-agent-queue-lowi-bkk",
       "libelle": "Drain file agents",

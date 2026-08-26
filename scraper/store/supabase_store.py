@@ -12,26 +12,12 @@ import psycopg
 from psycopg.types.json import Json
 
 from pipeline import details
-from store.base import BaseStore
+from store.base import COLONNES_LISTING, BaseStore
 
-_COLS = (
-    "source", "source_url", "title", "deal_type", "quota", "tenure", "price",
-    "currency", "area_sqm", "price_per_sqm", "bedrooms", "bathrooms", "condo_name",
-    "address_raw", "khet", "khwaeng", "street", "lat", "lng",
-    # cohorte (robuste aux republications), âge du bâtiment, empreinte photo
-    "unit_key", "year_built", "photo_count", "photo_sizes",
-    # provenance : qui publie, quand, et republication signalée par la source
-    "agent_id", "agency_id", "posted_at", "is_auto_repost",
-    # vendu/loue dit par la source, avant disparition (cf. fazwaz.statut_marche)
-    "market_status",
-    # descriptif libre (capturé depuis le 2026-07-31, non rétroactif) et TEXTE
-    # INTÉGRAL de la page, compressé — la matière première qui permet de REJOUER
-    # une extraction quand un motif se révèle faux, sans re-scraper.
-    "description", "page_text",
-    # détails extraits du descriptif — dérivés de details.COLONNES, jamais
-    # recopiés : trois listes tenues à la main, c'est trois façons de diverger.
-    *(c for c, _ in details.COLONNES),
-)
+#: Exemplaire unique dans store/base.py — la liste etait tenue a la main ici ET
+#: dans sqlite_store.upsert_listing (identiques a la mesure du 2026-08-25, mais
+#: rien ne l'imposait). Alias conserve : `_COLS` est utilise plus bas.
+_COLS = COLONNES_LISTING
 
 
 #: Colonnes BOOLÉENNES côté Postgres. SQLite n'a pas de type booléen et y range
@@ -132,7 +118,10 @@ class SupabaseStore(BaseStore):
             if norm.get("posted_at"):
                 self._add_posted_at(norm["id"], norm["posted_at"], now)
             self._set_images(norm["id"], images)
-            self._set_amenities(norm["id"], norm.get("amenities", []))
+            # amenities NON poussees depuis le 2026-08-25 : l'app renvoie
+            # `amenities: []` en dur (lib/listings-db.ts:95) et ne lit donc
+            # jamais cette table, qui pesait 70 Mo en ligne. Elle continue
+            # d'etre remplie en local.
             return "new", None
 
         old_price = existing["price"]
@@ -246,6 +235,34 @@ class SupabaseStore(BaseStore):
             f"  and market_status_since <= now() - interval '{int(jours)} days'")
         return cur.rowcount if cur is not None else 0
 
+    def ids_actifs(self, source: str, deal_type: str | None = None) -> set[str]:
+        q = "select id from listings where source=%s and status='active'"
+        params: list = [source]
+        if deal_type:
+            q += " and deal_type=%s"
+            params.append(deal_type)
+        return {r[0] for r in self._execute(q, params).fetchall()}
+
+    def toucher_lot(self, ids, quand: str) -> int:
+        """Un seul aller-retour pour ~30 000 identifiants.
+
+        `touch_listing` en boucle aurait coute autant de requetes que d'annonces
+        confirmees — sur un recensement, c'est le tiers du temps total pour un
+        travail que Postgres fait en une passe."""
+        ids = list(ids)
+        if not ids:
+            return 0
+        touchees = 0
+        for i in range(0, len(ids), 5000):          # lot borne : evite un array geant
+            rows = self._execute(
+                "update listings set last_seen=%s, missed_count=0,"
+                " first_missed_at=null"
+                " where id = any(%s) and status='active' returning id",
+                (quand, ids[i:i + 5000]),
+            ).fetchall()
+            touchees += len(rows)
+        return touchees
+
     def mark_missing_inactive(self, source: str, seen_ids: set[str],
                               deal_type: str | None = None,
                               grace: int = 2) -> list[str]:
@@ -315,13 +332,27 @@ class SupabaseStore(BaseStore):
         return [{"khet": r[0], "active_count": r[1], "avg_price_per_sqm": r[2]} for r in rows]
 
     def record_cohort_snapshots(self) -> int:
-        """Stock actif par cohorte (immeuble × chambres × tranche × type).
+        """NE FAIT PLUS RIEN cote serveur depuis le 2026-08-25 — retourne 0.
 
-        Mesure la tension sans être trompée par les republications : un repost
-        fait mourir une annonce et en fait naître une autre dans la MÊME
-        cohorte, donc le stock ne bouge pas. C'est cette série qui remplace la
-        durée de vie des annonces, structurellement faussée par les reposts.
+        La serie de cohortes (stock actif par immeuble x chambres x tranche x
+        type) sert a l'ETUDE, pas a l'app : aucun fichier .ts/.tsx ne lit
+        `cohort_snapshots`, et `study/run_study.py` comme les agents tournent en
+        local (`agents/core/db.py` : LOWI_STORE vaut « sqlite » par defaut).
+        Elle pesait 218 Mo en ligne, deuxieme poste de la base, sur un quota
+        gratuit de 500 Mo deja depasse a 162 %.
+
+        Elle continue d'etre ecrite INTEGRALEMENT en local par SqliteStore —
+        verifie avant la bascule : 842 738 lignes serveur toutes retrouvees
+        parmi les 1 182 220 du local (ops/verifie-avant-degraissage.py).
+
+        Le no-op est ICI plutot que chez l'appelant : `scraper/run.py` appelle la
+        methode quel que soit le store, et un `if store == ...` chez lui serait
+        un deuxieme endroit ou la regle pourrait diverger.
         """
+        return 0
+
+    def _record_cohort_snapshots_ancien(self) -> int:
+        """Conserve pour rollback — voir la migration 2026-08-25_degraissage.sql."""
         # Le compte vient du RETURNING, pas d'une fenêtre temporelle : compter
         # les lignes « de la dernière minute » ramassait celles du run précédent
         # s'il venait de tourner, et en ratait si l'insertion dépassait la minute.

@@ -24,12 +24,25 @@
 param(
     [string]$Heure = "01:00",
     [switch]$GarderAnciennes,
-    # Contrepartie du reveil : la machine reveillee a 01:00 pour un cycle de
-    # ~5 h restait allumee jusqu'au matin. --veille-a-la-fin la rendort quand la
-    # lane est finie. Cote Python, agents/core/veille.py REFUSE si clavier ou
-    # souris ont bouge dans les 15 min : la tache peut demander la veille sans
-    # risque de l'imposer a quelqu'un qui travaille.
-    [switch]$SansVeilleALaFin
+    # RENDORMIR EN FIN DE CYCLE : DESACTIVE PAR DEFAUT depuis le 2026-08-25.
+    #
+    # L'idee etait bonne (ne pas laisser un portable allume toute la nuit apres
+    # un cycle de ~5 h) mais la mesure l'a demolie sur CE poste :
+    #   - `powercfg /a` : seul l'etat S0 « faible consommation, connecte au
+    #     reseau » existe, ni S1 ni S2 ni S3 ;
+    #   - test du 2026-08-25 09:11 : la machine entre en veille (Kernel-Power 42
+    #     a 09:11:10) et en RESSORT 3 SECONDES PLUS TARD (107 a 09:11:13). Elle
+    #     ne dort donc pas vraiment — l'economie d'energie est imaginaire ;
+    #   - et c'est dans cet etat ambigu que le cycle du 2026-08-25 01:00 n'a PAS
+    #     demarre, laissant une nuit entiere sans scrap sans que rien ne le dise.
+    # Le reveil programme, lui, FONCTIONNE : `powercfg /lastwake` designe
+    # nommement le minuteur de la tache comme cause du reveil. Le probleme
+    # n'etait pas de se reveiller, mais de s'endormir.
+    #
+    # Une journee de marche perdue coute plus qu'une nuit de veille d'un
+    # portable sur secteur. Reactivable par -VeilleALaFin si le compromis change.
+    [switch]$VeilleALaFin,
+    [switch]$SansVeilleALaFin   # conserve pour compatibilite : sans effet, c'est le defaut
 )
 
 $ErrorActionPreference = 'Stop'
@@ -67,7 +80,7 @@ foreach ($t in $anciennes) {
 # ca. Le rattrapage vient de la BASE, pas de StartWhenAvailable - qui ne rattrape
 # rien quand c'est la tache elle-meme qui est cassee.
 $argOrch = "`"$orch`" --due"
-if (-not $SansVeilleALaFin) { $argOrch += " --veille-a-la-fin" }
+if ($VeilleALaFin) { $argOrch += " --veille-a-la-fin" }
 $action = New-ScheduledTaskAction -Execute $py -Argument $argOrch -WorkingDirectory $root
 $trigger = New-ScheduledTaskTrigger -Daily -At $Heure
 # Declencheur QUOTIDIEN : la cadence de 4 jours (et le "decale au lendemain si
@@ -94,7 +107,7 @@ if ($PSCmdlet.ShouldProcess($nom, "Register-ScheduledTask")) {
     Register-ScheduledTask -TaskName $nom -Action $action -Trigger $trigger `
         -Settings $settings -Principal $principal -Force `
         -Description "Orchestrateur des 12 agents Lowi BKK. Lit agents/agents.json et le ledger, lance ce qui est du. Cadence reelle par agent geree par le ledger (every_days dans agents.json), pas par ce declencheur." | Out-Null
-    $mentionVeille = if ($SansVeilleALaFin) { "sans rendormissement" } else { "rendort la machine en fin de cycle" }
+    $mentionVeille = if ($VeilleALaFin) { "rendort la machine en fin de cycle" } else { "sans rendormissement (defaut depuis le 2026-08-25)" }
     Write-Host "`n  $nom enregistree (quotidienne a $Heure, reveil demande, $mentionVeille)"
 }
 

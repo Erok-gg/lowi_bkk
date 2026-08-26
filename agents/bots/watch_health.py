@@ -15,6 +15,7 @@ import os
 import statistics
 
 from agents.core import alert, escalation, local_llm
+from agents.core.metrics import aplatir
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REGISTRY = json.load(open(os.path.join(ROOT, "agents.json"), encoding="utf-8"))
@@ -38,8 +39,15 @@ The value of "constat" MUST be written in FRENCH."""
 
 
 def _metrics(row) -> dict:
+    """Metriques APLATIES du run : `nouvelles` peut vivre dans les etapes.
+
+    2026-08-23 : cette fonction lisait la racine seule. Depuis le chainage
+    `then` (2026-08-06) les extracteurs y rangent {"etapes": [...]}, donc
+    `nouvelles` valait None sur 24 runs -> verdict `metriques_absentes`
+    (medium, muet) au lieu de `parseur_casse` (high, escalade + mail). Nestopa
+    ramenait 0 annonce depuis le 2026-08-17 sans que rien ne le dise."""
     try:
-        return json.loads(row["metrics"] or "{}")
+        return aplatir(json.loads(row["metrics"] or "{}"))
     except (json.JSONDecodeError, TypeError):
         return {}
 

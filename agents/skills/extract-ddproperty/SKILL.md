@@ -19,11 +19,37 @@ elle porte donc la vérité terrain qui rend la question des doublons décidable
 ## Procédure
 1. `run.py --source ddproperty --deal-type <deal> --full --geocode --store supabase`
 2. **Puis** passe ciblée couloirs (même raison que FazWaz : restauration).
+3. **Puis** recensement : `recense.py --source ddproperty --onglets 5 --store supabase`.
+
+### Le recensement (étape 3, ajoutée le 2026-08-23)
+Nos 150 pages couvrent **2,7 %** du catalogue (2 748 pages en vente, 2 899 en
+location, ~113 000 annonces — mesuré par dichotomie le 2026-08-23). Le garde-fou
+anti-délistage de `run.py` s'annule donc à chaque cycle (scan à 16 % des actives,
+seuil à 50 %) et le stock ne fait que monter : 6 671 actives le 31/07, 32 142 le
+22/08. Le recensement énumère les identifiants du catalogue entier **sans ouvrir
+une seule page détail** : 1 h 35 à 5 onglets (1,01 s/page mesurée contre 5,24 s à
+un onglet).
+
+Ce qu'il **ne fait pas**, et c'est voulu (arbitrage du 2026-08-23) :
+- **aucun délistage** — les actives absentes du catalogue sont comptées, pas
+  touchées. Vérifié avant de décider : sur 12 actives non revues depuis début
+  août, **10 étaient encore en ligne** ; les délister aurait été une erreur.
+- **aucune insertion** — les inconnues partent dans
+  `output/recensement/ddproperty-inconnues.jsonl`. Les enregistrer toutes
+  pèserait ~540 Mo sur une base à 810 Mo en formule gratuite (mesuré).
+- **aucune résurrection** — seules les lignes déjà `active` sont rafraîchies.
 
 ## Contrat de sortie
 ```json
-{"nouvelles": int, "changees": int, "retirees": int, "traces_erreur": int, "then_exit": int}
+{"nouvelles": int, "changees": int, "retirees": int, "traces_erreur": int, "then_exit": int,
+ "pages_lues": int, "annonces_vues": int, "absentes_du_catalogue": int,
+ "inconnues_de_la_base": int}
 ```
+Les quatre derniers viennent du bilan JSON du recensement (étape 3), lu par
+`agents/core/shell.py`. Ils ne portent **pas** les mêmes noms que les compteurs
+d'extraction à dessein : `aplatir()` additionne `nouvelles`/`retirees` entre
+étapes, et mélanger un recensement de 113 000 identifiants aux nouvelles d'un
+scan ferait exploser les bandes de `watch-health` pour rien.
 
 ## Bandes normales
 `nouvelles` 30–1500 · `traces_erreur` 0–3

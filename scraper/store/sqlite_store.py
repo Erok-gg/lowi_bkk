@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pipeline import details
-from store.base import BaseStore
+from store.base import COLONNES_LISTING, COLONNES_LOCALES, BaseStore
 
 _SCHEMA = """
 create table if not exists listings (
@@ -59,6 +59,21 @@ create table if not exists scan_runs (
 create index if not exists idx_listings_khet on listings(khet);
 create index if not exists idx_listings_status on listings(status);
 create index if not exists idx_images_listing on listing_images(listing_id);
+-- PERIMETRE ASSAINI — meme definition que la vue Postgres du meme nom
+-- (supabase/migrations/plausibilite.sql) et que lib/market-bounds.ts. Les trois
+-- doivent rester alignes : c'est la regle de la source unique de CLAUDE.md, et
+-- une 3e definition divergente avait deja ete trouvee dans study/config.json le
+-- 2026-08-03. Creee ici parce que le stockage de reference est passe en local
+-- le 2026-08-23 : sans elle, l'etude de marche n'a plus de perimetre.
+create view if not exists listings_sane as
+select * from listings
+where price is not null
+  and (area_sqm is null or area_sqm between 15 and 500)
+  and (
+    (deal_type = 'sale' and price between 800000 and 100000000)
+    or
+    (deal_type = 'rent' and price between 3000 and 500000)
+  );
 """
 
 
@@ -96,11 +111,39 @@ def _median(valeurs) -> float | None:
     return float(v[m]) if len(v) % 2 else (v[m - 1] + v[m]) / 2.0
 
 
+#: Attente d'un verrou avant d'abandonner. Le defaut de sqlite3 est 5 s.
+#:
+#: MESURE DU 2026-08-25, cycle de 08:26 : l'orchestrateur lance les CINQ
+#: extracteurs EN PARALLELE — ce qui allait de soi tant que le stockage etait
+#: Postgres, qui accepte cinq ecrivains. SQLite n'en accepte qu'UN. Resultat sur
+#: le premier cycle apres la bascule locale du 2026-08-23 : 4 790 erreurs
+#: « database is locked », FazWaz a enregistre 28 annonces pour 3 285 echecs,
+#: PropertyScout est mort a l'ecriture de son scan_run. Aucune donnee perdue
+#: (chaque echec est attrape annonce par annonce et l'annonce est retiree de
+#: `seen_ids`, donc le garde-fou anti-delistage a tenu), mais le cycle etait
+#: perdu a 99 %.
+#:
+#: 60 s : une transaction d'upsert dure quelques millisecondes ; il faudrait des
+#: milliers d'ecrivains simultanes pour depasser ce delai. On attend son tour au
+#: lieu d'abandonner.
+ATTENTE_VERROU_S = 60
+
+
 class SqliteStore(BaseStore):
     def __init__(self, db_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(db_path)
+        self.db = sqlite3.connect(db_path, timeout=ATTENTE_VERROU_S)
         self.db.row_factory = sqlite3.Row
+        # WAL : les lecteurs cessent de bloquer l'ecrivain, et un commit n'a plus
+        # a reecrire le journal complet. C'est ce qui rend la parallelisation des
+        # extracteurs tenable — l'ecriture reste serialisee, mais chaque tour de
+        # verrou dure des millisecondes au lieu de dizaines.
+        # synchronous=NORMAL est le reglage SUR sous WAL (aucune corruption
+        # possible en cas de plantage applicatif ; seule une coupure de courant
+        # peut coûter les dernieres transactions, que le scrap suivant reprend).
+        self.db.execute("pragma journal_mode=WAL")
+        self.db.execute("pragma synchronous=NORMAL")
+        self.db.execute(f"pragma busy_timeout={ATTENTE_VERROU_S * 1000}")
         self.db.executescript(_SCHEMA)
         self._migrate()
         self.db.commit()
@@ -243,19 +286,12 @@ class SqliteStore(BaseStore):
     def upsert_listing(self, norm: dict, images: list[dict] | None) -> tuple[str, float | None]:
         existing = self.get_listing(norm["id"])
         now = _now()
-        cols = (
-            "source", "source_url", "title", "deal_type", "quota", "tenure", "price",
-            "currency", "area_sqm", "price_per_sqm", "bedrooms", "bathrooms", "condo_name",
-            "address_raw", "khet", "khwaeng", "street", "lat", "lng",
-            # cohorte (robuste aux republications), âge du bâtiment, empreinte photo
-            "unit_key", "year_built", "photo_count", "photo_sizes",
-            # provenance : qui publie, quand, et republication signalée par la source
-            "agent_id", "agency_id", "posted_at", "is_auto_repost", "market_status",
-            # descriptif libre (capturé depuis le 2026-07-31, non rétroactif)
-            "description", "page_text",
-            # détails extraits du descriptif (cf. pipeline/details.py)
-            *(c for c, _ in details.COLONNES),
-        )
+        # Exemplaire unique dans store/base.py (cf. le commentaire la-bas).
+        # Le local ecrit EN PLUS `description` et `page_text` : depuis le
+        # 2026-08-25 ils ne partent plus vers Supabase (l'app ne les lit jamais,
+        # ils pesaient 290 Mo sur un quota gratuit de 500 deja depasse). Le
+        # local est l'archive de reference, il garde tout.
+        cols = COLONNES_LISTING + COLONNES_LOCALES
 
         if existing is None:
             self.db.execute(
@@ -393,6 +429,34 @@ class SqliteStore(BaseStore):
             (limite,))
         self.db.commit()
         return cur.rowcount
+
+    def ids_actifs(self, source: str, deal_type: str | None = None) -> set[str]:
+        q = "select id from listings where source=? and status='active'"
+        params: list = [source]
+        if deal_type:
+            q += " and deal_type=?"
+            params.append(deal_type)
+        return {r[0] for r in self.db.execute(q, params).fetchall()}
+
+    def toucher_lot(self, ids, quand: str) -> int:
+        """Equivalent SQLite de la version Postgres (lots de 500 : limite de
+        variables liees). Ne touche que les lignes deja 'active'."""
+        ids = list(ids)
+        if not ids:
+            return 0
+        touchees = 0
+        for i in range(0, len(ids), 500):
+            lot = ids[i:i + 500]
+            trous = ",".join("?" * len(lot))
+            cur = self.db.execute(
+                f"update listings set last_seen=?, missed_count=0,"
+                f" first_missed_at=null"
+                f" where id in ({trous}) and status='active'",
+                [quand] + lot,
+            )
+            touchees += cur.rowcount
+        self.db.commit()
+        return touchees
 
     def mark_missing_inactive(self, source: str, seen_ids: set[str],
                               deal_type: str | None = None,

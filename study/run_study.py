@@ -21,7 +21,7 @@ import math
 import os
 import sys
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from glob import glob
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -34,8 +34,50 @@ for line in open(os.path.join(ROOT, "scraper", ".env"), encoding="utf-8"):
         os.environ.setdefault(k.strip(), v.strip())
 sys.path.insert(0, os.path.join(ROOT, "scraper"))
 import psycopg  # noqa: E402
+import sqlite3  # noqa: E402
 
 TODAY = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+# ── OU VIT LA DONNEE ────────────────────────────────────────────────────────
+# Le stockage de reference est passe en LOCAL le 2026-08-23 : la base Supabase
+# gratuite plafonnait a 500 Mo et en pesait deja 810, alors que le recensement
+# complet du catalogue DDproperty (~113 000 annonces) en aurait ajoute ~540.
+# Sur PC2 le disque est libre a 905 Go. `LOWI_STORE=supabase` rebascule sur le
+# serveur, sans modifier une ligne de code — les deux chemins rendent les memes
+# colonnes, seules les conversions de type different.
+#
+# Pas de repli silencieux : si la base locale manque, on s'arrete. Une etude
+# muette qui tourne sur des donnees figees serait pire qu'une erreur (l'edition
+# du 09/07 avait tourne un mois sur des donnees du 29/07 sans que rien ne le
+# signale).
+def store() -> str:
+    return os.environ.get("LOWI_STORE", "sqlite")
+
+
+def chemin_sqlite() -> str:
+    p = os.environ.get("LOWI_DB") or os.path.join(
+        os.environ.get("LOWI_OUTPUT_DIR") or os.path.join(ROOT, "scraper", "output"),
+        "bangkok.db")
+    if not os.path.exists(p):
+        sys.exit(f"base locale introuvable : {p} "
+                 f"(LOWI_STORE=supabase pour lire le serveur)")
+    return p
+
+
+#: Colonnes lues par l'etude. Un seul texte pour les deux moteurs : ce qui
+#: change entre eux tient dans les deux accolades de cast.
+ACTIVES = """
+    SELECT id, source, source_url, title, deal_type, price, area_sqm, price_per_sqm,
+           bedrooms, bathrooms, condo_name, khet, lat, lng, {fs} as first_seen
+    FROM listings_sane WHERE status='active' AND price_per_sqm > 0
+      AND condo_name IS NOT NULL
+"""
+DELISTEES = """
+    SELECT source, khet, condo_name, bedrooms, price,
+           {fs} as first_seen, {da} as delisted_at
+    FROM listings_sane
+    WHERE status='inactive' AND deal_type='sale' AND delisted_at >= {ph}
+"""
 
 # ───────────────────────── helpers ─────────────────────────
 def thb(x):
@@ -106,26 +148,37 @@ def fetch_all():
     choisie. La divergence était donc un piège de MAINTENANCE, pas une erreur de
     publication : aucun chiffre déjà publié n'est invalidé.
     """
-    dsn = os.environ["SUPABASE_DB_URL"]
     win = CFG["tension"]["delisted_window_days"]
-    with psycopg.connect(dsn, connect_timeout=30) as conn:
-        cur = conn.execute("""
-            SELECT id, source, source_url, title, deal_type, price, area_sqm, price_per_sqm,
-                   bedrooms, bathrooms, condo_name, khet, lat, lng, first_seen::text
-            FROM listings_sane WHERE status='active' AND price_per_sqm > 0
-              AND condo_name IS NOT NULL
-        """)
-        cols = [c.name for c in cur.description]
-        actives = [dict(zip(cols, r)) for r in cur.fetchall()]
-        cur = conn.execute(f"""
-            SELECT source, khet, condo_name, bedrooms, price, first_seen::text, delisted_at::text
-            FROM listings_sane
-            WHERE status='inactive' AND deal_type='sale'
-              AND delisted_at >= now() - interval '{win} days'
-        """)
-        cols = [c.name for c in cur.description]
-        delisted = [dict(zip(cols, r)) for r in cur.fetchall()]
-        db_start = conn.execute("SELECT min(first_seen)::date::text FROM listings").fetchone()[0]
+    limite = (datetime.now(timezone.utc) - timedelta(days=win)).isoformat()
+
+    if store() == "sqlite":
+        # first_seen / delisted_at sont deja du texte ISO en SQLite : pas de cast.
+        q_actives = ACTIVES.format(fs="first_seen", da="delisted_at")
+        q_delistees = DELISTEES.format(fs="first_seen", da="delisted_at", ph="?")
+        q_debut = "select substr(min(first_seen),1,10) from listings"
+        conn = sqlite3.connect(f"file:{chemin_sqlite()}?mode=ro", uri=True)
+        try:
+            cur = conn.execute(q_actives)
+            cols = [c[0] for c in cur.description]
+            actives = [dict(zip(cols, r)) for r in cur.fetchall()]
+            cur = conn.execute(q_delistees, (limite,))
+            cols = [c[0] for c in cur.description]
+            delisted = [dict(zip(cols, r)) for r in cur.fetchall()]
+            db_start = conn.execute(q_debut).fetchone()[0]
+        finally:
+            conn.close()
+    else:
+        q_actives = ACTIVES.format(fs="first_seen::text", da="delisted_at::text")
+        q_delistees = DELISTEES.format(fs="first_seen::text", da="delisted_at::text", ph="%s")
+        with psycopg.connect(os.environ["SUPABASE_DB_URL"], connect_timeout=30) as conn:
+            cur = conn.execute(q_actives)
+            cols = [c.name for c in cur.description]
+            actives = [dict(zip(cols, r)) for r in cur.fetchall()]
+            cur = conn.execute(q_delistees, (limite,))
+            cols = [c.name for c in cur.description]
+            delisted = [dict(zip(cols, r)) for r in cur.fetchall()]
+            db_start = conn.execute(
+                "SELECT min(first_seen)::date::text FROM listings").fetchone()[0]
     for r in actives:
         for k in ("price", "area_sqm", "price_per_sqm"):
             if r[k] is not None:

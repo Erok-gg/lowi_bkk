@@ -14,10 +14,10 @@ from agents.core import db, escalation
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-SQL_LOYERS = """
+SQL_LOYERS = f"""
 with par_condo as (
   select khet, condo_name,
-         percentile_cont(0.5) within group (order by price / nullif(area_sqm,0))
+         {db.MEDIANE("price / nullif(area_sqm,0)")}
            as loyer_sqm
   from listings_sane
   where deal_type = 'rent' and status = 'active' and area_sqm > 0
@@ -25,15 +25,15 @@ with par_condo as (
   group by khet, condo_name
 )
 select khet, count(*) as n_condos,
-       percentile_cont(0.5) within group (order by loyer_sqm) as median_rent_sqm
+       {db.MEDIANE("loyer_sqm")} as median_rent_sqm
 from par_condo group by khet having count(*) >= 5
 """
 
 # Rendement within-condo : le même immeuble doit avoir vente ET location actives.
-SQL_RENDEMENT = """
+SQL_RENDEMENT = f"""
 with v as (
   select khet, condo_name,
-         percentile_cont(0.5) within group (order by price) as prix
+         {db.MEDIANE("price")} as prix
   from listings_sane
   where deal_type='sale' and status='active' and condo_name is not null
     and khet is not null
@@ -41,7 +41,7 @@ with v as (
 ),
 l as (
   select khet, condo_name,
-         percentile_cont(0.5) within group (order by price) as loyer
+         {db.MEDIANE("price")} as loyer
   from listings_sane
   where deal_type='rent' and status='active' and condo_name is not null
     and khet is not null
@@ -53,7 +53,7 @@ apparies as (
   where v.prix > 0 and l.loyer > 0
 )
 select khet, count(*) as n_condos,
-       percentile_cont(0.5) within group (order by rdt) as yield_pct
+       {db.MEDIANE("rdt")} as yield_pct
 from apparies group by khet having count(*) >= 5
 """
 

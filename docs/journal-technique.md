@@ -2640,3 +2640,343 @@ l'état de la machine au matin si le rendormissement a eu lieu.
 
 `powercfg /waketimers`, qui listerait les minuteurs réellement armés, **exige une
 console administrateur** et n'a pas pu être lu.
+
+---
+
+## 2026-08-25 — Deux skills pour la procédure, et une règle qui n'était appliquée par rien
+
+**Question posée** : est-ce que ça vaut le coup d'écrire des skills pour tenir la
+boucle d'agents et l'architecture de la base hors-ligne sur PC2 ?
+
+### Ce que la mesure a montré avant de répondre
+
+Trois constats relevés avant d'écrire quoi que ce soit :
+
+1. **Les 16 `agents/skills/*/SKILL.md` ne sont pas atteignables par Claude.**
+   `.claude/skills/` n'existait pas dans le dépôt, et aucun des 16 n'apparaissait
+   dans la liste de skills chargée en séance. Ils servaient de doc aux bots et aux
+   tickets T2 — jamais de compétence chargeable. Le besoin n'était donc pas
+   d'écrire des skills, c'était d'en **brancher**.
+2. **`CLAUDE.md` fait 46 Ko**, chargé intégralement à chaque séance (~12k tokens),
+   avant même de savoir de quoi on parle.
+3. **La règle 6 du CLAUDE.md n'était appliquée par aucun contrôle.** « Une
+   migration s'applique avec sa contrepartie côté code (`_COLS`, stores, types) »
+   était une phrase. Dans les faits, **deux** listes de colonnes vivaient à la
+   main en parallèle : `_COLS` au niveau module dans `supabase_store.py`, et un
+   tuple local à `upsert_listing` dans `sqlite_store.py`.
+
+### Ce qui a été tranché, et pourquoi pas l'inverse
+
+**Un skill par procédure récurrente, pas par architecture cible.** La distinction
+a compté dans la discussion : un skill qui décrirait la base hors-ligne *avant*
+qu'elle existe décrirait un système imaginaire, et finirait par mentir — le défaut
+du widget qui recopie les crons Claude à la main. Ce qui est durable, c'est la
+**discipline de construction** : elle est vraie aujourd'hui, testable aujourd'hui,
+et ne périme pas quand l'architecture change.
+
+Deux skills, courts à dessein (mesure du 2026-07-31 : prompt bref **92 %** contre
+procédure verbeuse **69 %**) :
+
+- **`.claude/skills/lowi-cycle/`** — opérer et diagnostiquer la boucle : `status`
+  avant tout, nommer le poste, les commandes et ce qu'elles engagent, et surtout
+  l'**ordre de diagnostic** de « il n'a pas tourné » (tâche → lane → ledger →
+  veille → sonde), chaque étage ayant déjà été la cause au moins une fois.
+- **`.claude/skills/lowi-couche-donnees/`** — l'ordre canonique d'un changement de
+  couche données (schéma → migration → `COLONNES_LISTING` → `_migrate()` → types
+  TS + lecture → test), plus les pièges déjà payés sur cette pile (WAL, booléens
+  0/1, arrondi bancaire vs half-up, `security_invoker`, `[int]` en PowerShell).
+
+### La liste de colonnes fusionnée — mesure d'abord
+
+**Avant de fusionner, les deux listes ont été comparées : identiques, 49 colonnes
+de part et d'autre.** Aucune dérive en cours. La fusion en un exemplaire unique
+(`store.base.COLONNES_LISTING`, importé par les deux stores) est donc un **no-op
+sémantique** — vérifié après coup : 49 colonnes, `_COLS is COLONNES_LISTING`,
+`run.py` et les deux stores s'importent.
+
+Ce n'est pas un correctif, c'est la suppression d'un piège de maintenance. Le
+défaut qui coûte n'est pas que les deux listes diffèrent entre elles, c'est
+qu'une colonne soit dans le **code** et pas dans la **base** : SQLite se rattrape
+seul par `_migrate()`, Postgres non — le scrap meurt à l'écriture sur
+`column ... does not exist`, **côté online seulement**.
+
+### Le test, et la preuve qu'il a des dents
+
+`agents/tests/test_stores_alignes.py` confronte `COLONNES_LISTING` aux colonnes
+**réelles** des deux bases (SQLite créée neuve pour tester le schéma et non une
+base rattrapée à la main ; Postgres via `information_schema`).
+
+Conformément à la règle 2, il a été vérifié dans les deux sens :
+
+- état sain → 4 contrôles passent, sortie 0 (SQLite et Postgres portent chacune
+  les 49 colonnes, sur 60 au total) ;
+- **colonne fantôme ajoutée exprès à la liste** → les deux volets rougissent en
+  la nommant, sortie 1.
+
+Le volet Postgres exige `SUPABASE_DB_URL` (lu dans l'environnement, à défaut dans
+`scraper/.env`). **Sans lui il se déclare NON VÉRIFIÉ à voix haute** plutôt que de
+passer en silence : c'est le seul des deux qui prouve qu'une migration a été
+appliquée en ligne.
+
+### Non fait, laissé à l'arbitrage
+
+- **`CLAUDE.md` n'a pas été dégraissé.** Les points « nommer le poste », « mesurer
+  avant » et « journal en fin de séance » existent maintenant en **deux
+  exemplaires** : principes dans `CLAUDE.md`, procédure dans les skills. C'est la
+  famille de défaut corrigée sur `condo-name.ts` le 2026-07-28. Le déplacement de
+  la moitié procédurale hors de `CLAUDE.md` (qui libérerait aussi du contexte à
+  chaque séance) reste à trancher.
+- **L'architecture de la base hors-ligne sur PC2 n'a pas été décidée ni chiffrée.**
+  Deux options restent ouvertes et n'ont pas été départagées : (a) PC2 lit et écrit
+  local, Supabase ne garde qu'une fenêtre chaude servie à Vercel ; (b) tout tourne
+  en local, Vercel meurt ou sert une exportation figée. Le skill décrit *comment*
+  construire, pas *quoi* construire.
+- **Non vérifié** : que le schéma de `archive/lowi-archive.db` (905 Mo) réponde aux
+  requêtes de l'app. C'est un miroir d'introspection, pas une base applicative.
+- **Constat non traité** : `scraper/output/` est **vide** sur `REMIZDABOSS` alors
+  que `lib/listings-db.ts` y pointe par défaut pour son repli SQLite. Le chemin de
+  lecture hors-ligne est donc mort par défaut sur ce poste. Noté dans le skill,
+  pas corrigé — la correction dépend de l'arbitrage ci-dessus.
+- **Défaut d'environnement, non corrigé** : `agents/tests/test_lanes.py` plante sur
+  `UnicodeEncodeError` (console cp1252, caractère `⊇`) — il passe avec
+  `PYTHONIOENCODING=utf-8`. Le test est bon, c'est sa sortie console qui casse.
+  `test_stores_alignes.py` a été écrit en ASCII pour ne pas hériter du problème.
+
+---
+
+## 2026-08-25 (suite) — La base hors ligne était déjà là, et le serveur a maigri de 83 %
+
+### Trois erreurs de ma part, à consigner avant le reste
+
+**1. « `scraper/output/` est vide » était faux.** J'avais vérifié `output/` à la
+racine, pas `scraper/output/`. La base locale était vivante depuis le début :
+1,04 Go, et **en avance sur Supabase**. Toute la section « arbitrage à trancher »
+de l'entrée précédente reposait sur ce constat inexistant.
+
+**2. « Node n'est pas installé sur PC2 » était faux.** Il était à
+`%LOCALAPPDATA%\nodejs` — emplacement non couvert par mon balayage, qui ne
+regardait que `%LOCALAPPDATA%\Programs\nodejs`. J'ai installé une copie
+redondante (même version, v24.19.0) avant de m'en apercevoir ; supprimée, PATH
+utilisateur remis en état.
+
+**3. Le premier garde-fou de vérification s'est trompé lui-même.** Il annonçait
+842 738 lignes de `cohort_snapshots` « absentes en local ». Artefact de mesure :
+`str(datetime)` rend `2026-07-28 03:58:19.556794+00` côté Postgres quand SQLite
+stocke `2026-07-28T03:58:19.556794+00:00`. Le local en détient en fait
+**1 182 220** — un surensemble. Septième occurrence du même motif : c'était la
+mesure, pas le système mesuré.
+
+### Ce qui était déjà vrai sans qu'on le sache
+
+Le cycle tourne en `--store sqlite` depuis un moment. Au moment du constat :
+
+| | annonces | actives |
+|---|---|---|
+| Local `scraper/output/bangkok.db` | 72 230 | 49 554 |
+| Supabase | 69 175 | 46 867 |
+
+`agents/core/db.py` fait par ailleurs défaut à `LOWI_STORE=sqlite` : les agents,
+l'étude et les scripts `ops/` lisent **déjà** le local. La « bascule hors ligne »
+était faite aux trois quarts ; il manquait la lecture côté app.
+
+### L'app tourne en local
+
+`LOWI_SQLITE_DB` posé dans `.env.local` (il **prime** sur `SUPABASE_DB_URL`, cf.
+`lib/listings-db.ts:75`), `npm install`, serveur sur **le port 3100** — 3000 est
+pris par `C:\blog`, un autre projet Next lancé le même jour.
+
+Preuve que la lecture est locale : la page `/for-sale` affiche **25 794** ventes
+dans les bornes, le local en compte **25 851** (le scrap écrit pendant la
+mesure), le serveur **24 584**.
+
+**Non vérifié** : le rendu de la carte. MapLibre reste à `styleLoaded: false`
+tant que le panneau navigateur est masqué — un panneau qui ne compose pas
+d'images n'a pas de boucle de rendu WebGL. Les tableaux, rendus côté serveur,
+s'affichent sans ça. À reconfirmer dans un vrai navigateur.
+
+### Le dégraissage du serveur (option retenue par l'utilisateur)
+
+**Mesure qui a décidé** : l'app lit **~22 Mo** sur 1,04 Go — `listings` colonnes
+utiles 18,6 Mo, images 1,8, prix 0,6, `khet_snapshots` 1,0. Elle ne référence
+jamais `page_text` (453,6 Mo en local), `description` (137,7 Mo),
+`cohort_snapshots` ni `listing_amenities` — vérifié fichier par fichier, le seul
+résultat étant la balise meta de `app/layout.tsx`. `lib/listings-db.ts:95`
+renvoie même `amenities: []` en dur.
+
+**Le garde-fou a refusé deux fois, et il avait raison les deux fois.** Le second
+refus était l'artefact d'horodatage ci-dessus. Le premier était réel : **3
+`page_text` et 4 `description` existaient sur le serveur et pas en local**.
+Cause mesurée — la **dédup incrémentale** : prix inchangé dans la liste, fiche
+détail non revisitée, texte jamais capturé côté local, alors que le serveur
+l'avait capturé avant la bascule. Rapatriés par `ops/rapatrie-textes.py` (piège
+trouvé en le faisant : `page_text` est un `bytea` côté Postgres et un blob zlib
+côté SQLite — il faut décoder puis recompresser), puis relus pour vérifier.
+
+**Ordre d'application — l'inverse d'un ajout.** Pour une colonne ajoutée :
+schéma → migration → code. Pour une colonne **retirée** : le code cesse
+d'écrire d'abord, la suppression vient ensuite, sinon le scrap meurt sur
+`column ... does not exist`. `.claude/skills/lowi-couche-donnees/SKILL.md` ne le
+disait pas — à corriger.
+
+**Résultat mesuré** : **810 Mo → 139 Mo**, soit **28 % du quota gratuit** au lieu
+de 162 %. Meilleur que les ~230 Mo estimés : `listings` passe de 440 à 57 Mo. Le
+`drop column` seul ne rend rien — c'est le `vacuum full listings` qui réécrit la
+table. Requête exacte de l'app rejouée après coup : 46 867 lignes servies, rien
+de cassé.
+
+`COLONNES_LISTING` devient le **socle commun** et `COLONNES_LOCALES`
+(`description`, `page_text`) l'ajout côté SQLite seul. Le test
+`test_stores_alignes.py` vérifie désormais aussi l'**ABSENCE** de ces colonnes
+côté serveur : leur réapparition signalerait un rollback subi.
+
+### Le pousseur : mesuré, et trop lent
+
+`ops/remonter-local.py` faisait `select * from listings` — donc chargeait les
+600 Mo de texte pour les jeter aussitôt. Restreint au socle commun : **72 695
+annonces lues en 5,8 s**.
+
+Mais la poussée elle-même, **mesurée sur 200 annonces : ~3,9 annonces/s**, soit
+**~5 h pour les 72 695**. Un aller-retour par annonce vers le pooler
+`ap-southeast-1`. **Inutilisable tel quel à chaque cycle.** Il faudrait pousser
+le delta (nouvelles + prix changés depuis la dernière poussée, quelques milliers)
+ou grouper les écritures. Non fait.
+
+### Non fait, non vérifié, laissé à l'arbitrage
+
+- **Le pousseur n'est PAS branché sur le cycle.** Tant qu'il ne l'est pas,
+  **Vercel se fige** au dernier état poussé — l'écart local/serveur était déjà de
+  1 267 ventes actives avant l'opération. Les 200 annonces de la mesure sont les
+  seules remontées.
+- **`agents/agents.json` est édité par une autre session** en parallèle : je n'y
+  ai pas touché pour ne pas écraser son travail.
+- **Deux fichiers d'archive ont disparu aujourd'hui** : `lowi-archive.db`
+  (905 Mo) et `bangkok-backup.db` (985 Mo), tous deux du 23/08. Introuvables sur
+  C: et D:, **absents de la corbeille** → suppression dure ou déplacement vers un
+  volume non monté. Les deux scripts suspects sont **disculpés par lecture du
+  code** : `sauvegarde-cle.py` ne supprime que dans le dossier de destination et
+  seulement après vérification ; `miroir-coureur.ps1` ne fait que lire l'archive.
+  Une autre session éditait le dépôt aux mêmes heures (`analyze_rent.py`,
+  `orchestrator.py`, `sauvegarde-cle.py` à 09:58-10:01, puis `agents/core/db.py`
+  et `organize.py` à 13:39-13:52). `ops/sauvegarde-locale.py` a disparu de la
+  même façon. **Cause non établie.**
+  Copies plus anciennes retrouvées : `C:\Lowi_bkk_ancien\archive\` (708 Mo,
+  20/08) et `D:\Lowi_bkk\archive\` (34 Mo, 09/07).
+- **Le serveur n'est plus le second détenteur de `page_text`/`description`.** PC2
+  l'est seul, avec la copie de `D:\++SCRAP DB++`. La discipline de sauvegarde
+  compte davantage qu'hier — et on vient de perdre deux archives sans
+  explication.
+- **Non vérifié** : `npm approve-scripts` reste à faire pour `esbuild` et
+  `sharp` (bloqués à l'installation) — `npm test` et les scripts `geo:*`
+  échoueront tant que ce n'est pas fait.
+
+## 2026-08-25 (suite 2) — La cadence perdait une nuit sur deux, le dashboard regardait la mauvaise base
+
+### « Tous les jours à 01:00 » ne voulait pas dire tous les jours
+
+`is_due()` comparait des HEURES ÉCOULÉES depuis le départ du dernier succès à
+`every_days`. Tant que le cycle partait à l'heure, la différence ne se voyait
+pas. Dès qu'il glissait dans la journée — rattrapage au logon, coupure réseau,
+lancement à la main — le créneau de 01:00 suivant tombait sous les 24 h et TOUT
+se déclarait « à jour ».
+
+**Mesuré ce soir avant de toucher au code** : cycle du jour parti à 08:24 faute
+de réveil, extracteurs à 10:00 ; à 01:00 la nuit suivante, 0,6 j écoulé, **12
+agents sur 12 « à jour », aucun scrap**. Et rien n'alertait — le cycle se
+terminait normalement, simplement vide. C'est le mode de panne de la règle 2,
+appliqué à la cadence elle-même.
+
+Corrigé en **jours calendaires locaux** (`jour_local()` : le ledger horodate en
+UTC, le créneau est à 01:00 à Bangkok — compter en UTC aurait redonné le décalage
+d'un jour déjà corrigé le matin même sur `current_lane()`). Un succès daté d'hier
+rend l'agent dû aujourd'hui, quelle que soit l'heure.
+
+### La contrepartie : ne jamais couper un scrap en vol
+
+Le pendant du changement ci-dessus, demandé explicitement : « tous les jours à
+1h du matin **sauf si ça coupe le scrap en cours** ». Un extracteur tué en vol
+est pire qu'un cycle manqué — la passe `--full` n'a vu qu'une partie du site, et
+le diff compte comme délisté ce qu'elle n'a pas revu.
+
+`scrap_en_cours()` sonde deux fois : le **ledger** (run d'Extraction `running`
+dont le PID vit — les orphelins sont déjà refermés en `interrompu` par le
+nettoyage d'ouverture, donc pas de faux positif) puis les **lignes de commande
+du poste** (`scraper/run.py` ou `recense.py` lancé hors cycle, que le ledger
+ignore). En cas d'échec de la seconde sonde **on laisse passer en le disant** :
+bloquer un cycle entier sur un hoquet de PowerShell serait un garde-fou pire que
+le défaut. Le cycle ENTIER est reporté, pas seulement l'extraction — `report` et
+surtout `backup-apres-cycle` (copie de 1 Go du SQLite) liraient sinon une base en
+cours d'écriture.
+
+**Vérifié sur du réel, pas en simulation** : la sonde a détecté le
+`recense.py --source ddproperty` lancé à la main à 20:25 (PID 18700), qui tournait
+encore à 22:00. Conséquence à assumer : **s'il tourne encore à 01:00, le cycle de
+cette nuit sera reporté**. C'est le comportement demandé, pas un défaut.
+
+`agents/tests/test_cadence.py` fige les deux règles. Le cas de test choisit une
+date qui **discrimine** — hier au calendrier ET moins de 24 h : « hier 10:00 »
+lancé le soir aurait passé sous l'ancienne règle aussi, et n'aurait rien prouvé.
+
+### Le dashboard montrait un instantané mort
+
+`ops/dashboard.py` ouvrait par défaut « SUPABASE (production) », premier d'une
+liste de sources qu'on faisait tourner à la touche [S]. Or depuis le 2026-08-23
+la base de référence est LOCALE : les cinq extracteurs tournent en
+`--store sqlite` et le serveur est figé. Le dashboard affichait donc une base
+morte pendant qu'un scrap écrivait à côté — et personne ne pouvait le voir, il
+n'y avait pas d'écart visible entre « base figée » et « scrap qui n'avance pas ».
+
+Réécrit sur **une seule base** (`scraper/output/bangkok.db`, chemin en dur à
+dessein — un dashboard qui « cherche une base » finit par en trouver une périmée)
+et **sans rotation**. Il montre le scrap EN COURS et rien d'autre : qui tourne,
+depuis quand, à quelle passe (`log.then_N`), si le journal bouge encore, ce qui a
+été écrit **depuis le départ du run** (`last_seen >= started_at` — un total de
+72 695 ne bouge pas à l'œil), et la queue du journal. Quand plus rien ne tourne :
+le RÉSULTAT du dernier cycle, qui reste affiché — c'est ce qu'on vient lire le
+matin. L'orchestrateur l'ouvre au départ de l'extraction et **ne le referme
+pas** ; un témoin `agents/state/dashboard.pid` évite d'empiler une fenêtre par
+nuit. Les deux vues ont été rejouées à blanc sur les données réelles du jour
+avant d'ouvrir la fenêtre.
+
+### Audit du réveil — et une affirmation de ma part à corriger
+
+**J'ai écrit en début de séance que le créneau de 01:00 n'avait jamais déclenché
+depuis son installation. C'est faux** : en regroupant les runs par jour UTC au
+lieu du jour local, le cycle du 24/08 tombait dans la veille. Il a bien
+déclenché, à 01:00 pile, machine réveillée (events Kernel-Power 42 puis 107 à
+01:00:02 et 01:00:04). Il était vide à cause du bug de lane, pas du réveil.
+Bilan réel : **1 nuit sur 3**.
+
+`ops/audit-reveil.ps1` (nouveau, lecture seule) affiche d'un coup les six
+conditions dont dépend le réveil. Ce qu'il montre sur `REMIZDABOSS` :
+
+| | secteur | batterie |
+|---|---|---|
+| Minuteurs de réveil (RTCWAKE) | **1 — autorisé** | **0 — INTERDIT** |
+| Veille par inactivité | **0 s — jamais** | 180 s |
+
+Deux conséquences que la lecture d'une seule valeur cachait. **Sur secteur, la
+machine ne s'endort jamais d'elle-même** : branchée, il n'y a même pas de réveil
+à faire, et un échec à 01:00 vient forcément d'ailleurs. **Sur batterie**, elle
+dort au bout de 3 min et le réveil est interdit — explication la plus simple des
+deux nuits ratées, et cohérente avec le test du 25/08 à 09:13 qui a réussi
+(`powercfg /lastwake` nomme `LowiBKK-TestReveil`), sur secteur.
+
+### Non fait, non vérifié, laissé à l'arbitrage
+
+- **Le réveil sur batterie reste interdit.** C'est un arbitrage, pas un défaut :
+  l'autoriser, c'est vider la batterie en scrapant 6 h sans câble. Commande dans
+  l'audit, non exécutée.
+- **Deux vérifications exigent une console admin** et n'ont pas pu être faites :
+  `powercfg /waketimers` (le minuteur est-il réellement ARMÉ ?) et l'activation
+  du journal `TaskScheduler/Operational` — refusée en « Accès refusé ». Sans ce
+  journal, **une nuit ratée ne laisse aucune trace exploitable** ; c'est ce qui a
+  rendu les nuits d'août inexplicables.
+- **`--veille-a-la-fin` a de nouveau disparu de la tâche** : elle porte
+  `orchestrator.py --due` tout court. La machine restera allumée après le cycle,
+  contrairement à la décision du 22/08. Non réinstallé — l'installeur touche à
+  une tâche planifiée, ça se fait en conscience.
+- **Le réglage « fermeture du capot » est illisible** sur ce plan (ASUS
+  Recommended) : `powercfg /q SUB_BUTTONS` ne rend pas ce paramètre. Non tranché.
+- **Aucun cycle complet n'a tourné avec ce code.** La cadence, le garde-fou et
+  l'ouverture du dashboard sont vérifiés unitairement et sur l'état réel du
+  poste, pas de bout en bout. La première preuve viendra du cycle de 01:00.

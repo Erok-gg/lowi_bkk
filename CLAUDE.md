@@ -6,6 +6,13 @@
 >
 > **Système d'agents (12 bots orchestrés, étages T0/T1/T2) : [agents/README.md](agents/README.md)**
 >
+> **Deux skills chargés à la demande** (`.claude/skills/`) portent la
+> PROCÉDURE, là où ce fichier porte les principes :
+> [`lowi-cycle`](.claude/skills/lowi-cycle/SKILL.md) — opérer et diagnostiquer
+> la boucle d'agents ; [`lowi-couche-donnees`](.claude/skills/lowi-couche-donnees/SKILL.md)
+> — l'ordre de construction d'un changement de schéma/store/lecture, et ce
+> qu'on vérifie à chaque étage.
+>
 > **Présentation non technique — flux, méthode, valeur, limites : [docs/dossier-investisseur/](docs/dossier-investisseur/README.md)**
 >
 > **Décisions, méthodes et défauts corrigés : voir [docs/journal-technique.md](docs/journal-technique.md)**

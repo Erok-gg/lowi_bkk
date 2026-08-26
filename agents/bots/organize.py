@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
+from collections import defaultdict
 import random
 import re
 import time
@@ -83,31 +85,88 @@ SCHEMA = {"a_active": "bool", "b_active": "bool", "a_retiree": "bool",
           "b_retiree": "bool", "b_apres_a": "bool", "ecart_prix_pct": "number"}
 
 # Paires candidates : même immeuble normalisé, khet, chambres, surface, deal_type, source.
-SQL_PAIRES = """
-with n as (
-  select id, source, deal_type, status, price, area_sqm, bedrooms, khet, condo_name,
-         first_seen, delisted_at, agent_id,
-         lower(regexp_replace(coalesce(condo_name,''), '[^a-zA-Z0-9]', '', 'g')) as ckey
-  from listings
-  where condo_name is not null and area_sqm is not null
-    and bedrooms is not null and price > 0
-),
-p as (
-  select a.id ida, b.id idb, a.source, a.deal_type, a.condo_name, a.khet, a.bedrooms,
-         a.area_sqm sa, b.area_sqm sb, a.price pa, b.price pb,
-         a.status sta, b.status stb, a.first_seen fsa, b.first_seen fsb,
-         a.delisted_at da, b.delisted_at db, a.agent_id aga, b.agent_id agb,
-         abs(a.price - b.price) / greatest(a.price, b.price)::float as ecart_prix,
-         (a.status = 'active' and b.status = 'active') as deux_actives,
-         (a.delisted_at is not null and b.first_seen > a.delisted_at
-            and b.first_seen - a.delisted_at < interval '90 days') as sequentiel
-  from n a join n b
-    on a.ckey = b.ckey and a.khet = b.khet and a.bedrooms = b.bedrooms
-   and a.deal_type = b.deal_type and a.source = b.source
-   and abs(a.area_sqm - b.area_sqm) < 0.01 and a.id < b.id
-)
-select * from p
+#: Lecture BRUTE. L'appariement, lui, se fait en Python (voir paires_candidates).
+SQL_ANNONCES = """
+select id, source, deal_type, status, price, area_sqm, bedrooms, khet,
+       condo_name, first_seen, delisted_at, agent_id
+from listings
+where condo_name is not null and area_sqm is not null
+  and bedrooms is not null and price > 0
 """
+
+
+def paires_candidates() -> list[dict]:
+    """Paires « même immeuble, même quartier, mêmes chambres, même surface ».
+
+    POURQUOI EN PYTHON ET PLUS EN SQL
+    L'appariement était une auto-jointure de la table sur elle-même. Postgres
+    l'absorbait ; SQLite ne le peut pas, parce que la clé de regroupement est
+    CALCULÉE (le nom d'immeuble réduit à ses lettres) et qu'aucun index ne porte
+    sur un calcul. Mesuré le 2026-08-25 : la requête portée telle quelle tournait
+    encore après 10 minutes sur 69 735 annonces — soit ~4,8 milliards de
+    comparaisons, chacune appelant une fonction Python.
+
+    Ici on lit les annonces UNE fois, on les range par clé, et on n'apparie qu'à
+    l'intérieur de chaque paquet. Le résultat est le même, aux mêmes conditions ;
+    seul le chemin change. Et il n'y a plus qu'UNE implémentation pour les deux
+    moteurs — deux versions d'une même règle finissent toujours par diverger.
+    """
+    lignes = db.query(SQL_ANNONCES)
+    paquets: dict[tuple, list[dict]] = defaultdict(list)
+    for r in lignes:
+        cle = (_cle_immeuble(r["condo_name"]), r["khet"], r["bedrooms"],
+               r["deal_type"], r["source"])
+        paquets[cle].append(r)
+
+    paires = []
+    for groupe in paquets.values():
+        if len(groupe) < 2:
+            continue
+        groupe.sort(key=lambda r: str(r["id"]))
+        for i, a in enumerate(groupe):
+            for b in groupe[i + 1:]:
+                # MÊMES CONDITIONS QUE L'ANCIENNE JOINTURE, mot pour mot :
+                # surface identique à 0,01 m² près, et a.id < b.id pour ne
+                # compter chaque paire qu'une fois.
+                if abs(float(a["area_sqm"]) - float(b["area_sqm"])) >= 0.01:
+                    continue
+                if str(a["id"]) >= str(b["id"]):
+                    continue
+                pa, pb = float(a["price"]), float(b["price"])
+                paires.append({
+                    "ida": a["id"], "idb": b["id"], "source": a["source"],
+                    "deal_type": a["deal_type"], "condo_name": a["condo_name"],
+                    "khet": a["khet"], "bedrooms": a["bedrooms"],
+                    "sa": a["area_sqm"], "sb": b["area_sqm"], "pa": pa, "pb": pb,
+                    "sta": a["status"], "stb": b["status"],
+                    "fsa": a["first_seen"], "fsb": b["first_seen"],
+                    "da": a["delisted_at"], "db": b["delisted_at"],
+                    "aga": a["agent_id"], "agb": b["agent_id"],
+                    "ecart_prix": abs(pa - pb) / max(pa, pb),
+                    "deux_actives": a["status"] == "active" and b["status"] == "active",
+                    "sequentiel": _sequentiel(a, b),
+                })
+    return paires
+
+
+def _cle_immeuble(nom) -> str:
+    """Nom d'immeuble réduit à ses lettres et chiffres, en minuscules."""
+    return "".join(c for c in str(nom or "") if c.isalnum()).lower()
+
+
+def _sequentiel(a: dict, b: dict) -> bool:
+    """B a-t-elle été publiée dans les 90 jours suivant le retrait de A ?
+
+    C'est la signature d'une REPUBLICATION : la même unité remise en ligne sous
+    un nouvel identifiant. Deux annonces simultanées, elles, sont deux lots."""
+    if not a.get("delisted_at") or not b.get("first_seen"):
+        return False
+    try:
+        fin = datetime.fromisoformat(str(a["delisted_at"]))
+        debut = datetime.fromisoformat(str(b["first_seen"]))
+    except (TypeError, ValueError):
+        return False
+    return debut > fin and (debut - fin).days < 90
 
 
 # ───────────────────── mise en forme et décision ─────────────────────
@@ -203,20 +262,38 @@ def _bornes_sql() -> dict[str, int]:
     définition. On compare au code SQL en production, pas au fichier de migration
     — c'est la vue qui filtre les statistiques."""
     try:
-        d = db.scalar("select pg_get_viewdef('listings_sane'::regclass, true)")
+        d = db.definition_vue("listings_sane")
     except Exception:  # noqa: BLE001
         return {}
     if not d:
         return {}
+    # DEUX ÉCRITURES POUR LA MÊME RÈGLE. Postgres rend sa définition normalisée
+    # (`price >= 800000::numeric AND price <= ...`), SQLite rend le texte source
+    # tel qu'écrit (`price between 800000 and 100000000`). Le 2026-08-25, le seul
+    # motif « >= / <= » n'a rien reconnu dans la vue locale : le contrôle a
+    # conclu « bornes illisibles » et s'est déclaré en échec à chaque cycle —
+    # alors que les bornes étaient parfaitement alignées. Un garde-fou qui ne
+    # sait plus lire ce qu'il garde ne protège plus rien (règle 2).
+    def _paire(champ_ou_valeur: str, texte: str) -> tuple[int, int] | None:
+        for motif in (rf"{champ_ou_valeur}.*?between\s+(\d+)\s+and\s+(\d+)",
+                      rf"{champ_ou_valeur}.*?>=\s*(\d+).*?<=\s*(\d+)"):
+            if (m := re.search(motif, texte, re.S | re.I)):
+                return int(m.group(1)), int(m.group(2))
+        return None
+
     out: dict[str, int] = {}
-    if (m := re.search(r"area_sqm\s*>=\s*(\d+)", d)):
-        out["AREA_MIN"] = int(m.group(1))
-    if (m := re.search(r"area_sqm\s*<=\s*(\d+)", d)):
-        out["AREA_MAX"] = int(m.group(1))
-    if (m := re.search(r"'sale'.*?price\s*>=\s*(\d+).*?price\s*<=\s*(\d+)", d, re.S)):
-        out["SALE_MIN"], out["SALE_MAX"] = int(m.group(1)), int(m.group(2))
-    if (m := re.search(r"'rent'.*?price\s*>=\s*(\d+).*?price\s*<=\s*(\d+)", d, re.S)):
-        out["RENT_MIN"], out["RENT_MAX"] = int(m.group(1)), int(m.group(2))
+    if (b := _paire("area_sqm", d)):
+        out["AREA_MIN"], out["AREA_MAX"] = b
+    # On borne la recherche au fragment de chaque deal_type : sans ça, le motif
+    # « 'sale' … price … » traverserait la clause suivante et attraperait les
+    # nombres du loyer.
+    for etiquette, cle in (("sale", "SALE"), ("rent", "RENT")):
+        depart = d.lower().find(f"'{etiquette}'")
+        if depart == -1:
+            continue
+        fragment = d[depart:depart + 400]
+        if (b := _paire("price", fragment)):
+            out[f"{cle}_MIN"], out[f"{cle}_MAX"] = b
     return out
 
 
@@ -414,7 +491,7 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
     os.makedirs(STATE, exist_ok=True)
     bornes_ok = verifier_bornes(led, run_id)
 
-    paires = db.query(SQL_PAIRES)
+    paires = paires_candidates()
     tranchees_sql, ambigues = 0, []
     for p in paires:
         if prefiltre_sql(p) is not None:

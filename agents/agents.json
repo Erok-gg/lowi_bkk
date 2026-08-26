@@ -52,15 +52,13 @@
       "name": "verifie-backup",
       "famille": "Prelude",
       "tier": "T0",
-      "lanes": [
-        "daily"
-      ],
-      "every_days": 4,
+      "lanes": [],
+      "every_days": 1,
       "cmd": [
         "@py",
         "ops/verifie-backup.py"
       ],
-      "_pourquoi": "Vérifie l'intégrité du backup PRÉCÉDENT (PRAGMA integrity_check, tables attendues, volume archive vs Supabase, dernier backup-apres-cycle 'ok' dans le ledger et pas trop vieux) avant de lancer l'extraction. À défaut (n'importe quel point en échec) : rattrape en relançant ops/sync_supabase_local.py tout de suite, dans ce même cycle plutôt que d'attendre le suivant. Ne resynchronise PAS à l'aveugle si tout va déjà bien — contrairement à l'ancien backup-avant-cycle (v1), inconditionnel. Tourne en Prelude : séquentiel, avant tout extracteur (cf. orchestrator.py:run_lane).",
+      "_pourquoi": "NEUTRALISE le 2026-08-25, meme raison que `storage` : il comparait le volume de l'archive a celui du serveur Supabase avant d'autoriser l'extraction. Les deux termes de la comparaison ont disparu. Son role — ne pas scraper sans savoir que la sauvegarde precedente est saine — est repris par les 3 essais de ops/sauvegarde-cle.py (qui refuse la rotation si un essai echoue) et par ops/pouls.py, qui surveille depuis l'EXTERIEUR du cycle.",
       "bandes": {
         "traces_erreur": [
           0,
@@ -77,7 +75,7 @@
       "lanes": [
         "daily"
       ],
-      "every_days": 4,
+      "every_days": 1,
       "cmd": [
         "@py",
         "scraper/run.py",
@@ -87,7 +85,7 @@
         "sale",
         "--full",
         "--store",
-        "supabase"
+        "sqlite"
       ],
       "then": [
         [
@@ -99,7 +97,7 @@
           "rent",
           "--full",
           "--store",
-          "supabase"
+          "sqlite"
         ],
         [
           "@py",
@@ -109,7 +107,7 @@
           "--config",
           "config/targets/fazwaz-corridors.json",
           "--store",
-          "supabase"
+          "sqlite"
         ]
       ],
       "_then_pourquoi": "1er 'then' = location, enchaînée dès que la vente finit (indépendamment des autres sources). 2e 'then' = passe ciblée corridors, EN DERNIER : la fenêtre 150 pages du --full délisterait à tort les districts ciblés, la passe ciblée les réactive après coup.",
@@ -131,7 +129,7 @@
       "lanes": [
         "daily"
       ],
-      "every_days": 4,
+      "every_days": 1,
       "cmd": [
         "@py",
         "scraper/run.py",
@@ -142,7 +140,7 @@
         "--full",
         "--geocode",
         "--store",
-        "supabase"
+        "sqlite"
       ],
       "then": [
         [
@@ -155,7 +153,7 @@
           "--full",
           "--geocode",
           "--store",
-          "supabase"
+          "sqlite"
         ],
         [
           "@py",
@@ -165,7 +163,17 @@
           "--config",
           "config/targets/ddproperty-corridors.json",
           "--store",
-          "supabase"
+          "sqlite"
+        ],
+        [
+          "@py",
+          "scraper/recense.py",
+          "--source",
+          "ddproperty",
+          "--onglets",
+          "5",
+          "--store",
+          "sqlite"
         ]
       ],
       "bandes": {
@@ -177,7 +185,8 @@
           0,
           3
         ]
-      }
+      },
+      "_recensement_pourquoi": "4e etape, APRES vente, location et couloirs — arbitrage du 2026-08-23. Mesure du jour : nos 150 pages couvrent 2,7 % du catalogue (2748 pages en vente, 2899 en location, ~113 000 annonces), donc le garde-fou anti-delistage de run.py s'annule a chaque cycle (scan a 16 % des actives, seuil a 50 %) et le stock ne fait que monter : 6 671 actives le 31/07, 32 142 le 22/08. Le recensement enumere les identifiants du catalogue entier sans une seule page detail : 1 h 40 a 5 onglets (1,06 s/page contre 5,24 s a un onglet). Il NE DELISTE RIEN et N'INSERE RIEN — il rafraichit last_seen des actives confirmees et compte le reste. En 'then' et non en agent separe : les agents d'une meme lane demarrent en parallele, ce qui ferait cogner deux scans DDproperty en meme temps."
     },
     {
       "name": "extract-propertyscout",
@@ -186,7 +195,7 @@
       "lanes": [
         "daily"
       ],
-      "every_days": 4,
+      "every_days": 1,
       "cmd": [
         "@py",
         "scraper/run.py",
@@ -194,7 +203,7 @@
         "propertyscout",
         "--full",
         "--store",
-        "supabase"
+        "sqlite"
       ],
       "_pourquoi_pas_de_then": "Un seul run.py couvre déjà sale+rent (pas de split --deal-type dans sa config) — rien à enchaîner.",
       "bandes": {
@@ -215,7 +224,7 @@
       "lanes": [
         "daily"
       ],
-      "every_days": 4,
+      "every_days": 1,
       "cmd": [
         "@py",
         "scraper/run.py",
@@ -224,7 +233,7 @@
         "--full",
         "--geocode",
         "--store",
-        "supabase"
+        "sqlite"
       ],
       "bandes": {
         "nouvelles": [
@@ -245,7 +254,7 @@
       "lanes": [
         "daily"
       ],
-      "every_days": 4,
+      "every_days": 1,
       "cmd": [
         "@py",
         "scraper/run.py",
@@ -254,7 +263,7 @@
         "--full",
         "--geocode",
         "--store",
-        "supabase"
+        "sqlite"
       ],
       "_ajoute_le": "2026-08-05 — aucun run de production encore, bandes provisoires. Voir agents/skills/extract-livinginsider/SKILL.md pour les pannes connues (pas de dédup incrémentale possible, filtre Bangkok imparfait).",
       "bandes": {
@@ -302,7 +311,7 @@
       "lanes": [
         "daily"
       ],
-      "every_days": 4,
+      "every_days": 1,
       "module": "agents.bots.analyze_sale",
       "after": [
         "extract-fazwaz",
@@ -318,7 +327,7 @@
       "lanes": [
         "daily"
       ],
-      "every_days": 4,
+      "every_days": 1,
       "module": "agents.bots.analyze_rent",
       "after": [
         "extract-fazwaz",
@@ -337,13 +346,14 @@
       "lanes": [
         "daily"
       ],
-      "every_days": 4,
+      "every_days": 1,
       "module": "agents.bots.organize",
       "after": [
         "extract-ddproperty"
       ],
       "needs_supabase": true,
-      "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté."
+      "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté.",
+      "_pourquoi": "REACTIVE le 2026-08-25 apres portage. Il avait ete suspendu quelques heures le meme jour : ses requetes utilisaient `regexp_replace`, `greatest`, `interval` et `pg_get_viewdef`, du Postgres pur, absent de SQLite. L'appariement des paires ne se fait plus en SQL mais en Python : l'auto-jointure de la table sur elle-meme tournait encore apres 10 min sous SQLite (la cle de regroupement est CALCULEE, aucun index ne porte sur un calcul, soit ~4,8 milliards de comparaisons). Range par paquets en Python : 88 361 paires en 1,9 s, memes conditions mot pour mot. Une seule implementation pour les deux moteurs, plus deux versions a maintenir."
     },
     {
       "name": "report",
@@ -352,7 +362,7 @@
       "lanes": [
         "daily"
       ],
-      "every_days": 4,
+      "every_days": 1,
       "cmd": [
         "@py",
         "study/run_study.py"
@@ -379,12 +389,12 @@
       "lanes": [
         "daily"
       ],
-      "every_days": 4,
+      "every_days": 1,
       "cmd": [
         "@py",
-        "ops/sync_supabase_local.py"
+        "ops/sauvegarde-cle.py"
       ],
-      "_pourquoi": "Second point de retour en arrière, pris APRÈS le cycle (extraction + analyse), sans --prune. Tourne TOUJOURS, même si une extraction a échoué en amont : une sauvegarde de ce qui a réussi vaut mieux que pas de sauvegarde du tout — pas de requires_healthy ici (contrairement à 'storage', qui lui purge et doit rester prudent).",
+      "_pourquoi": "Copie la base de reference sur la cle USB (dossier repere « ++SCRAP DB++ », aucune lettre de lecteur en dur) et la PROUVE par 3 ouvertures reelles — integrite, comptage, actives par source — avant de supprimer la generation precedente. Mesure du 2026-08-25 : 1 021 Mo en 798 s, 3/3 essais reussis. REMPLACE l'ancienne chaine (ops/sync_supabase_local.py puis copie locale) : depuis la bascule du 2026-08-23 le serveur Supabase ne recoit plus rien, repliquer le serveur vers le disque sauvegardait la mauvaise base.",
       "bandes": {
         "traces_erreur": [
           0,
@@ -398,9 +408,7 @@
       "name": "storage",
       "famille": "Security & storage",
       "tier": "T0",
-      "lanes": [
-        "weekly"
-      ],
+      "lanes": [],
       "every_days": 7,
       "cmd": [
         "@py",
@@ -419,7 +427,8 @@
         ]
       },
       "needs_supabase": true,
-      "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté."
+      "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté.",
+      "_pourquoi": "NEUTRALISE le 2026-08-25 (lanes vide = invocation manuelle seulement, jamais par --due). Il repliquait Supabase vers archive/ puis purgeait le serveur. Depuis que la base de reference est locale (2026-08-23), le serveur est fige et sa replique a ete supprimee apres verification table par table : la reference contenait autant ou plus de lignes partout. Conserve tel quel pour pouvoir etre rejoue si le serveur redevient une source."
     },
     {
       "name": "overseer",
@@ -433,5 +442,7 @@
       "module": "agents.bots.overseer",
       "_dernier": "Toujours exécuté en dernier : il relit le cycle entier."
     }
-  ]
+  ],
+  "_stockage_local_2026-08-23": "Les 5 extracteurs et le recensement ecrivent en SQLite LOCAL (scraper/output/bangkok.db) et non plus dans Supabase. Raison mesuree le 2026-08-23 : la base Supabase gratuite plafonne a 500 Mo et en pesait deja 810 ; le recensement complet du catalogue DDproperty (~113 000 annonces) en aurait ajoute ~540 de plus. Sur PC2 le disque est libre a 905 Go et SQLite compresse page_text en zlib (~78 % de gain mesure), ce que Postgres ne faisait pas. La base locale a ete amorcee depuis archive/lowi-archive.db, replique complete du serveur au 2026-08-23 : 69 175 annonces, 46 867 actives, les 11 tables. study/run_study.py suit automatiquement (LOWI_STORE=sqlite par defaut, LOWI_STORE=supabase pour relire le serveur). RESTE A TRANCHER : le site Vercel lit toujours Supabase, qui ne recoit plus rien ; et les 3 agents de sauvegarde repliquent encore Supabase VERS l'archive, soit l'inverse du sens utile maintenant.",
+  "_cadence_quotidienne_2026-08-23": "Extraction passee de 4 jours a 1 jour le 2026-08-23, sur demande. La tache Windows LowiBKK-Agents partait deja chaque nuit a 01:00 (WakeToRun) : c'est is_due() qui sautait les extracteurs 3 nuits sur 4. COMPLETE LE 2026-08-25 : `organize` et `report` passent au quotidien eux aussi. `organize` etait reste a 4 jours parce qu'il depose un lot de 60 paires en ticket a chaque run et que la file n'etait drainee par personne depuis le 2026-08-19 ; la tache Claude `lowi-reparation-autonome` (creee le 2026-08-25, 02:10 chaque jour) draine desormais la file, la raison de le retenir tombe. SEUL `watch-sources` RESTE A 14 JOURS, et c'est deliberé : il sonde HUIT sites tiers a la recherche de nouvelles sources. Ce n'est pas une surveillance du scrap, c'est de la prospection — la faire tous les jours multiplierait par 14 des requetes vers des sites qui ne nous doivent rien, pour une decouverte qui se compte en mois. EFFET DE BORD A SURVEILLER : le delai de grace du delistage vaut 2 scans CONSECUTIFS. Il representait 8 jours d'absence, il en represente 2. Le churn et la tension changent d'echelle — rupture de serie, pas evolution. L'etude produite par `report` compare desormais des editions a 1 jour d'ecart la ou elle comparait 4 jours : la fenetre de comparaison (study/config.json) est un choix de methode, laisse a l'utilisateur."
 }

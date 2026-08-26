@@ -37,9 +37,17 @@ for _l in open(os.path.join(ROOT, "scraper", ".env"), encoding="utf-8"):
 
 
 def charger(db_path: str) -> list[dict]:
-    db = sqlite3.connect(db_path)
+    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
-    lignes = [dict(r) for r in db.execute("select * from listings")]
+    # PAS de `select *` : depuis le degraissage du 2026-08-25, la base locale
+    # porte `page_text` (453 Mo) et `description` (137 Mo) que le serveur n'a
+    # plus. Un `select *` sur 72 000 annonces chargeait ~600 Mo de texte en
+    # memoire pour le jeter aussitot — le store ne les ecrit plus. On ne lit que
+    # le socle commun, augmente des colonnes de service dont l'upsert a besoin.
+    from store.base import COLONNES_LISTING
+    colonnes = ("id", *COLONNES_LISTING, "status", "first_seen", "last_seen", "raw_data")
+    lignes = [dict(r) for r in db.execute(
+        f"select {','.join(colonnes)} from listings")]
     for l in lignes:
         # raw_data est stocké en TEXT côté SQLite, en jsonb côté Postgres
         if isinstance(l.get("raw_data"), str):
@@ -77,16 +85,20 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("dossier")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--limite", type=int, default=None,
+                    help="ne traiter que les N premieres annonces (mesure de debit)")
     ap.add_argument("--avec-images", action="store_true",
                     help="upload aussi les fichiers vers Supabase Storage")
     a = ap.parse_args()
 
     db_path = os.path.join(a.dossier, "bangkok.db")
     if not os.path.exists(db_path):
-        print(f"✗ base introuvable : {db_path}")
+        print(f"ERREUR - base introuvable : {db_path}")
         return 2
 
     lignes = charger(db_path)
+    if a.limite:
+        lignes = lignes[:a.limite]
     imgs = images_de(db_path)
     par_source: dict[str, int] = {}
     for l in lignes:
@@ -104,7 +116,7 @@ def main() -> int:
 
     dsn = os.environ.get("SUPABASE_DB_URL")
     if not dsn:
-        print("✗ SUPABASE_DB_URL manquant (scraper/.env)")
+        print("ERREUR - SUPABASE_DB_URL manquant (scraper/.env)")
         return 2
 
     from store.supabase_store import SupabaseStore
@@ -153,7 +165,7 @@ def main() -> int:
         if i % 500 == 0:
             print(f"  … {i}/{len(lignes)} ({nouvelles} nouvelles, {maj} mises à jour)")
 
-    print(f"\n✓ Terminé — {nouvelles} nouvelles, {maj} mises à jour, {erreurs} erreur(s)")
+    print(f"\nOK - Terminé — {nouvelles} nouvelles, {maj} mises à jour, {erreurs} erreur(s)")
     print("  Aucun délistage effectué : un transfert n'est pas un scan.")
     return 1 if erreurs else 0
 
