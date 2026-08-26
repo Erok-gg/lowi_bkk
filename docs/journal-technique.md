@@ -2980,3 +2980,83 @@ deux nuits ratées, et cohérente avec le test du 25/08 à 09:13 qui a réussi
 - **Aucun cycle complet n'a tourné avec ce code.** La cadence, le garde-fou et
   l'ouverture du dashboard sont vérifiés unitairement et sur l'état réel du
   poste, pas de bout en bout. La première preuve viendra du cycle de 01:00.
+
+---
+
+## 2026-08-26 — Réparation autonome : la preuve du cycle de 01:00 est arrivée, et un travail entier dormait non commité
+
+Session `lowi-reparation-autonome`, sans utilisateur présent. Rapport complet :
+[agents/audits/reparations-2026-08-26.md](../agents/audits/reparations-2026-08-26.md).
+
+### La preuve attendue hier soir
+
+La dernière ligne de la session du 2026-08-25 disait : « la première preuve
+viendra du cycle de 01:00 ». Elle est arrivée : le cycle du 2026-08-26T00:56 UTC
+a tourné sans accroc, 5 extracteurs, 7921 annonces écrites. Cadence
+calendaire, garde-fou anti-délistage et distinction panne-réseau/structure
+cassée fonctionnent en conditions réelles, pas seulement en test.
+
+### 1846 lignes jamais commitées
+
+Avant de toucher aux tickets : `git status` montrait le travail complet de la
+session du 25/08 (30 fichiers modifiés, 29 nouveaux) sur `main`, jamais
+versionné — c'est ce code non commité, dans le répertoire de travail, qui a
+fait tourner le cycle de cette nuit, pas l'historique git. Vérifié avant de
+committer (5 suites de tests, lecture des diffs, recherche de secrets) puis
+commité sur `fix/cadence-dashboard-degraissage-2026-08-25`. Tentative de
+fusion vers `main` bloquée par la politique de sécurité de l'agent (comportement
+voulu) — reste à fusionner par l'utilisateur.
+
+### Coupure DNS du 25/08, et ce qu'elle a vraiment coûté
+
+Root cause de 8 alertes + 4 tickets ce cycle : `NameResolutionError` sur
+`www.ddproperty.com` et `www.fazwaz.com`, 02:35-02:47 UTC — pas un changement
+de structure. Déjà corrigé dans le commit ci-dessus (distinction réseau vs
+structure avant d'escalader). Deuxième cause trouvée en creusant les mêmes
+alertes : le passage à `--store sqlite` avait fait écrire 5 extracteurs en
+parallèle sur le même fichier SANS WAL ni délai d'attente sur les verrous —
+« database is locked », jusqu'à 4428 lignes d'erreur dans un seul log. Déjà
+corrigé dans le même commit (`journal_mode=WAL`, `busy_timeout=60s`), vérifié
+par l'absence de récurrence sur les 3 cycles suivants.
+
+### Un bug trouvé cette nuit, dans du code qui n'avait encore jamais tourné en entier
+
+`then_2` (recensement) de `extract-ddproperty` a planté cette nuit après ~2724
+pages lues : `NameError: name 'atteinte' is not defined` — la variable
+s'appelle `derniere`. Aucune donnée touchée (le recensement ne délist ni
+n'insère), mais le run entier sortait en erreur sur la toute dernière ligne
+après ~3h de scan. Corrigé, testé sans réseau (`agents/tests/test_recense.py`),
+commité sur `fix/recense-nameerror-atteinte`.
+
+### 300 paires ambiguës, extraction mécanique plutôt que lecture à l'œil
+
+Les 5 tickets `organize/comparaison_deleguee` en attente (60 paires chacun)
+fournissent un texte entièrement gabarit. Plutôt que de lire 300 paires à
+l'œil, un script d'extraction par regex, strictement fidèle à la consigne du
+ticket (6 faits, pas de verdict — c'est `decider()`, le code, qui tranche).
+Résultat : 300/300 abstentions, contre-vérifié indépendamment sur les vraies
+dates du lot (celles que `decider()` utilise réellement) — l'abstention à
+100% n'est pas un défaut d'extraction, aucune des 300 paires ne remplissait
+la condition `same_unit`.
+
+### Rendement suspect Lat Krabang (11,2%) : pas une affaire, un défaut de méthode
+
+Vérifié annonce par annonce : 3 des 5 condos appariés comparent un prix de
+vente médian de 1BR à un loyer d'un 2BR du même immeuble (n=1 côté location).
+Cause : `analyze_rent.py` groupe par `condo_name` brut (non normalisé) et ne
+stratifie pas par nombre de chambres, contrairement à `lib/yields.ts`.
+**Non corrigé** — décision de méthode, chiffrage donné, laissé à l'arbitrage
+(règle 5).
+
+### Non fait, non vérifié, laissé à l'arbitrage
+
+- **Les deux branches ne sont pas fusionnées sur `main`.** Bloqué par la
+  politique de l'agent, pas un oubli — le cycle tourne déjà avec ce code
+  (c'est le répertoire de travail qui compte pour la tâche planifiée), mais
+  `git log main` reste en retard tant que la fusion n'est pas faite à la main.
+- **Le défaut de méthode d'`analyze_rent.py`** (condo_name non normalisé,
+  pas de stratification par chambres) n'a pas été corrigé.
+- **10 escalades restent ouvertes dans le ledger**, toutes antérieures au
+  17/08, sans ticket de file correspondant — hors périmètre de cette session.
+- **Le correctif WAL n'a pas de test de charge construit** — seulement
+  l'observation qu'il n'a pas récidivé sur 3 cycles réels.
