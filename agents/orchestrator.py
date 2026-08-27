@@ -28,6 +28,17 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 
+# Lancé à la main dans une console cp1252 (ACP par défaut sur ce poste), les
+# caractères ✓/✗ de cmd_status/run_lane plantent en UnicodeEncodeError.
+# Connu depuis le 2026-08-22 (journal technique) pour tout script lancé hors
+# sous-processus — shell.py force déjà l'UTF-8 pour les ENFANTS, rien ne le
+# faisait pour ce process-ci quand on l'appelle directement.
+for _flux in (sys.stdout, sys.stderr):
+    try:
+        _flux.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(ROOT)
 sys.path.insert(0, PROJECT)
@@ -51,6 +62,18 @@ RESEAU_RE = re.compile(
     r"NameResolutionError|getaddrinfo failed|Max retries exceeded|"
     r"ConnectionError|Connection refused|Temporary failure in name resolution",
     re.I)
+
+#: Agents longs qu'un second cycle ne doit pas relancer par-dessus, SANS être
+#: de la famille Extraction. Ajouté le 2026-08-26 avec `remonter-supabase` :
+#: la remontée dure ~4 h 20 (débit mesuré 4,1 annonces/s sur 53 258), ce qui
+#: allonge le cycle de 7 h 15 à ~11 h 35 et le fait déborder sur la journée.
+#: `LowiBKK-RattrapageBoot` part au logon : sans cette liste, un logon à 09:00
+#: tombait dans la fenêtre de remontée, ne voyait aucun extracteur en vol, et
+#: relançait une lane par-dessus. Le verrou d'instance de `remonter-local.py`
+#: aurait protégé la DONNÉE (il lève une RuntimeError, il ne bloque pas), mais
+#: au prix d'un agent en échec dans le ledger — soit une alerte pour un
+#: fonctionnement normal, exactement ce que la règle 2 interdit.
+LONGS_A_NE_PAS_COUPER = {"remonter-supabase"}
 
 REGISTRY = json.load(open(os.path.join(ROOT, "agents.json"), encoding="utf-8"))
 AGENTS = {a["name"]: a for a in REGISTRY["agents"]}
@@ -134,7 +157,7 @@ def scrap_en_cours(led: Ledger) -> str | None:
     for r in led.conn.execute(
             "select agent, started_at, pid from agent_runs where status='running'"):
         spec = AGENTS.get(r["agent"], {})
-        if spec.get("famille") != "Extraction":
+        if spec.get("famille") != "Extraction" and r["agent"] not in LONGS_A_NE_PAS_COUPER:
             continue
         if r["pid"] and int(r["pid"]) != moi and led._processus_vivant(r["pid"]):
             return (f"{r['agent']} tourne encore (démarré {r['started_at']}, "
@@ -157,7 +180,8 @@ def scrap_en_cours(led: Ledger) -> str | None:
         bas = cmd.replace("\\", "/").lower()
         if not pid.strip().isdigit() or int(pid) == moi:
             continue
-        if "scraper/run.py" in bas or "scraper/recense.py" in bas:
+        if ("scraper/run.py" in bas or "scraper/recense.py" in bas
+                or "ops/remonter-local.py" in bas):
             return f"scrap lancé hors cycle : PID {pid.strip()} — {cmd.strip()[:110]}"
     return None
 

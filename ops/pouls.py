@@ -45,6 +45,17 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+# Lancé à la main dans une console cp1252 (ACP par défaut sur ce poste), les
+# caractères ⚠/✓/✗ plantent en UnicodeEncodeError avant même d'afficher
+# l'alerte. Connu depuis le 2026-08-22 (journal technique) pour tout script
+# `ops/` lancé hors sous-processus — agents/core/shell.py force déjà l'UTF-8
+# pour les ENFANTS, rien ne le faisait pour un lancement direct.
+for _flux in (sys.stdout, sys.stderr):
+    try:
+        _flux.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
