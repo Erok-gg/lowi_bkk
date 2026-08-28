@@ -278,6 +278,24 @@
       }
     },
     {
+      "_pourquoi": "Publie vers Supabase ce que les extracteurs viennent d'ecrire en local. Place ICI, en tete de la 'suite', donc juste apres les extracteurs : l'orchestrateur ordonne Supervision > Prelude > Extraction > suite (ordre du tableau) > overseer. Publier avant la fin du scrap servirait un marche a moitie rafraichi. PERIMETRE 'actives' (arbitrage du 2026-08-26) : le serveur est une fenetre chaude, l'historique des delistees reste local ou il alimente les statistiques d'evolution. Le filtre n'est pas qu'une economie de 25 Mo : upsert_listing force status='active', donc remonter tout RESSUSCITERAIT les 23 684 delistees sur le site public. --synchro-statuts recopie les delistages deja tranches en local (sans quoi ~1 876 annonces mortes restent affichees comme disponibles ; mesure : 400/400 identifiants testes encore actifs en ligne). Debit mesure le 2026-08-26 : 4,1 annonces/s, soit ~3 h 40 pour 53 258 + ~40 min de statuts.",
+      "name": "remonter-supabase",
+      "famille": "Security & storage",
+      "tier": "T0",
+      "lanes": [
+        "daily"
+      ],
+      "every_days": 1,
+      "cmd": [
+        "@py",
+        "ops/remonter-local.py",
+        "scraper/output",
+        "--statut",
+        "actives",
+        "--synchro-statuts"
+      ]
+    },
+    {
       "name": "watch-health",
       "famille": "Surveillance",
       "tier": "T1",
