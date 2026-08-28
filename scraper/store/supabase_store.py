@@ -143,6 +143,138 @@ class SupabaseStore(BaseStore):
             self._set_images(norm["id"], images)
         return status, old_price
 
+    def upsert_listings_bulk(self, rows: list[dict],
+                             images_by_id: dict[str, list[dict]] | None = None,
+                             batch_size: int = 500) -> dict:
+        """Même sémantique que `upsert_listing`, en aller-retour PAR LOT plutôt
+        que par annonce — pour `ops/remonter-local.py` (tout est déjà en
+        mémoire, rien n'est scrapé en flux). N'est PAS appelé par le scraper
+        en ligne, qui traite une annonce à la fois par construction.
+
+        Mesuré le 2026-08-26 sur remonter-local.py (chemin ligne à ligne,
+        2 aller-retours/annonce — get_listing + upsert) : 4,1 annonces/s,
+        ~4h20 pour 53 258. Cause : 2 aller-retours Bangkok↔Singapour par
+        annonce, réseau-bound. Ici : 1 SELECT + 1 INSERT ON CONFLICT par lot
+        de `batch_size` → le nombre d'allers-retours tombe d'un facteur
+        ~2×batch_size (~1000× à batch_size=500).
+
+        `INSERT ... ON CONFLICT DO UPDATE` plutôt que deux requêtes séparées
+        (INSERT neuves / UPDATE existantes) : Postgres décide seul par ligne,
+        pas besoin de scinder le lot en deux SQL différents. `first_seen`
+        n'apparaît PAS dans la clause SET → une ligne déjà en base garde sa
+        date d'origine (exactement le comportement de `upsert_listing`, où le
+        SET de la branche UPDATE ne touche pas non plus `first_seen`).
+
+        Retourne {'nouvelles', 'maj', 'changees'} — mêmes clés que le
+        comptage fait par l'appelant autour de `upsert_listing`.
+        """
+        if not rows:
+            return {"nouvelles": 0, "maj": 0, "changees": 0}
+        images_by_id = images_by_id or {}
+        now = _now()
+        nouvelles = maj = changees = 0
+
+        cols_sql = ",".join(_COLS)
+        set_sql = ",".join(f"{c}=excluded.{c}" for c in _COLS)
+        un_placeholder = "(" + ",".join(["%s"] * (len(_COLS) + 5)) + ")"
+        insert_sql = (
+            f"insert into listings (id,{cols_sql},status,first_seen,last_seen,raw_data) "
+            f"values {{values}} "
+            f"on conflict (id) do update set {set_sql},status='active',"
+            f"last_seen=excluded.last_seen,raw_data=excluded.raw_data,"
+            f"missed_count=0,first_missed_at=null,delisted_at=null "
+            f"returning id, (xmax = 0) as est_nouvelle"
+        )
+
+        for i in range(0, len(rows), batch_size):
+            lot = rows[i:i + batch_size]
+            ids = [r["id"] for r in lot]
+
+            # Pré-lu AVANT l'upsert du lot : après, l'ancien prix/statut a
+            # disparu — c'est la même contrainte d'ordre que
+            # `_track_posted_at`/`_suivre_statut_marche` sur le chemin ligne
+            # à ligne (appelés avant l'UPDATE, pas après).
+            existants: dict[str, dict] = {}
+            for r in self._execute(
+                "select id, price, posted_at, market_status, market_status_since "
+                "from listings where id = any(%s)", (ids,),
+            ).fetchall():
+                existants[r[0]] = {"price": r[1], "posted_at": r[2],
+                                   "market_status": r[3], "market_status_since": r[4]}
+
+            params: list = []
+            prix_a_historiser: list[tuple] = []
+            posted_a_historiser: list[tuple] = []
+            statuts_a_dater: list[tuple] = []
+            for r in lot:
+                lid = r["id"]
+                existant = existants.get(lid)
+                vals = [_coerce(c, r.get(c)) for c in _COLS]
+                params += [lid, *vals, "active", now, now, Json(r.get("raw_data", {}))]
+
+                nouveau_posted = r.get("posted_at")
+                if existant is None:
+                    if r.get("price") is not None:
+                        prix_a_historiser.append((lid, r["price"], now))
+                    if nouveau_posted:
+                        posted_a_historiser.append((lid, nouveau_posted, now))
+                    continue
+                if nouveau_posted and str(existant.get("posted_at")) != str(nouveau_posted):
+                    posted_a_historiser.append((lid, nouveau_posted, now))
+                nouveau_statut = r.get("market_status")
+                if (existant.get("market_status") or None) != (nouveau_statut or None):
+                    statuts_a_dater.append((lid, now if nouveau_statut else None))
+                old_price, new_price = existant.get("price"), r.get("price")
+                if new_price is not None and old_price is not None and float(new_price) != float(old_price):
+                    prix_a_historiser.append((lid, new_price, now))
+                    changees += 1
+
+            values_sql = ",".join([un_placeholder] * len(lot))
+            for est_nouvelle in (
+                r[1] for r in self._execute(
+                    insert_sql.format(values=values_sql), params).fetchall()
+            ):
+                nouvelles += est_nouvelle
+                maj += not est_nouvelle
+
+            if prix_a_historiser:
+                ph_placeholder = ",".join(["(%s,%s,%s)"] * len(prix_a_historiser))
+                self._execute(
+                    "insert into price_history (listing_id,price,observed_at) "
+                    f"values {ph_placeholder}",
+                    [v for tup in prix_a_historiser for v in tup],
+                )
+            if posted_a_historiser:
+                pa_placeholder = ",".join(["(%s,%s,%s)"] * len(posted_a_historiser))
+                self._execute(
+                    "insert into posted_at_history (listing_id,posted_at,observed_at) "
+                    f"values {pa_placeholder}",
+                    [v for tup in posted_a_historiser for v in tup],
+                )
+            for lid, quand in statuts_a_dater:      # rare : pas de lot dédié
+                self._maj_since(lid, quand)
+
+            if images_by_id:
+                ids_avec_images = [lid for lid in ids if lid in images_by_id]
+                if ids_avec_images:
+                    self._execute(
+                        "delete from listing_images where listing_id = any(%s)",
+                        (ids_avec_images,),
+                    )
+                    lignes_img = [
+                        (lid, im["storage_path"], im.get("width"), im.get("height"), im.get("ord", 0))
+                        for lid in ids_avec_images for im in images_by_id[lid]
+                    ]
+                    if lignes_img:
+                        img_placeholder = ",".join(["(%s,%s,%s,%s,%s)"] * len(lignes_img))
+                        self._execute(
+                            "insert into listing_images (listing_id,storage_path,width,height,ord) "
+                            f"values {img_placeholder}",
+                            [v for tup in lignes_img for v in tup],
+                        )
+
+        return {"nouvelles": nouvelles, "maj": maj, "changees": changees}
+
     def _add_price(self, listing_id: str, price: float, when: str) -> None:
         self._execute(
             "insert into price_history (listing_id,price,observed_at) values (%s,%s,%s)",

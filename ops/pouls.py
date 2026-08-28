@@ -22,7 +22,8 @@ DEUX MODES
   --battement  : déposé PAR le cycle, à la fin. « je suis passé, voilà ce que
                  j'ai fait ».
   --verifier   : lancé CONTRE le cycle, par sa propre tâche. « le dernier
-                 battement date de quand ? »
+                 battement date de quand ? », ET « le cycle en cours dure
+                 depuis quand ? » (voir point 4).
 
 CE QU'IL SURVEILLE
   1. absence de battement depuis plus de `--seuil-heures` (défaut 26 h : une
@@ -31,6 +32,17 @@ CE QU'IL SURVEILLE
      dus. C'est le défaut exact du 2026-08-24 ;
   3. cycle passé mais STÉRILE — les extracteurs ont tourné sans rien écrire.
      C'est le défaut du 2026-08-25 (4 790 erreurs de verrou SQLite).
+  4. cycle EN COURS depuis plus de `--seuil-cycle-long-heures` (défaut 16 h).
+     Ajouté le 2026-08-28 : `LowiBKK-Agents` a perdu son `ExecutionTimeLimit`
+     (10 h, tuait l'orchestrateur au milieu de `remonter-supabase` 3 nuits de
+     suite — agents/audits/reparations-2026-08-2{7,8}.md) au profit d'un
+     lot batché (~10x plus rapide) et de CE signal : un cycle qui ne finit
+     toujours pas après 16 h alerte au lieu de tourner indéfiniment sans que
+     personne ne le sache. Contrairement aux 3 points ci-dessus (lus depuis
+     `pouls.json`, déposé APRÈS coup), celui-ci lit le ledger — seule source
+     qui connaît un cycle EN COURS. C'est une dépendance assumée : si le
+     ledger est illisible pendant un cycle en cours, ce point-là se tait
+     (les 3 premiers, eux, restent indépendants de tout).
 
 Il ne crie qu'UNE FOIS PAR JOUR pour un même motif : une alerte répétée toutes
 les trois heures est une alerte qu'on apprend à ignorer (règle 2).
@@ -69,6 +81,12 @@ LEDGER = ROOT / "agents" / "ledger.db"
 #: 26 h : un cycle quotidien plus deux heures de marge. En dessous, un cycle
 #: long (le recensement DDproperty dure 1 h 35) déclencherait une fausse alerte.
 SEUIL_DEFAUT_H = 26
+
+#: 16 h : au-delà, un cycle démarré à 01:00 tourne encore après 17:00 — plus
+#: aucune marge raisonnable, même pour la nuit la plus lente mesurée à ce jour
+#: (~11h35 le 2026-08-26). Choisi par l'utilisateur le 2026-08-28 en
+#: contrepartie du retrait de l'`ExecutionTimeLimit` de `LowiBKK-Agents`.
+SEUIL_CYCLE_LONG_DEFAUT_H = 16
 
 
 def _maintenant() -> datetime:
@@ -193,6 +211,68 @@ def verifier(seuil_h: int) -> int:
     return 0
 
 
+def _cycle_en_cours() -> dict | None:
+    """Le cycle actuellement EN COURS, s'il y en a un — lu dans le ledger.
+
+    Repère : au moins une ligne `agent_runs` `status='running'`. Son début
+    n'est PAS le `started_at` de cette ligne (ce serait le début de CET
+    agent, pas du cycle) : toutes les lignes d'un même lancement de
+    l'orchestrateur partagent le même `pid` (vérifié le 2026-08-28) — le
+    début du cycle est le plus ancien `started_at` de ce `pid`.
+    """
+    try:
+        cx = sqlite3.connect(f"file:{LEDGER}?mode=ro", uri=True)
+        cx.row_factory = sqlite3.Row
+        bloque = cx.execute(
+            "select agent, pid from agent_runs where status='running' "
+            "order by started_at limit 1").fetchone()
+        if not bloque or bloque["pid"] is None:
+            cx.close()
+            return None
+        debut = cx.execute(
+            "select min(started_at) from agent_runs where pid=?", (bloque["pid"],)
+        ).fetchone()[0]
+        finis = cx.execute(
+            "select count(*) from agent_runs where pid=? and status<>'running'",
+            (bloque["pid"],)).fetchone()[0]
+        cx.close()
+        if not debut:
+            return None
+        return {"agent_bloque": bloque["agent"], "debut": debut, "agents_finis": finis}
+    except sqlite3.Error:
+        return None
+
+
+def verifier_cycle_long(seuil_h: int) -> int:
+    """Alerte si un cycle est EN COURS depuis plus de `seuil_h`.
+
+    Distinct de `verifier()` : celui-ci porte sur un cycle qui vient de finir
+    (ou de ne jamais démarrer), celui-ci sur un cycle qui n'a PAS FINI. Les
+    deux sont complémentaires, pas redondants — voir le docstring du module.
+    """
+    info = _cycle_en_cours()
+    if info is None:
+        return 0
+    debut = datetime.fromisoformat(info["debut"])
+    duree_h = (_maintenant() - debut).total_seconds() / 3600
+    if duree_h <= seuil_h:
+        return 0
+    _crier(
+        "cycle_long",
+        f"Cycle en cours depuis {duree_h:.0f} h (seuil {seuil_h} h) — "
+        f"bloqué sur {info['agent_bloque']}",
+        f"Le cycle démarré le {debut.astimezone():%d/%m à %H:%M} n'est toujours "
+        f"pas terminé {duree_h:.1f} h plus tard. {info['agents_finis']} agent(s) "
+        f"déjà terminé(s) cette nuit, actuellement bloqué sur « "
+        f"{info['agent_bloque']} ». Vérifier `agents.orchestrator status` et le "
+        f"log de cet agent avant toute autre piste.",
+        {"debut": info["debut"], "duree_heures": round(duree_h, 1),
+         "seuil_heures": seuil_h, "agent_bloque": info["agent_bloque"],
+         "agents_finis": info["agents_finis"]},
+    )
+    return 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Témoin de vie du cycle de scrap.")
     ap.add_argument("--battement", action="store_true",
@@ -201,6 +281,11 @@ def main() -> int:
                     help="contrôler le témoin (appelé CONTRE le cycle, tâche séparée)")
     ap.add_argument("--lane", default="?")
     ap.add_argument("--seuil-heures", type=int, default=SEUIL_DEFAUT_H)
+    ap.add_argument("--seuil-cycle-long-heures", type=int,
+                    default=SEUIL_CYCLE_LONG_DEFAUT_H,
+                    help="alerte si un cycle EN COURS dépasse ce nombre d'heures "
+                         "(defaut 16 — contrepartie du retrait de "
+                         "l'ExecutionTimeLimit de LowiBKK-Agents le 2026-08-28)")
     args = ap.parse_args()
 
     if args.battement:
@@ -208,7 +293,9 @@ def main() -> int:
         print(json.dumps(etat, ensure_ascii=False, indent=1))
         return 0
     if args.verifier:
-        return verifier(args.seuil_heures)
+        r1 = verifier(args.seuil_heures)
+        r2 = verifier_cycle_long(args.seuil_cycle_long_heures)
+        return 1 if (r1 or r2) else 0
     ap.error("préciser --battement ou --verifier")
     return 2
 

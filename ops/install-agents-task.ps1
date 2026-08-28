@@ -93,12 +93,31 @@ $trigger = New-ScheduledTaskTrigger -Daily -At $Heure
 # jamais reactive depuis). Sans ce reglage, WakeToRun est ignore et la tache ne
 # se declenche que si le PC est deja allume a l'heure dite (StartWhenAvailable
 # rattrape alors au demarrage suivant).
+# ExecutionTimeLimit ILLIMITE (TimeSpan zero = PT0S, "ne jamais arreter la
+# tache" selon la doc Task Scheduler) depuis le 2026-08-28, sur consigne
+# explicite de l'utilisateur. AVANT : 10h, calibrees le 2026-07-31 pour une
+# duree de cycle de ~7h15 (journal du 2026-08-22). La duree a grossi a
+# ~11h35 le 2026-08-26 (ajout de remonter-supabase) sans que cette limite
+# soit remontee en consequence -> Windows a tue l'orchestrateur en cours de
+# route 3 nuits de suite (26, 27, 28/08 - agents/audits/reparations-2026-08-2{7,8}.md),
+# emportant avec lui watch-health/report/backup-apres-cycle/overseer a
+# chaque fois. Le vrai correctif de fond est le batching de
+# remonter-local.py (SupabaseStore.upsert_listings_bulk, meme session) qui
+# fait tomber sa duree de ~4h20 a quelques minutes - la limite de 10h
+# redeviendrait large. Elle est retiree quand meme : un cycle DDproperty
+# anormalement lent (deja mesure a 7h47 le 2026-08-27, cause jamais
+# etablie) peut a lui seul recreer la meme marge insuffisante. La
+# contrepartie EST le garde-fou de remplacement : `ops/pouls.py
+# --verifier` alerte desormais si un cycle tourne encore apres 16h (voir
+# pouls.py, verifier_cycle_long) - la protection se deplace d'un couperet
+# aveugle vers un signal qui laisse le cycle finir tout en prevenant si
+# quelque chose ne termine vraiment pas.
 $settings = New-ScheduledTaskSettingsSet `
     -WakeToRun `
     -StartWhenAvailable `
     -DontStopIfGoingOnBatteries `
     -AllowStartIfOnBatteries `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 10) `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) `
     -MultipleInstances IgnoreNew `
     -RestartCount 2 -RestartInterval (New-TimeSpan -Minutes 15)
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited

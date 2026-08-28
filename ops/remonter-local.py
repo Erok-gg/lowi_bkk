@@ -4,9 +4,17 @@ Raison d'être : un cycle complet dure 6 à 10 heures. Le refaire en ligne aprè
 validation gaspillerait ce temps et solliciterait les sources une seconde fois
 sans raison. Ce script transfère ce qui a déjà été collecté.
 
-Il réutilise `SupabaseStore.upsert_listing` — le MÊME chemin d'écriture que le
-scraper. Rien de spécifique n'est réinventé : l'historique de prix, les images et
-les amenities suivent la même logique qu'un scrap en ligne.
+Écrit PAR LOTS depuis le 2026-08-28 (`SupabaseStore.upsert_listings_bulk`,
+--lot annonces par aller-retour, défaut 500) — PAS `upsert_listing`, le chemin
+ligne à ligne du scraper en ligne (qui, lui, n'a rien à batcher : il découvre
+les annonces une à une). Même sémantique malgré tout (mêmes colonnes, mêmes
+règles first_seen/price_history/posted_at_history) : agents/tests/
+test_remonter_bulk.py compare explicitement les deux chemins. Raison du
+changement : le chemin ligne à ligne (2 allers-retours Bangkok↔Singapour par
+annonce) mesurait 4,1 annonces/s le 2026-08-26, soit ~4h20 pour 53 258 — assez
+pour faire déborder `ExecutionTimeLimit` de `LowiBKK-Agents` 3 nuits de suite
+(26 au 28/08, agents/audits/reparations-2026-08-2{7,8}.md). Par lots :
+~250 annonces/s mesuré le 2026-08-28, ~4 min pour 61 246.
 
 CE QU'IL NE FAIT PAS, volontairement :
   - aucune suppression, aucun écrasement de champ par une valeur vide.
@@ -43,6 +51,7 @@ Usage :
     python ops/remonter-local.py <dossier> --statut actives       # scénario A
     python ops/remonter-local.py <dossier> --statut actives --synchro-statuts
     python ops/remonter-local.py <dossier> --avec-images          # + upload Storage
+    python ops/remonter-local.py <dossier> --lot 200              # taille de lot (défaut 500)
 """
 from __future__ import annotations
 
@@ -126,25 +135,37 @@ def statuts_morts(db_path: str) -> list[tuple[str, str, str | None]]:
     ]
 
 
-def synchroniser_statuts(store, morts, dry_run: bool) -> int:
+def synchroniser_statuts(store, morts, dry_run: bool, batch_size: int = 5000) -> int:
     """Recopie le statut local sur les lignes que le serveur croit ACTIVES.
 
     Volontairement un UPDATE ciblé et non un upsert : l'upsert forcerait
     `status='active'`, soit exactement l'inverse. La clause `and status='active'`
     rend l'opération IDEMPOTENTE et sans effet sur ce qui est déjà à jour.
+
+    Par lot via `unnest` (3 tableaux → une "table" éphémère côté serveur) :
+    un aller-retour pour `batch_size` lignes au lieu d'un par annonce — même
+    logique de mise en lots que `upsert_listings_bulk`, mesurée le 2026-08-28
+    (débit ligne à ligne réseau-bound, ~2 allers-retours Bangkok↔Singapour
+    par annonce).
     """
-    if dry_run:
+    if dry_run or not morts:
         return 0
     touchees = 0
-    for i, (lid, statut, delisted) in enumerate(morts, 1):
+    for i in range(0, len(morts), batch_size):
+        lot = morts[i:i + batch_size]
+        ids = [m[0] for m in lot]
+        statuts = [m[1] for m in lot]
+        delistes = [m[2] for m in lot]
         r = store._execute(
-            "update listings set status=%s, delisted_at=coalesce(%s, delisted_at, now())"
-            " where id=%s and status='active' returning id",
-            (statut, delisted, lid),
+            "update listings as l set status=m.status,"
+            " delisted_at=coalesce(m.delisted_at::timestamptz, l.delisted_at, now())"
+            " from (select unnest(%s::text[]) as id, unnest(%s::text[]) as status,"
+            "       unnest(%s::text[]) as delisted_at) as m"
+            " where l.id=m.id and l.status='active' returning l.id",
+            (ids, statuts, delistes),
         ).fetchall()
         touchees += len(r)
-        if i % 2000 == 0:
-            print(f"  … statuts {i}/{len(morts)} ({touchees} corrigés)")
+        print(f"  … statuts {min(i + batch_size, len(morts))}/{len(morts)} ({touchees} corrigés)")
     return touchees
 
 
@@ -164,6 +185,9 @@ def main() -> int:
     ap.add_argument("--synchro-statuts", action="store_true",
                     help="recopie les delistages deja tranches en local sur les "
                          "lignes que le serveur croit encore actives")
+    ap.add_argument("--lot", type=int, default=500,
+                    help="taille de lot pour l'upsert par lots (defaut 500 ; "
+                         "voir SupabaseStore.upsert_listings_bulk)")
     a = ap.parse_args()
 
     db_path = os.path.join(a.dossier, "bangkok.db")
@@ -227,26 +251,34 @@ def main() -> int:
     # mort du processus — plantage compris. C'est exactement ce qu'on veut ici.
     Verrou("remonter-local").__enter__()
 
-    nouvelles = maj = erreurs = 0
-    for i, l in enumerate(lignes, 1):
+    # Par lots (SupabaseStore.upsert_listings_bulk), pas ligne à ligne : mesuré
+    # le 2026-08-26 à 4,1 annonces/s en ligne à ligne (2 allers-retours
+    # Bangkok↔Singapour/annonce, réseau-bound) → ~4h20 pour 53 258, cause
+    # directe de la troncature du cycle par `ExecutionTimeLimit` 3 jours de
+    # suite (2026-08-26 à 28). Un lot = 1 SELECT + 1 upsert pour `--lot`
+    # annonces (défaut 500) → le nombre d'allers-retours tombe d'un facteur
+    # ~1000.
+    nouvelles = maj = changees = erreurs = 0
+    for i in range(0, len(lignes), a.lot):
+        lot = lignes[i:i + a.lot]
         try:
-            existant = store.get_listing(l["id"])
-            store.upsert_listing(l, imgs.get(l["id"]))
-            if existant:
-                maj += 1
-            else:
-                nouvelles += 1
+            imgs_lot = {l["id"]: imgs[l["id"]] for l in lot if l["id"] in imgs} if storage else None
+            resultat = store.upsert_listings_bulk(lot, imgs_lot, batch_size=a.lot)
+            nouvelles += resultat["nouvelles"]
+            maj += resultat["maj"]
+            changees += resultat["changees"]
             if storage:
-                for im in imgs.get(l["id"], []):
-                    chemin = os.path.join(a.dossier, im["storage_path"])
-                    if os.path.exists(chemin):
-                        storage.upload(chemin, im["storage_path"])
+                for l in lot:
+                    for im in imgs.get(l["id"], []):
+                        chemin = os.path.join(a.dossier, im["storage_path"])
+                        if os.path.exists(chemin):
+                            storage.upload(chemin, im["storage_path"])
         except Exception as e:  # noqa: BLE001
-            erreurs += 1
-            if erreurs <= 5:
-                print(f"  [erreur] {l['id']} : {type(e).__name__} {e}")
-        if i % 500 == 0:
-            print(f"  … {i}/{len(lignes)} ({nouvelles} nouvelles, {maj} mises à jour)")
+            erreurs += len(lot)
+            if erreurs <= 5 * a.lot:
+                print(f"  [erreur lot {i}-{i + len(lot)}] {type(e).__name__} {e}")
+        fait = min(i + a.lot, len(lignes))
+        print(f"  … {fait}/{len(lignes)} ({nouvelles} nouvelles, {maj} mises à jour, {changees} prix changés)")
 
     print(f"\nOK - Terminé — {nouvelles} nouvelles, {maj} mises à jour, {erreurs} erreur(s)")
 
