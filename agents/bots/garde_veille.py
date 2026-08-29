@@ -82,7 +82,17 @@ def _evenements_veille(depuis: datetime, jusqu_a: datetime) -> list[tuple[dateti
 
 
 def run(led, run_id: int, lane: str, spec: dict) -> dict:
-    verrou_pose = wake_lock.acquire()
+    verrou_pose, verrou_power_request_pose = wake_lock.acquire_detail()
+    if verrou_pose and not verrou_power_request_pose:
+        # Pas une panne (le legacy a réussi, le cycle continue) mais un signal
+        # a suivre : c'est exactement cette combinaison (verrou_veille_pose=true
+        # seul) qui a précédé les 12 h 44 de veille moderne du 2026-08-28 sans
+        # que rien ne le distingue d'un verrou pleinement pose. Bas, pas de mail.
+        led.finding("garde-veille", "low", "power_request_absent",
+                    "SetThreadExecutionState a reussi mais PowerCreateRequest a "
+                    "echoue : le verrou legacy seul ne suffit pas a bloquer la "
+                    "veille moderne sur ce materiel (mesure le 2026-08-28).",
+                    {}, run_id)
 
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=FENETRE_HEURES)).isoformat()
     interrompus = led.conn.execute(
@@ -91,7 +101,9 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
         (cutoff,)).fetchall()
 
     if not interrompus:
-        return {"verrou_veille_pose": verrou_pose, "runs_interrompus_examines": 0,
+        return {"verrou_veille_pose": verrou_pose,
+                "verrou_power_request_pose": verrou_power_request_pose,
+                "runs_interrompus_examines": 0,
                 "coupures_veille_detectees": 0}
 
     debut_fenetre = min(datetime.fromisoformat(r["started_at"]) for r in interrompus)
@@ -114,5 +126,6 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
             run_id)
 
     return {"verrou_veille_pose": verrou_pose,
+            "verrou_power_request_pose": verrou_power_request_pose,
             "runs_interrompus_examines": len(interrompus),
             "coupures_veille_detectees": detectees}

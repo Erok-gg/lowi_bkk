@@ -112,6 +112,24 @@ $trigger = New-ScheduledTaskTrigger -Daily -At $Heure
 # pouls.py, verifier_cycle_long) - la protection se deplace d'un couperet
 # aveugle vers un signal qui laisse le cycle finir tout en prevenant si
 # quelque chose ne termine vraiment pas.
+#
+# -DisallowHardTerminate AJOUTE le 2026-08-29 - 4e nuit de coupure, ExecutionTimeLimit
+# pourtant deja retire la veille (donc CE N'ETAIT PLUS LA MEME CAUSE). Mesure sur
+# la tache en l'etat : `LastTaskResult=3221225786` (0xC000013A, STATUS_CONTROL_C_EXIT,
+# le code que Task Scheduler pose quand IL tue lui-meme le process) et
+# `AllowHardTerminate=True` (reglage par defaut, jamais pose explicitement avant
+# ce commit). Le journal Systeme montre `extract-ddproperty` avoir fini tout son
+# travail (log complet jusqu'aux stats finales, ~00:29 UTC) et le process parent
+# de l'orchestrateur (PID verifie mort) disparu ~2 min plus tard - sans exception
+# Python, sans traceback, sans depassement d'ExecutionTimeLimit (PT0S). Un
+# `WakeToRun=True` combine a `AllowHardTerminate=True` est le mecanisme documente
+# par Microsoft pour ce symptome : quand la machine reveillee pour la tache doit
+# repartir en veille (ou est reveillee "pour de vrai" par un evenement utilisateur,
+# ici mouvement souris a 07:29:46 heure locale), Task Scheduler tue purement et
+# simplement le process de la tache si `AllowHardTerminate` ne le lui interdit pas.
+# Aucune garantie que ce soit LA seule cause (mecanisme non reproduit en
+# laboratoire, seulement mesure sur incident reel) mais c'est la premiere
+# explication qui colle a TOUS les faits observes sans hypothese supplementaire.
 $settings = New-ScheduledTaskSettingsSet `
     -WakeToRun `
     -StartWhenAvailable `
@@ -119,6 +137,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -ExecutionTimeLimit ([TimeSpan]::Zero) `
     -MultipleInstances IgnoreNew `
+    -DisallowHardTerminate `
     -RestartCount 2 -RestartInterval (New-TimeSpan -Minutes 15)
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
 
@@ -152,6 +171,10 @@ if (-not (Test-Path $exeLine)) {
 }
 if ($verif -notmatch '<WakeToRun>true</WakeToRun>') {
     Write-Host "`n  [!] WakeToRun absent du XML enregistre." -ForegroundColor Yellow
+}
+if ($verif -notmatch '<AllowHardTerminate>false</AllowHardTerminate>') {
+    Write-Host "`n  [!] AllowHardTerminate absent ou toujours a true - Task Scheduler" -ForegroundColor Yellow
+    Write-Host "      peut a nouveau tuer l'orchestrateur au retour de veille (2026-08-29)."
 }
 Write-Host "`n  [OK] Aucun guillemet echappe, executable present." -ForegroundColor Green
 Write-Host "  Test a chaud :  Start-ScheduledTask -TaskName $nom"
