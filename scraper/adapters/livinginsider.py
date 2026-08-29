@@ -35,14 +35,19 @@ import html as _html
 import json
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Iterator
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup
+from scrapling.parser import Adaptor
 
 from adapters.base import BaseAdapter
 from pipeline import description
 from pipeline.fetch import Fetcher
+
+# Cf. adapters/fazwaz.py : meme base sqlite de parsing adaptatif, pointee hors
+# venv pour survivre a sa reconstruction.
+_ADAPTIVE_DB = str(Path(__file__).resolve().parent.parent / "output" / "scrapling-adaptive.db")
 
 LD_RE = re.compile(r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>', re.S)
 ID_RE = re.compile(r"-(\d+)/?(?:[?#]|$)")
@@ -205,22 +210,37 @@ class LivinginsiderAdapter(BaseAdapter):
         # bloc "Property information" : Floor Size / Bedrooms / Bathrooms,
         # en paires étiquette|valeur (dupliquées desktop+mobile dans le DOM,
         # on prend juste la première occurrence de chaque étiquette).
-        soup = BeautifulSoup(html, "html.parser")
-        title_span = soup.find("span", class_="property-inform-title")
-        if title_span:
-            container = title_span.find_parent("div", class_="form-group")
-            block = container.find_next_sibling("div") if container else None
-            if block:
-                txt = block.get_text("|", strip=True)
-                m = re.search(r"Floor Size\|([\d.]+)", txt)
-                if m:
-                    rec["area_sqm"] = _num(m.group(1))
-                m = re.search(r"\bBedrooms\|(\d+)", txt)
-                if m:
-                    rec["bedrooms"] = int(m.group(1))
-                m = re.search(r"\bBathrooms\|(\d+)", txt)
-                if m:
-                    rec["bathrooms"] = int(m.group(1))
+        #
+        # Localisation par parsing adaptatif (scrapling, 2026-08-29) au lieu
+        # d'un chemin DOM figé (span.property-inform-title → div.form-group
+        # parent → div frère suivant) : un renommage de classe ou de balise
+        # côté LivingInsider se rattrape par similarité structurelle au lieu
+        # de faire disparaître silencieusement Floor Size/Bedrooms/Bathrooms
+        # de toutes les fiches sans qu'aucun sonder() ne s'en aperçoive (le
+        # marqueur de structure de LivingInsider est le ld+json de liste,
+        # indépendant de ce bloc HTML de détail).
+        page = Adaptor(content=html, url=rec["source_url"], adaptive=True,
+                        storage_args={"storage_file": _ADAPTIVE_DB})
+        title_els = (page.css(".property-inform-title", auto_save=True)
+                     or page.css(".property-inform-title", adaptive=True))
+        # Parent DIRECT du titre (pas filtre par classe, contrairement à
+        # l'original `find_parent("div", class_="form-group")`) : la classe du
+        # conteneur n'est pas ce qui nous interesse, seule la relation
+        # « le bloc de valeurs suit son parent » compte, et elle survit à un
+        # renommage de classe sur le conteneur ou le titre lui-même.
+        parent = title_els[0].parent if title_els else None
+        block = parent.next if parent is not None else None
+        if block:
+            txt = block.get_all_text(separator="|", strip=True)
+            m = re.search(r"Floor Size\|([\d.]+)", txt)
+            if m:
+                rec["area_sqm"] = _num(m.group(1))
+            m = re.search(r"\bBedrooms\|(\d+)", txt)
+            if m:
+                rec["bedrooms"] = int(m.group(1))
+            m = re.search(r"\bBathrooms\|(\d+)", txt)
+            if m:
+                rec["bathrooms"] = int(m.group(1))
 
         # date de publication annoncée par le site ("Created DD/MM/YYYY").
         # Comme pour DDproperty : mesure le time-on-market à la source, mais

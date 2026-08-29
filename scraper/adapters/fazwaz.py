@@ -13,14 +13,21 @@ from __future__ import annotations
 import json
 import re
 from html import unescape
+from pathlib import Path
 from typing import Iterator
 from urllib.parse import quote, urljoin
 
 from bs4 import BeautifulSoup
+from scrapling.parser import Adaptor
 
 from adapters.base import BaseAdapter
 from pipeline import description
 from pipeline.fetch import Fetcher
+
+# Base sqlite du parsing adaptatif (scrapling) : pointee explicitement dans
+# output/ (gitignore, hors venv) plutot que le defaut du paquet dans
+# site-packages/, qui disparaitrait a chaque reconstruction du venv.
+_ADAPTIVE_DB = str(Path(__file__).resolve().parent.parent / "output" / "scrapling-adaptive.db")
 
 ID_RE = re.compile(r"-u(\d+)(?:[/?#]|$)")
 PRICE_RE = re.compile(r"฿\s*([0-9][0-9,]*)")
@@ -32,10 +39,10 @@ OWNERSHIP_RE = re.compile(r'"ownership":\[\[(\d+)\]')
 FAZWAZ_OWNERSHIP = {1: ("thai", True), 2: ("foreigner", True)}
 
 
-# Emplacement du PRIX sur la fiche. FazWaz y met normalement le montant
+# Emplacement du PRIX sur la fiche (`.price-message`, localise par `statut_marche`
+# via le parsing adaptatif). FazWaz y met normalement le montant
 # (« ฿5,000,000 ») et le REMPLACE par un mot quand le lot n'est plus a vendre —
 # c'est le « Sale Price | Sold » visible a l'ecran.
-_PRIX_OU_STATUT = re.compile(r'<div class="price-message"[^>]*>(.*?)</div>', re.S)
 
 #: Mots qui, a cet emplacement, disent que le lot est SORTI DU MARCHE.
 #: Tout le reste (un montant) signifie qu'il y est encore.
@@ -43,7 +50,7 @@ _STATUTS = {"sold": "sold", "rented": "rented", "reserved": "reserved",
             "under offer": "under_offer", "off market": "off_market"}
 
 
-def statut_marche(html: str) -> str | None:
+def statut_marche(html: str, url: str) -> str | None:
     """`sold`, `rented`… ou None si la fiche affiche un prix.
 
     POURQUOI CE CHAMP EXISTE. La section tension le disait en preambule :
@@ -67,12 +74,22 @@ def statut_marche(html: str) -> str | None:
     les fiches reellement ouvertes — la dedup incrementale saute celles dont le
     prix n'a pas bouge, ce qui est precisement le cas d'un lot vendu dont le
     prix a disparu. Angle mort a garder en tete.
+
+    LOCALISATION DU BLOC — parsing adaptatif (scrapling), 2026-08-29 : au lieu
+    d'un regex fige sur `class="price-message"` (un renommage de classe cote
+    FazWaz aurait fait taire ce signal SANS le moindre echec de `sonder()`,
+    puisque le reste de la fiche continuerait de parser), le bloc est localise
+    par selecteur CSS avec relocalisation par similarite structurelle
+    (`auto_save`/`adaptive`) : un changement mineur de balisage se rattrape,
+    un vrai changement de structure fait toujours remonter `[]` (comportement
+    identique a l'ancien regex qui ne matchait plus rien).
     """
-    m = _PRIX_OU_STATUT.search(html)
-    if not m:
+    page = Adaptor(content=html, url=url, adaptive=True,
+                    storage_args={"storage_file": _ADAPTIVE_DB})
+    els = page.css(".price-message", auto_save=True) or page.css(".price-message", adaptive=True)
+    if not els:
         return None
-    v = re.sub(r"<[^>]+>", " ", m.group(1))
-    v = " ".join(unescape(v).split()).lower()
+    v = " ".join(els[0].get_all_text(strip=True, separator=" ").split()).lower()
     return _STATUTS.get(v)
 
 
@@ -228,7 +245,7 @@ class FazwazAdapter(BaseAdapter):
             return
         rec["description"] = description.extract(html)
         rec["page_text"] = description.texte_integral(html)
-        rec["market_status"] = statut_marche(html)
+        rec["market_status"] = statut_marche(html, rec["source_url"])
         # tenure + quota depuis le code d'ownership de l'unité
         m = OWNERSHIP_RE.search(unescape(html))
         code = int(m.group(1)) if m else None
