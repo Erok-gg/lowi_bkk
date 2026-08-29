@@ -4,6 +4,22 @@ Une seule Session persistante (cookies) : parcourir la liste AVANT les fiches
 réchauffe les cookies anti-bot (ex. Cloudflare __cf_bm de DDproperty), ce qui
 débloque les pages de détail. En-têtes navigateur réalistes ; pas de brotli
 forcé (requests ne décode que gzip/deflate par défaut).
+
+Deux backends de session, choisis par site via `fetcher_backend` dans
+`config/<source>.json` (défaut "requests", inchangé) :
+  - "requests"  : comportement historique, en-têtes Chrome-126 statiques.
+  - "curl_cffi" : empreinte TLS/JA3 usurpée (impersonation Chrome réelle,
+    en-têtes générés par curl_cffi lui-même — cohérents avec la version
+    impersonée, donc PAS mélangés avec `_BROWSER_HEADERS`). Ajoute des
+    retries intégrés (3, backoff 1 s) là où `requests` n'en a aucun.
+    Mesuré le 2026-08-29 : `curl_cffi.requests.Session` seul (sans passer
+    par `scrapling.fetchers`, qui embarque patchright/browserforge en
+    dépendance "fetchers" — inutile ici et ~110 Mo de plus) — API quasi
+    identique à `requests` (`.get/.head`, `raise_for_status`, `.text`),
+    donc aucune autre méthode de cette classe n'a besoin de brancher sur le
+    backend. `scrapling` (sans extra) reste utilisé ailleurs (adaptateurs
+    FazWaz/LivingInsider) pour le parsing adaptatif — capacité indépendante
+    de ce module.
 """
 from __future__ import annotations
 
@@ -16,6 +32,16 @@ from urllib.parse import urljoin
 import requests
 
 from pipeline import chrono
+
+# Exceptions réseau à traiter comme un échec de requête récupérable, quel que
+# soit le backend actif. curl_cffi n'est importé ici que si présent — le
+# backend "requests" (par défaut, 5 sites sur 6) ne doit jamais l'exiger.
+_REQUEST_EXC: tuple[type[Exception], ...] = (requests.RequestException,)
+try:
+    from curl_cffi.requests.exceptions import RequestException as _CurlRequestException
+    _REQUEST_EXC = (requests.RequestException, _CurlRequestException)
+except ImportError:
+    pass
 
 # Jitter anti-ban : chaque attente = délai de base × (1 + [0..JITTER_RATIO]).
 # Jamais plus rapide que le débit configuré, mais variable au-dessus → cadence
@@ -134,16 +160,27 @@ class Robots:
 class Fetcher:
     def __init__(self, base_url: str, user_agent: str, rate_limit_seconds: float = 2.5,
                  timeout_seconds: int = 30, respect_robots: bool = True,
-                 image_rate_limit_seconds: float = 0.4):
+                 image_rate_limit_seconds: float = 0.4, backend: str = "requests"):
         self.base_url = base_url.rstrip("/")
         self.user_agent = user_agent
         self.rate_limit = rate_limit_seconds
         self.image_rate_limit = image_rate_limit_seconds
         self.timeout = timeout_seconds
         self.respect_robots = respect_robots
+        self.backend = backend
         self._last_request = 0.0
-        self._session = requests.Session()
-        self._session.headers.update({"User-Agent": user_agent, **_BROWSER_HEADERS})
+        if backend == "curl_cffi":
+            from curl_cffi.requests import Session as CurlSession
+            # Pas de `_BROWSER_HEADERS` ici : curl_cffi génère déjà un jeu
+            # d'en-têtes cohérent avec la version Chrome qu'il impersone
+            # (sec-ch-ua, Accept, Accept-Encoding avec brotli qu'il décode
+            # nativement — vérifié le 2026-08-29). Les mélanger figerait
+            # sec-ch-ua sur Chrome 126 pendant que la signature TLS avance,
+            # un décalage que les anti-bots regardent justement.
+            self._session = CurlSession(impersonate="chrome")
+        else:
+            self._session = requests.Session()
+            self._session.headers.update({"User-Agent": user_agent, **_BROWSER_HEADERS})
         self._robots = self._load_robots() if respect_robots else None
 
     def _load_robots(self):
@@ -154,7 +191,7 @@ class Fetcher:
         try:
             r = self._session.get(url, timeout=self.timeout)
             text = r.text if r.status_code == 200 else ""
-        except requests.RequestException:
+        except _REQUEST_EXC:
             text = ""
         low = text.lower()
         looks_like_robots = "disallow" in low or "user-agent" in low
@@ -205,7 +242,7 @@ class Fetcher:
                 r = self._session.get(url, headers=headers, timeout=self.timeout)
                 r.raise_for_status()
                 return r.text
-        except requests.RequestException as e:
+        except _REQUEST_EXC as e:
             print(f"  échec GET {url} : {e}")
             return None
 
@@ -224,7 +261,7 @@ class Fetcher:
             if r.status_code >= 400 or "content-length" not in r.headers:
                 return None
             return int(r.headers["content-length"])
-        except (requests.RequestException, ValueError):
+        except (*_REQUEST_EXC, ValueError):
             return None
 
     def get_bytes(self, url: str) -> bytes | None:
@@ -236,6 +273,6 @@ class Fetcher:
                 r = self._session.get(url, timeout=self.timeout)
                 r.raise_for_status()
                 return r.content
-        except requests.RequestException as e:
+        except _REQUEST_EXC as e:
             print(f"  échec GET (bytes) {url} : {e}")
             return None

@@ -10,6 +10,8 @@
   "page_param": "page",
   "respect_robots": true,
   "fetch_detail": true,
+  "fetcher_backend": "curl_cffi",
+  "_fetcher_backend_pourquoi": "Lot 1 scrapling (2026-08-29) : empreinte TLS/JA3 usurpee (curl_cffi, impersonate=chrome) au lieu de requests brut, + retries integres (3, backoff 1s) la ou il n'y en avait aucun. DDproperty choisi en premier car le plus sensible Cloudflare. Verifie ce jour : une requete FROIDE (sans le rechauffement de session habituel) passe direct avec __NEXT_DATA__ present. A etendre aux 5 autres sources seulement apres un cycle complet mesure (taux de sonde OK, latence, [SONDE-ECHEC] reseau). Rollback : retirer cette cle (ou remettre 'requests') suffit, aucune reecriture de code necessaire.",
   "searches": [
     {
       "path": "/en/property-for-sale?freetext=Bangkok&property_type_code%5B%5D=CONDO&listing_type=sale&sort=date&order=desc",

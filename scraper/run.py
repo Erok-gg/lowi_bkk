@@ -161,6 +161,7 @@ def main() -> None:
         timeout_seconds=cfg.get("timeout_seconds", 30),
         respect_robots=cfg.get("respect_robots", True),
         image_rate_limit_seconds=cfg.get("image_rate_limit_seconds", 0.4),
+        backend=cfg.get("fetcher_backend", "requests"),
     )
     matcher = KhetMatcher()
     geocoder = None

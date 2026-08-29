@@ -135,7 +135,8 @@ class Recensement:
                     user_agent=self.config["user_agent"],
                     rate_limit_seconds=self.config.get("rate_limit_seconds", 3.0),
                     timeout_seconds=self.config.get("timeout_seconds", 30),
-                    respect_robots=self.config.get("respect_robots", True))
+                    respect_robots=self.config.get("respect_robots", True),
+                    backend=self.config.get("fetcher_backend", "requests"))
         f.max_pages = self.max_pages
         # Réchauffe : la 1re requête d'une session prend le cookie Cloudflare.
         # Sans elle, les onglets supplémentaires se font servir un challenge.

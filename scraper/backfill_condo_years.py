@@ -41,7 +41,8 @@ def _fetcher(name: str) -> Fetcher:
     return Fetcher(cfg["base_url"], cfg["user_agent"],
                    cfg.get("rate_limit_seconds", 3.0),
                    cfg.get("timeout_seconds", 30),
-                   cfg.get("respect_robots", True))
+                   cfg.get("respect_robots", True),
+                   backend=cfg.get("fetcher_backend", "requests"))
 
 
 def _walk_year(node) -> int | None:
