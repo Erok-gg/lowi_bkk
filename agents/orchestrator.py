@@ -524,6 +524,10 @@ def cmd_status(led: Ledger) -> None:
     from agents.core import local_llm
     ok, msg = local_llm.health()
     print(f"Modèle local : {'✓' if ok else '✗'} {msg}")
+    fermees = escalation.reconcile(led)
+    if fermees:
+        print(f"  ({fermees} escalade(s) réconciliée(s) avec queue/done/ — "
+              f"déjà résolues, le ledger n'était pas à jour)")
     opened = led.open_escalations()
     print(f"Escalades ouvertes : {len(opened)}")
     for e in opened[:5]:
