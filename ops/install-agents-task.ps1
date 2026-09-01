@@ -130,6 +130,28 @@ $trigger = New-ScheduledTaskTrigger -Daily -At $Heure
 # Aucune garantie que ce soit LA seule cause (mecanisme non reproduit en
 # laboratoire, seulement mesure sur incident reel) mais c'est la premiere
 # explication qui colle a TOUS les faits observes sans hypothese supplementaire.
+#
+# -LogonType S4U (remplace Interactive) AJOUTE le 2026-09-01 - la piste etait deja
+# identifiee et laissee de cote le 2026-08-30 ("Piste de fond non appliquee : LogonType
+# de la tache reste Interactive", agents/queue/done/2026-08-30T045030-pouls-cycle_manquant.json).
+# LE MEME SYMPTOME A REPRODUIT malgre le correctif du dessus : run Windows du 2026-08-31,
+# tache lancee 08:09:17 (rattrapage StartWhenAvailable, machine sortie de veille moderne a
+# 08:09:13 - Kernel-Power Id 507), tuee 10:19:47 avec EXACTEMENT le meme code de retour
+# 3221225786 (0xC000013A) - MAIS cette fois avec AllowHardTerminate deja a False (verifie
+# via Get-ScheduledTask AVANT toute correction de cette session). Ca invalide l'hypothese du
+# 2026-08-29 : ce n'est pas Task Scheduler qui tue le process via son propre mecanisme de
+# hard-terminate (ce reglage l'interdit precisement), donc autre chose envoie ce signal.
+# LogonType=Interactive attache le process a la session bureau interactive de l'utilisateur ;
+# un changement d'etat de cette session (veille moderne S0, verrouillage, reprise) peut
+# entrainer l'equivalent d'un CTRL_LOGOFF/CTRL_SHUTDOWN cote console, que python.exe termine
+# sans capturer (pas de handler pose) - c'est exactement le code STATUS_CONTROL_C_EXIT observe
+# les DEUX fois (2026-08-29 et 2026-08-31). S4U (Service for User) fait tourner la tache hors
+# de toute session interactive, sans mot de passe stocke (le compte a juste besoin du droit
+# "Ouvrir une session en tant que tache/travail par lots", accorde automatiquement par
+# Register-ScheduledTask) - non affecte par les transitions de session. Aucun code du depot
+# n'exige de bureau interactif (aucun usage de presse-papiers/GUI/automatisation d'ecran,
+# verifie par grep avant ce changement). Reversible : repasser `-LogonType Interactive`
+# ci-dessous et relancer ce script restaure l'ancien comportement.
 $settings = New-ScheduledTaskSettingsSet `
     -WakeToRun `
     -StartWhenAvailable `
@@ -139,7 +161,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -DisallowHardTerminate `
     -RestartCount 2 -RestartInterval (New-TimeSpan -Minutes 15)
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Limited
 
 if ($PSCmdlet.ShouldProcess($nom, "Register-ScheduledTask")) {
     Register-ScheduledTask -TaskName $nom -Action $action -Trigger $trigger `
@@ -175,6 +197,10 @@ if ($verif -notmatch '<WakeToRun>true</WakeToRun>') {
 if ($verif -notmatch '<AllowHardTerminate>false</AllowHardTerminate>') {
     Write-Host "`n  [!] AllowHardTerminate absent ou toujours a true - Task Scheduler" -ForegroundColor Yellow
     Write-Host "      peut a nouveau tuer l'orchestrateur au retour de veille (2026-08-29)."
+}
+if ($verif -notmatch '<LogonType>S4U</LogonType>') {
+    Write-Host "`n  [!] LogonType n'est pas S4U - la tache reste liee a la session" -ForegroundColor Yellow
+    Write-Host "      interactive, exposee au meme signal que le 2026-08-31 (voir commentaire ci-dessus)."
 }
 Write-Host "`n  [OK] Aucun guillemet echappe, executable present." -ForegroundColor Green
 Write-Host "  Test a chaud :  Start-ScheduledTask -TaskName $nom"
