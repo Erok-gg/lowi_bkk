@@ -1,7 +1,7 @@
 <!-- context.md — NARRATIF MANUEL de l'étude (historique + perspectives).
      Inséré tel quel dans chaque édition. À mettre à jour À LA MAIN quand le
      contexte change (nouvelle ligne actée, plan d'urbanisme promulgué, choc
-     macro…) — idéalement en datant les ajouts. Dernière mise à jour : 2026-07-06. -->
+     macro…) — idéalement en datant les ajouts. Dernière mise à jour : 2026-09-01. -->
 
 ## Où on se situe dans le cycle : 10 ans d'historique
 
@@ -29,10 +29,17 @@ Purple Sud 2029 (~68 % fin 2026) ; Red ext. Rangsit–Thammasat & Taling Chan–
 One Bangkok/Dusit Central Park livrés (Rama IV re-pricé).
 
 **Quasi-acté** : 4e révision du plan d'urbanisme (comité avril 2026, promulgation ~2027) — FAR +20 %,
-9 zones TOD, rezonage Rattanakosin.
+9 zones TOD, rezonage Rattanakosin. *(ajout 2026-09-01 : enquête publique de 90 j ouverte juin 2026,
+promulgation désormais visée fin 2027/~sept. 2027 — calendrier précisé, rien d'acté de nouveau.)*
 
-**Non acté (options longues)** : HSR 3 aéroports + Makkasan (contrat CP bloqué, cible 2032+) ;
-Khlong Toei port (2035, dépend du plan) ; Brown/Grey lines (non financées).
+**Non acté (options longues)** : HSR 3 aéroports + Makkasan (cible 2032+ selon SRT) ;
+Khlong Toei port (2035, dépend du plan) ; Brown/Grey lines (non financées). *(ajout 2026-09-01 :
+le blocage s'est aggravé — CP Group a formellement demandé la résiliation du contrat le 09/07/2026
+(défaut d'agrément BOI) et l'a réitéré le 27/08/2026 ; dossier transmis au comité de politique EEC
+(présidé par le PM Anutin) pour arbitrage attendu en août 2026, issue non connue à ce jour. Si résilié,
+la gestion de l'Airport Rail Link est liée au même contrat — enjeu distinct à suivre. Aucun couloir de
+la carte n'en dépend directement (HSR déjà classé « options longues »), donc pas d'impact sur la
+méthode ; à rebasculer en \"non financé\" si la résiliation est actée.)*
 
 **Conséquence** : le différentiel de rendement centre/périphérie (~1,2 pt mesuré) devrait se refermer par
 appréciation des couloirs Orange/Purple à l'approche des livraisons 2028-2030 — c'est la fenêtre d'achat —,
