@@ -30,8 +30,23 @@ import urllib.robotparser
 from urllib.parse import urljoin
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from pipeline import chrono
+
+# Retries transitoires (5xx / erreurs de connexion) pour le backend "requests" —
+# jusqu'ici SANS aucun retry, contrairement a curl_cffi qui en integre 3
+# (backoff 1s). Mesure le 2026-09-02 : un 522 Cloudflare (origine indisponible,
+# auto-resolu — les 2 autres etapes du meme run ont reussi normalement juste
+# apres) sur fazwaz a fait echouer `get_text()` en un seul essai, ce que
+# `sonder()` traduit en "page de liste inaccessible" -> ticket haute severite
+# etiquete `parser_break` alors qu'aucune structure n'avait change. Meme
+# nombre d'essais que curl_cffi pour ne pas favoriser un backend sur l'autre.
+_RETRY_STATUS = (500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 530)
+_retry = Retry(total=3, backoff_factor=1.0, status_forcelist=_RETRY_STATUS,
+               allowed_methods=("GET", "HEAD"))
+_RETRY_ADAPTER = HTTPAdapter(max_retries=_retry)
 
 # Exceptions réseau à traiter comme un échec de requête récupérable, quel que
 # soit le backend actif. curl_cffi n'est importé ici que si présent — le
@@ -181,6 +196,8 @@ class Fetcher:
         else:
             self._session = requests.Session()
             self._session.headers.update({"User-Agent": user_agent, **_BROWSER_HEADERS})
+            self._session.mount("https://", _RETRY_ADAPTER)
+            self._session.mount("http://", _RETRY_ADAPTER)
         self._robots = self._load_robots() if respect_robots else None
 
     def _load_robots(self):
