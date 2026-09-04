@@ -6,6 +6,7 @@ DSN lu depuis SUPABASE_DB_URL.
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
 import psycopg
@@ -13,6 +14,18 @@ from psycopg.types.json import Json
 
 from pipeline import details
 from store.base import COLONNES_LISTING, BaseStore
+
+#: Meme constat, meme remede que scraper/pipeline/fetch.py (2026-09-04) :
+#: `_execute` ne faisait qu'UN reconnect avant d'abandonner, ce qui a fait
+#: planter `remonter-local.py --synchro-statuts` la nuit du 03 au 04/09 sur
+#: une resolution DNS qui echouait encore au moment precis du seul essai
+#: ("failed to resolve host 'aws-1-....pooler.supabase.com'") — alors que le
+#: reste du run avait deja absorbe plusieurs de ces memes coupures lot par
+#: lot. Meme sonde (la reconnexion elle-meme, contre le vrai pooler, pas un
+#: tiers), meme cadence (30s), meme plafond (20 min) avant d'abandonner pour
+#: de bon.
+OUTAGE_POLL_SECONDS = 30.0
+OUTAGE_MAX_WAIT_SECONDS = 20 * 60.0
 
 #: Exemplaire unique dans store/base.py — la liste etait tenue a la main ici ET
 #: dans sqlite_store.upsert_listing (identiques a la mesure du 2026-08-25, mais
@@ -75,12 +88,29 @@ class SupabaseStore(BaseStore):
 
     def _execute(self, sql: str, params=()):
         """execute avec reconnexion auto si la connexion Postgres a sauté
-        (blip réseau / timeout pooler) → un blip ne tue plus le run."""
+        (blip réseau / timeout pooler) → un blip ne tue plus le run.
+
+        Un SEUL essai de reconnexion ne suffit pas à une coupure qui dure :
+        mesuré le 2026-09-03/04, `synchroniser_statuts` a fini par lever
+        malgré ce garde-fou parce que le réseau était encore coupé au moment
+        précis de l'unique retry. On attend maintenant, en sondant la
+        reconnexion elle-même, comme `Fetcher._attend_coupure` (fetch.py)."""
         try:
             return self.db.execute(sql, params)
         except (psycopg.OperationalError, psycopg.InterfaceError):
-            self._reconnect()
-            return self.db.execute(sql, params)
+            attente = 0.0
+            while True:
+                try:
+                    self._reconnect()
+                    return self.db.execute(sql, params)
+                except (psycopg.OperationalError, psycopg.InterfaceError):
+                    if attente >= OUTAGE_MAX_WAIT_SECONDS:
+                        raise
+                    print(f"  ⚠ connexion Postgres perdue (coupure ?) — nouvel essai dans "
+                          f"{OUTAGE_POLL_SECONDS:.0f}s (attente cumulée {attente:.0f}s"
+                          f"/{OUTAGE_MAX_WAIT_SECONDS:.0f}s)", flush=True)
+                    time.sleep(OUTAGE_POLL_SECONDS)
+                    attente += OUTAGE_POLL_SECONDS
 
     def get_listing(self, listing_id: str) -> dict | None:
         row = self._execute(
@@ -165,8 +195,31 @@ class SupabaseStore(BaseStore):
         date d'origine (exactement le comportement de `upsert_listing`, où le
         SET de la branche UPDATE ne touche pas non plus `first_seen`).
 
+        `DO UPDATE ... WHERE <rien n'a changé>` — ajouté le 2026-09-02. Sans
+        ce garde-fou, l'upsert réécrivait TOUTES les colonnes de CHAQUE ligne
+        à CHAQUE remontée, même quand la ligne était strictement identique à
+        ce qui était déjà en base : `remonter-supabase` tourne en lane
+        `daily` depuis le 2026-08-26 et repousse toute la fenêtre active
+        (~98 000 lignes) sans filtre delta. Mesuré côté serveur le 2026-09-02
+        (`pg_stat_user_tables`) : 733 375 UPDATE sur `listings` pour ~98 573
+        lignes vivantes, 72 % non-HOT — donc touchant la plupart des 13 index
+        de la table, tous les jours, pour une donnée inchangée dans l'immense
+        majorité des cas. C'est la cause directe de l'alerte Supabase « Disk
+        IO Budget depleting » : le volume de la base n'a pas bougé, seul le
+        débit d'écriture explique la consommation.
+        Quand la clause WHERE est fausse, Postgres traite la ligne comme un
+        DO NOTHING — aucune nouvelle version de ligne, aucune écriture
+        d'index, et la ligne n'apparaît pas dans RETURNING (d'où `maj` qui
+        ne compte plus que les lignes RÉELLEMENT écrites, pas toutes celles
+        renvoyées). `last_seen` est volontairement EXCLU de la comparaison :
+        c'est justement la colonne qui changerait à chaque appel et annulerait
+        le garde-fou — et `lastSeen` n'est lu nulle part côté app
+        (`lib/listings-db.ts` la sélectionne, aucun composant ne la consomme).
+
         Retourne {'nouvelles', 'maj', 'changees'} — mêmes clés que le
-        comptage fait par l'appelant autour de `upsert_listing`.
+        comptage fait par l'appelant autour de `upsert_listing`. `changees`
+        (comptage Python, indépendant de ce garde-fou) reste le nombre de prix
+        réellement modifiés — sous-ensemble de `maj`.
         """
         if not rows:
             return {"nouvelles": 0, "maj": 0, "changees": 0}
@@ -176,6 +229,7 @@ class SupabaseStore(BaseStore):
 
         cols_sql = ",".join(_COLS)
         set_sql = ",".join(f"{c}=excluded.{c}" for c in _COLS)
+        rien_change = " or ".join(f"listings.{c} is distinct from excluded.{c}" for c in _COLS)
         un_placeholder = "(" + ",".join(["%s"] * (len(_COLS) + 5)) + ")"
         insert_sql = (
             f"insert into listings (id,{cols_sql},status,first_seen,last_seen,raw_data) "
@@ -183,6 +237,12 @@ class SupabaseStore(BaseStore):
             f"on conflict (id) do update set {set_sql},status='active',"
             f"last_seen=excluded.last_seen,raw_data=excluded.raw_data,"
             f"missed_count=0,first_missed_at=null,delisted_at=null "
+            f"where listings.status is distinct from 'active'"
+            f" or listings.missed_count is distinct from 0"
+            f" or listings.first_missed_at is not null"
+            f" or listings.delisted_at is not null"
+            f" or listings.raw_data is distinct from excluded.raw_data"
+            f" or {rien_change} "
             f"returning id, (xmax = 0) as est_nouvelle"
         )
 
