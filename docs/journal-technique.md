@@ -649,6 +649,249 @@ le 26/08 — 4e signalement. Une alerte mail périmée (`remonter-supabase`,
 artefact d'un kill manuel du 28/08, déjà expliqué) a été archivée sans être
 envoyée plutôt que d'induire en erreur 24h après coup.
 
+## 2026-08-31 — réparation autonome : le minuteur RTC de 00:59:31 n'a jamais réveillé la machine — cause plausible identifiée (RTCWAKE désactivé sur secteur continu)
+
+Session `lowi-reparation-autonome`. Détail complet dans
+[agents/audits/reparations-2026-08-31.md](../agents/audits/reparations-2026-08-31.md) ;
+résumé ici. Aucun ticket en attente (`agents/queue/` vide hors `done/`), aucune
+erreur d'extracteur nouvelle sur les 40 derniers logs, base saine (`quick_check`
+ok, 93 148 annonces dont 66 883 actives, `last_seen` à jour à la minute — le
+cycle du jour tournait pendant le contrôle), sauvegarde clé USB de la veille
+vérifiée 3/3 (93 049 annonces, 30/08 13:56).
+
+**Le minuteur RTC confirmé « armé » hier soir par l'utilisateur
+(`powercfg /waketimers` → `LowiBKK-Agents` à 00:59:31) n'a produit AUCUN
+réveil cette nuit.** Preuve directe, pas déduite : le journal
+`Microsoft-Windows-TaskScheduler/Operational`, activé hier en fin de session
+(`wevtutil sl .../Operational /e:true`), est **vide de tout événement entre
+30/08 18:00 et 31/08 08:09** — aucune tentative de lancement, pas seulement un
+lancement raté. Kernel-Power confirme côté sommeil : endormissement le 30/08 à
+14:10:55 (Idle Timeout), réveil suivant le 31/08 à 08:09:13, motif **Lid**
+(capot rouvert à la main). Le cycle n'a démarré qu'au rattrapage
+`StartWhenAvailable` déclenché par ce réveil manuel — 5e retard sur les 6
+derniers jours (27, 28, 29, 30, 31/08), pas un incident isolé.
+
+**Cause plausible trouvée, non testée en conditions réelles** :
+`powercfg /query SCHEME_CURRENT SUB_SLEEP` (lecture seule, sans élévation) —
+`RTCWAKE` (« Autoriser les minuteurs de sortie de veille ») vaut
+**Activé sur secteur (AC), Désactivé sur batterie (DC)** :
+```
+GUID du paramètre d'alimentation : bd3b718a-0680-4d9d-8ab2-e1d2b4ac806d (RTCWAKE)
+Index actuel du paramètre de courant alternatif : 0x00000001  (Activer)
+Index actuel du paramètre de courant continu    : 0x00000000  (Désactiver)
+```
+Un minuteur RTC peut être « armé » (visible dans `/waketimers`) tout en étant
+silencieusement annulé au moment du réveil si la machine est passée sur
+batterie entre-temps — ce qui expliquerait un minuteur confirmé actif hier
+soir et pourtant sans effet cette nuit. `STANDBYIDLE` en DC reste par ailleurs
+à 180 s (3 min, déjà signalé le 26/08, toujours vrai) : une machine débranchée
+s'endort très vite ET ne peut plus se réveiller seule. `STANDBYIDLE` en AC est
+confirmé à 46 800 s (13 h, conforme à l'entrée du 26/08 — pas de régression
+sur ce paramètre). **Non établi** : si la machine était effectivement sur
+batterie cette nuit précise (aucun journal de source d'alimentation consulté
+en historique, seul l'état actuel — secteur, 94 % — a pu être lu).
+
+**Non fait, volontairement** : pas de correctif appliqué. Changer `RTCWAKE`
+(`powercfg /setdcvalueindex ... RTCWAKE 1`) exige une élévation absente de
+cette session (déjà signalé le 26 et le 30/08 pour `/requests` et
+`/waketimers` — s'étend maintenant à `/setdcvalueindex`), et c'est une
+préférence d'alimentation persistante au même titre que celles posées par
+`ops/regle-alimentation.py` (`lanes: []` à dessein, invocation manuelle
+seulement — règle 5 : pas à moi de trancher). Recommandation chiffrée laissée
+à l'utilisateur : activer `RTCWAKE` en DC si la machine tourne parfois
+débranchée la nuit ; sinon la piste est fausse et la cause reste à chercher
+ailleurs (BIOS wake, service Task Scheduler lui-même). `regle-alimentation`
+(dernier succès il y a 14,4 j, run unique du 16/08 sur l'ancien poste PC1
+`schoe\++FILES++`) et `verifie-backup` (6,0 j), tous deux affichés « DÛ » par
+`orchestrator status`, revérifiés non-bogue : `lanes: []` à dessein dans
+`agents.json`, hors cycle automatique par conception, pas par défaut.
+`CLAUDE.md`/`docs/journal-technique.md`/CSV d'études restent modifiés sans
+commit — 6e signalement, toujours pas mon travail à trancher (travail
+d'autres sessions, portée dépasse cette réparation). Fichier orphelin
+`bad_rings_out.txt` (racine du dépôt, non tracké, sortie d'une vérification de
+géométrie de polygones khet) repéré mais non touché : aucun script du dépôt
+ne le produit, origine et intention inconnues.
+
+**Alerte mail traitée différemment de la veille, et pourquoi.** La boîte
+`agents/queue/mail/` contenait une alerte pouls du 30/08 04:50 (« aucun cycle
+depuis 28 h »), non envoyée depuis >24 h. Le précédent du 28/08 archivait sans
+envoyer une alerte devenue trompeuse ; ici le connecteur Gmail était
+disponible et le motif sous-jacent (retards répétés du réveil 01:00) restait
+réel et non communiqué à l'utilisateur — l'archiver silencieusement aurait
+caché un problème qui persiste. Envoyée avec un post-scriptum daté replaçant
+les faits dans le contexte du jour (cycle depuis rattrapé, pattern de 5/6
+jours, renvoi vers ce journal), puis déplacée dans `queue/mail/done/` (dossier
+créé, aligné sur la convention déjà en place dans `queue/done/`).
+
+**Addendum, même session — l'utilisateur reprend la main en direct.**
+Confirme que la machine tourne normalement sur secteur, mais demande d'activer
+`RTCWAKE` en DC quand même, « on sait jamais ». Exécuté :
+`powercfg /setdcvalueindex SCHEME_CURRENT SUB_SLEEP RTCWAKE 1` puis
+`powercfg /setactive SCHEME_CURRENT`. **N'a pas exigé d'élévation** — contre
+l'attente posée plus haut dans cette même entrée : `/setdcvalueindex` change
+la préférence de l'utilisateur courant sur son propre schéma d'alimentation,
+contrairement à `/waketimers`/`/requests` qui lisent un état noyau
+system-wide et exigent un admin. Vérifié après coup par relecture
+(`powercfg /query ... RTCWAKE`) : `Index actuel du paramètre de courant
+continu = 0x00000001 (Activer)`, changement confirmé, pas seulement supposé
+depuis l'absence d'erreur. **Non touché** : `STANDBYIDLE` en DC reste à 180 s
+— si la machine tourne un jour débranchée, elle s'endort en 3 min et le
+réveil RTC (maintenant possible en théorie sur ce point précis) resterait à
+tester en conditions réelles. Pas demandé par l'utilisateur, pas changé.
+
+**Addendum 2, même session — question de l'utilisateur : quelles méthodes de
+réveil restent inessayées ?** Réponse donnée en chat, puis vérification
+concrète du matériel via `powercfg /a` : cette machine (ASUS ZenBook
+UX481FL) n'expose **que S0 Low Power Idle (Modern Standby), Hibernation et
+Démarrage rapide** — S1/S2/S3 sont désactivés au niveau firmware, pas par un
+réglage Windows (« désactivé lorsque le mode faible consommation S0 est pris
+en charge »). Piste « repasser en veille classique S3 » définitivement
+fermée sur ce matériel, pas une question de configuration.
+
+L'utilisateur a demandé d'essayer 2 méthodes (la 3e, réveil BIOS/UEFI, restant
+à sa main — accès physique requis) :
+
+- **Périphérique de réveil armé manuellement** (`powercfg /devicequery
+  wake_from_any`) : révèle une **« Alarme de sortie de veille ACPI »**,
+  présente et listée capable pour S4 (`S4_supported`) — vraisemblablement le
+  composant que Task Scheduler pilote déjà en interne pour `WakeToRun`.
+  Tentative `powercfg /deviceenablewake "Alarme de sortie de veille ACPI"`
+  → **refusée, élévation requise** (contrairement aux réglages `set*valueindex`
+  qui ne l'exigent pas). Par ailleurs ce device n'apparaît dans AUCUNE des
+  listes `wake_programmable`/`wake_armed` (toutes deux vides sur l'ensemble
+  du système) : sur du Modern Standby, l'API historique d'armement manuel par
+  périphérique semble neutralisée au profit d'une gestion interne par l'OS —
+  armer ce device à la main n'apporterait probablement rien de plus que ce
+  que `WakeToRun`+`RTCWAKE` font déjà, même avec les droits admin. Piste
+  jugée sans levier réel ici, pas juste bloquée par les droits.
+- **Hibernation (S4) au lieu du Modern Standby pour l'endormissement
+  nocturne, même minuteur Task Scheduler** : `HIBERNATEIDLE` en AC était à
+  `0x00000000` (jamais — la machine ne passait jamais en hibernation
+  d'elle-même sur secteur, seulement en Modern Standby via `STANDBYIDLE`
+  13 h). Réglé à **1800 s (30 min)**
+  (`powercfg /setacvalueindex SCHEME_CURRENT SUB_SLEEP HIBERNATEIDLE 1800`),
+  n'a pas exigé d'élévation, vérifié après coup par relecture. Comme
+  `HIBERNATEIDLE (30 min) < STANDBYIDLE (13 h)`, le comportement documenté de
+  Windows (minuteurs indépendants depuis le dernier événement d'activité, le
+  plus court l'emporte) devrait faire hiberner la machine directement après
+  30 min d'inactivité sur secteur, sans jamais passer par le Modern Standby —
+  **non vérifié sur ce matériel précis** (le mécanisme « sleep then
+  hibernate » est documenté pour S1-S3, son comportement exact sur une
+  plateforme Modern-Standby-only n'a pas été observé ici). **Effet de bord
+  assumé, pas juste pour cette nuit** : toute inactivité de 30 min sur
+  secteur, de jour comme de nuit, fera désormais hiberner la machine au lieu
+  d'un Modern Standby quasi instantané — reprise plus lente en journée si le
+  seuil est atteint. Rollback :
+  `powercfg /setacvalueindex SCHEME_CURRENT SUB_SLEEP HIBERNATEIDLE 0`.
+  **À vérifier demain matin** : est-ce que `LastRunTime` de `LowiBKK-Agents`
+  colle à 01:00 (réveil réussi depuis S4) ou reste-t-il un rattrapage tardif
+  (le mode de panne persiste malgré le changement de state de veille) ?
+
+## 2026-08-30 — réparation autonome : le réveil 01:00 a manqué une 2e nuit, mode de panne différent de celui corrigé la veille
+
+Session `lowi-reparation-autonome`. Détail complet dans
+[agents/audits/reparations-2026-08-30.md](../agents/audits/reparations-2026-08-30.md) ;
+résumé ici. Aucun ticket en attente, aucune erreur d'extracteur nouvelle,
+base saine (`quick_check` ok, 90 618 annonces, `last_seen` à jour), sauvegarde
+clé USB de la veille vérifiée 3/3.
+
+**Le correctif d'hier (`AllowHardTerminate=False`) n'a pas été mis à
+l'épreuve cette nuit — un autre maillon a cassé avant lui.** Le système est
+entré en veille moderne le 29/08 à 08:23:28 et n'en est ressorti que le
+30/08 à 07:50:23 (motif **Lid**, capot ouvert à la main), 23 h 27 sans le
+moindre événement Kernel-Power intermédiaire. `Get-ScheduledTaskInfo` →
+`LastRunTime = 30/08/2026 07:50:29` : si le déclenchement RTC de 01:00
+avait eu lieu (même pour être tué ensuite comme la nuit du 28→29/08, où
+`LastRunTime` affichait bien `01:00:05`), Task Scheduler l'aurait enregistré
+comme dernier lancement. Il ne l'a pas fait — le déclenchement lui-même
+n'a jamais eu lieu, pas seulement le process qui aurait suivi.
+`WakeToRun=True` / `AllowHardTerminate=False` / `StartWhenAvailable=True`
+sont pourtant bien posés sur la tâche live (vérifiés). Pas de double coureur
+(`LowiBKK-RattrapageBoot` n'a pas tourné aujourd'hui, dernier run le 22/08) :
+la reprise de 07:50 vient uniquement du rattrapage normal de
+`LowiBKK-Agents` sur son propre déclenchement manqué.
+
+**Cause non établie — bloqué par deux manques d'outillage, consignés pour
+la prochaine session avec droits admin** : `powercfg /waketimers` et
+`/requests` exigent une élévation absente de cette session (déjà signalé
+pour `/requests` le 26/08, s'étend à `/waketimers`). Et surtout,
+**`Microsoft-Windows-TaskScheduler/Operational` est désactivé** sur cette
+machine (`IsEnabled=False`) — aucun journal fin des déclenchements/échecs
+de tâches n'existe, donc impossible de dire si le timer RTC n'a jamais été
+armé, s'il a été armé puis annulé, ou ignoré par le firmware. Recommandé
+mais non appliqué : `wevtutil sl Microsoft-Windows-TaskScheduler/Operational
+/e:true` (réversible, sans risque) pour capturer le détail à la prochaine
+occurrence.
+
+**Non fait, volontairement** : aucun correctif de code sur le
+réveil/veille — sujet déjà en travail actif de l'utilisateur sur
+`fix/allow-hard-terminate-wake-lock` (5 commits le 29/08 matin), et le
+diagnostic complémentaire nécessaire est bloqué par l'absence de droits
+admin ici. Pas de correctif à l'aveugle sur un mécanisme déjà retouché la
+veille sans certitude sur la cause de cette nuit. `regle-alimentation` et
+`verifie-backup`, affichés « DÛ » par `orchestrator status`, vérifiés
+non-bogue : `lanes: []` dans `agents.json`, outils volontairement hors
+cycle automatique (`verifie-backup` neutralisé le 25/08, rôle repris par
+`sauvegarde-cle.py`/`pouls.py`). `CLAUDE.md`/CSV d'études/`.gitignore`
+restent modifiés sans commit — 5e signalement, pas mon travail à trancher.
+
+**Addendum, même session, l'utilisateur reprend la main en direct** (connecté
+via RustDesk) et lance les 3 commandes admin bloquées plus haut :
+- `powercfg /waketimers` → un minuteur **est armé** pour ce soir :
+  `LowiBKK-Agents` à **00:59:31 le 31/08**. Le mécanisme RTC fonctionne
+  actuellement ; ne prouve pas rétroactivement l'état d'hier soir (aucun
+  moyen de consulter un minuteur passé), mais la nuit prochaine devrait
+  réveiller la machine si rien n'annule ce timer entre-temps.
+- `powercfg /requests` → seul RustDesk tient `DISPLAY`+`SYSTEM`, cohérent
+  avec la session à distance en cours au moment de la commande — pas un
+  signe d'anomalie, et sans rapport avec la coupure de cette nuit (le
+  système s'est bien endormi à 08:23:28, RustDesk ne bloquait donc rien à
+  ce moment-là).
+- `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true` →
+  **appliqué**. Le journal détaillé des déclenchements de tâches est
+  maintenant actif : si le réveil de 00:59:31 échoue à nouveau cette nuit,
+  la cause exacte sera visible dans ce journal au lieu d'être déduite
+  indirectement de Kernel-Power. Point à recontrôler à la prochaine
+  session.
+
+**Addendum 2, même session — pourquoi le dashboard affiche « aucun scrap en
+cours » : les 5 extracteurs du rattrapage de 07:50 ont bien démarré, puis ont
+été tués simultanément.** Mesuré dans `agents/ledger.db`
+(`agent_runs`) : les 5 extracteurs démarrent à `2026-08-30T00:50:39+00:00`
+et passent tous à `status='interrompu'` à **la même seconde**,
+`00:52:55+00:00` (07:52:55 Bangkok) — 5 processus indépendants ne tombent
+pas à la même seconde par hasard, c'est un signal externe qui a coupé tout
+le groupe d'un coup. Rien n'a repris depuis (dernière ligne du ledger à
+07:52:55, contrôlé à 09:10 — plus d'une heure sans reprise).
+
+**Deux éléments concordants, mesurés, pas supposés :**
+- `(Get-ScheduledTask -TaskName LowiBKK-Agents).Principal` →
+  **`LogonType=Interactive`, `RunLevel=Limited`, `UserId=Remidaboss`**. La
+  tâche tourne attachée à la session de bureau interactive, pas en
+  `S4U`/mot de passe (indépendant de l'état de la session). Un verrouillage,
+  une mise en veille ou une perturbation de session peut donc couper d'un
+  coup tous les processus qui en dépendent — cohérent avec un kill
+  simultané des 5.
+- Journal Système : une mise à jour pilote (**ASUS System Driver Update**)
+  s'est installée dans une fenêtre qui encadre exactement le kill —
+  téléchargement démarré 07:51:28, installation démarrée 07:52:32, terminée
+  07:52:59. Le kill à 07:52:55 tombe dedans. Corrélation forte, causalité
+  non prouvée formellement (pas de lien direct dans les logs entre
+  l'installeur et la terminaison des process).
+
+**Non fait, laissé à l'arbitrage de l'utilisateur** : relancer la lane
+maintenant (`orchestrator.py --boot`, cf. mécanisme déjà utilisé le
+2026-08-29) reprendrait la suite sans dupliquer, mais relancer un scrap en
+pleine journée est une décision de posture (règle 5), pas la mienne à
+prendre. Le minuteur de 00:59:31 cette nuit (confirmé par `powercfg
+/waketimers`, addendum 1) devrait de toute façon relancer les 5
+extracteurs demain matin puisqu'aucun n'a réussi aujourd'hui
+(`is_due()`). **Piste de fond non appliquée** : passer `LogonType` de
+`Interactive` à un mode indépendant de la session (S4U ou compte/mot de
+passe) rendrait la tâche insensible aux perturbations de session — nécessite
+de reconfigurer le principal de la tâche (mot de passe du compte), non fait
+ici, à arbitrer.
+
 ## 2026-08-29 — optimisation scraping via `scrapling` : deux lots livrés, mesurés avant écriture
 
 Demande utilisateur : regarder ce que le projet `scrapling` (GitHub) permet
@@ -739,3 +982,381 @@ isolée a été vérifiée) ; aucune mesure de `[SONDE-ECHEC]`/latence sur un
 cycle réel, seulement des fixtures locales et une requête ponctuelle ;
 décision sur le Lot 3 non tranchée (n'a pas à l'être tant que Cloudflare ne
 durcit pas réellement DDproperty).
+
+## 2026-09-01 — Réparation autonome : le correctif du 29/08 contre le blocage nocturne était insuffisant
+
+Session `lowi-reparation-autonome`. Trois tickets en attente à l'ouverture,
+détail complet dans `agents/audits/reparations-2026-09-01.md`.
+
+**Le run bloqué de la nuit du 30-31/08 avait deux causes empilées, une
+seule déjà connue.** La première (déclenchement RTC de 01:00 silencieux,
+réveil manuel obtenu à 08:09 par ouverture du capot) était déjà établie en
+direct par la session du 31/08. La seconde n'était pas visible ce jour-là
+(le rapport avait été écrit pendant que le cycle rattrapé tournait encore) :
+mesuré ce matin dans le ledger, le run `extract-ddproperty` (id 250) a en
+réalité été tué à 10:19:47 avec le code de retour **3221225786**
+(`STATUS_CONTROL_C_EXIT`) — le même code exact qui avait motivé le
+correctif `-DisallowHardTerminate` du 2026-08-29. Sauf que cette fois,
+`AllowHardTerminate` était déjà à `False` (vérifié avant toute correction
+de cette session) : **le correctif du 29/08 était déjà en place et n'a pas
+empêché la récidive**, ce qui invalide l'explication retenue ce jour-là
+(Task Scheduler tuant lui-même le process via son propre mécanisme de
+hard-terminate).
+
+**Piste retenue, déjà identifiée puis explicitement laissée de côté le
+30/08** (« Piste de fond non appliquée : LogonType de la tâche reste
+Interactive »). Un process en `LogonType=Interactive` est attaché à la
+session bureau ; une transition de cette session peut produire côté console
+l'équivalent d'un signal `CTRL_LOGOFF`/`CTRL_SHUTDOWN`, que `python.exe`
+termine sans le capturer — cohérent avec le code observé les deux fois
+(29/08 et 31/08), mais **non reproduit en laboratoire**, à traiter comme
+déduit et non prouvé (même réserve que celle posée le 29/08 pour la théorie
+précédente).
+
+**Corrigé sur `fix/allow-hard-terminate-wake-lock` (commit `386a69e`)** :
+`ops/install-agents-task.ps1` passe `LogonType` de `Interactive` à `S4U`
+(pas de mot de passe stocké, aucune dépendance du dépôt à un bureau
+interactif vérifiée par grep). **Non déployé** : `Register-ScheduledTask`
+avec ce réglage exige une élévation absente de cette session
+(« Accès refusé » constaté, tâche live vérifiée inchangée après l'échec).
+Commande prête, à lancer par l'utilisateur depuis une console administrateur
+(voir le rapport pour la commande exacte).
+
+**Ticket d'extraction dédup traité mécaniquement** (60 paires,
+`organize/comparaison_deleguee`) : même pratique qu'établie le 2026-08-25
+pour 5 lots similaires — le texte de chaque paire est entièrement gabarit,
+donc extraction par script déterministe plutôt que lecture à l'œil.
+100 % d'abstention, contre-vérifié sur les 60 réponses avant de clore le
+ticket (écart médian mesuré 7,4 %, aucune paire sous le seuil de 2 % du
+critère `same_unit`) : le résultat est correct, pas un défaut d'extraction.
+
+**Rien d'autre à signaler** : logs d'erreur propres du 26/08 au 01/09 (le
+seul cluster restant, `database is locked` du 25/08, était déjà corrigé et
+documenté ce jour-là) ; base saine (`quick_check` ok, WAL, 97 500 annonces
+dont 70 532 actives, fraîcheur cohérente avec le dernier cycle) ; sauvegarde
+clé USB 3/3 vérifiée, comptes identiques à la base de référence.
+
+**Non fait** : déploiement du correctif S4U (élévation requise, laissé à
+l'utilisateur) ; la piste RTCWAKE/batterie du 31/08 pour la cause A, non
+retranchée aujourd'hui.
+
+## 2026-09-01 (suite) — Correctif LogonType S4U déployé par l'utilisateur
+
+Suite de l'entrée du jour. `ops/install-agents-task.ps1` relancé par
+l'utilisateur depuis une console administrateur, immédiatement après le
+rapport. Enregistrement réussi (aucune des deux alertes de vérification post-
+enregistrement ne s'est déclenchée). Confirmé par lecture directe :
+`LogonType = S4U`, `AllowHardTerminate = False`, `ExecutionTimeLimit = PT0S`
+sur la tâche live. Effet de bord attendu et positif : la tâche peut
+désormais tourner même sans session utilisateur ouverte (S4U ne l'exige
+plus), alors qu'`Interactive` l'exigeait.
+
+**Non vérifié** : aucun cycle complet n'a encore tourné sur ce réglage — la
+première preuve viendra du cycle de 01:00 cette nuit (2026-09-01 →
+2026-09-02). Si le même code `STATUS_CONTROL_C_EXIT` réapparaît malgré S4U,
+la théorie LogonType est fausse et la piste RTCWAKE/batterie du 31/08
+(§2 du rapport du jour) redevient la plus probable pour la cause A — la
+cause B (process tué en cours de cycle) resterait alors non expliquée.
+
+## 2026-09-01 (suite 2) — `scan_runs` figé depuis 10 jours : la remontée n'y écrivait jamais
+
+**Contexte.** Demande de rappel du rôle de `scan_runs`, dans la foulée d'une
+remontée manuelle vers Supabase (`ops/remonter-local.py --statut actives
+--synchro-statuts` : 70 532 actives transférées, 0 nouvelle, 0 fantôme corrigé —
+signe que l'agent `remonter-supabase` tournait déjà seul en lane `daily` depuis
+le 26/08 sans que ça ait été consigné). `listings.last_seen` était bien frais
+(2026-09-01), mais `scan_runs` restait figé au **2026-08-22** pour les 5
+sources.
+
+**Cause.** `ops/remonter-local.py` n'a jamais écrit dans `scan_runs` — seuls les
+5 extracteurs le font, et ils n'écrivent plus sur Supabase depuis la bascule
+SQLite du 25/08 (§ suite du 25/08). Un outil qui lit `scan_runs` pour juger la
+fraîcheur du serveur (`ops/verifie-synchro.py`) se trompait donc depuis 10
+jours : les données étaient à jour, la table qui en témoigne ne l'était pas.
+
+**Décision** (utilisateur) : l'écriture doit être automatique, dans le cycle de
+l'orchestrateur — pas un geste manuel de plus à oublier.
+
+**Implémenté :**
+- `ops/remonter-local.py` : à la fin d'une remontée réussie, insère une ligne
+  `scan_runs` (`source='remonter-supabase'`, comptage transférées / mises à
+  jour / statuts corrigés, `notes` distingue explicitement « pas un scrape »).
+  Aucun changement à `agents.json` : l'agent est déjà en lane `daily` depuis le
+  26/08, le correctif profite au prochain cycle sans y toucher.
+- `ops/verifie-synchro.py` (§3, double coureur) : le croisement ne reconnaissait
+  que les agents `extract-*` pour border la fenêtre d'un `scan_run` légitime.
+  Sans correctif, la nouvelle ligne `remonter-supabase` se serait auto-dénoncée
+  comme écriture suspecte à **chaque** cycle — garde-fou qui aurait crié au
+  loup en continu (règle 2). Étendu pour reconnaître aussi cet agent.
+
+**Vérifié** : un run réel à `--limite 50` a produit une ligne `scan_runs`
+lisible côté serveur (`scanned_count=50`, `notes='remontée PC2→Supabase, pas un
+scrape'`) immédiatement après écriture.
+
+**Non fait** : `synchroniser_statuts` reste ligne à ligne via `store._execute`
+(méthode privée, déjà noté le 26/08) ; le garde-fou de fraîcheur évoqué le
+2026-08-26 (suite 4) reste à poser.
+
+## 2026-09-02 — Alerte Supabase « Disk IO Budget depleting » : upsert aveugle, pas la taille
+
+**Contexte.** Mail d'alerte Supabase reçu ce matin. Vérifié d'abord que ce
+n'était PAS le problème de taille corrigé le 25/08 : base à **245 Mo**,
+largement sous le quota — le Disk IO Budget est une ressource distincte
+(débit d'écriture, pas volume occupé).
+
+**Mesure.** `pg_stat_user_tables` côté Supabase : `listings` avait
+**733 375 UPDATE** cumulés (depuis un `stats_reset` du 22/05, donc à cheval
+sur l'ancienne ère où les extracteurs écrivaient directement en ligne) pour
+seulement **~98 573 lignes vivantes** — soit ~7,4 UPDATE/ligne — dont **72 %
+non-HOT** (527 203/733 375), donc touchant la plupart des **13 index** de la
+table à chaque fois. `remonter-supabase` tourne en lane `daily` depuis le
+26/08 et repousse **toute la fenêtre active** sans filtre delta
+(`ops/remonter-local.py:86`, `where status='active'`, sans condition sur
+`last_seen`).
+
+**Cause.** `SupabaseStore.upsert_listings_bulk` (`scraper/store/
+supabase_store.py`) fait un `INSERT ... ON CONFLICT DO UPDATE SET
+<toutes les colonnes>=excluded.*` **sans aucune garde** : même une ligne
+strictement identique à ce qui est déjà en base était réécrite en entier,
+tous les jours. Le lot ajouté le 28/08 (`upsert_listings_bulk`) avait réglé
+le problème réseau (4,1 → ~250 annonces/s) mais pas le volume d'écriture par
+ligne — les deux étaient des causes indépendantes.
+
+**Corrigé.** Ajout d'une clause `WHERE` sur le `DO UPDATE` : si aucune des
+colonnes `_COLS` ne diffère, si `raw_data` est identique, et si la ligne est
+déjà dans l'état cible (`status='active'`, `missed_count=0`,
+`first_missed_at`/`delisted_at` nuls), Postgres traite la ligne comme un
+`DO NOTHING` — aucune nouvelle version de ligne, aucune écriture d'index.
+`last_seen` est volontairement EXCLU de la comparaison (sinon le garde-fou ne
+se déclencherait jamais, puisque c'est la seule colonne qui change à chaque
+appel) — vérifié que `lastSeen` n'est lu nulle part côté app
+(`lib/listings-db.ts` la sélectionne, aucun composant Next ne la consomme).
+
+**Vérifié :**
+- `agents/tests/test_remonter_bulk.py` étendu (cas 5) : un lot renvoyé à
+  l'identique produit `{nouvelles:0, maj:0, changees:0}` et `last_seen`
+  n'avance pas — passé contre le vrai Supabase.
+- Sur données réelles : `ops/remonter-local.py --statut actives --limite
+  2000` a poussé 2 000 annonces actives réelles → **0 nouvelle, 0 mise à
+  jour, 0 prix changé**, et `n_tup_upd` sur `listings` n'a pas bougé
+  (733 375 → 733 376, le +1 venant du test unitaire précédent, pas de ce
+  run). Avant correctif, ce même run aurait produit 2 000 UPDATE aveugles.
+- `agents/tests/test_stores_alignes.py` toujours au vert (pas de régression
+  sur l'alignement des colonnes).
+
+**Non fait** : `upsert_listing` (chemin ligne à ligne, utilisé seulement si
+quelqu'un relance le scraper avec `--store supabase` — plus le défaut depuis
+la bascule SQLite) n'a pas reçu le même garde-fou, volontairement : il n'est
+plus sur le chemin de production mesuré. `synchroniser_statuts` (délistage)
+reste hors du périmètre de cette mesure — c'est un UPDATE ciblé déjà
+conditionné par `and status='active'`, pas un upsert aveugle. Impact sur le
+Disk IO Budget affiché dans le dashboard Supabase non re-mesuré après coup
+(le compteur du mail n'est pas accessible par API ; seul `pg_stat_user_tables`
+l'est) — à confirmer au prochain relevé du dashboard.
+
+## 2026-09-03 — `overseer` criait au loup sur `organize` en mode tickets (12/12)
+
+Session `lowi-reparation-autonome` autonome. Détail complet, méthodo de
+mesure et ce qui n'a pas été fait :
+[agents/audits/reparations-2026-09-03.md](../agents/audits/reparations-2026-09-03.md).
+
+**Mesuré** : sur les 38 findings des 7 derniers jours (comptés par nature
+avant conclusion, règle 1), 18 (47 %) étaient `overseer / contrat_viole` sur
+`organize`, avec le même message répété : « champs manquants : abstentions,
+paires_modele, pannes_llm, revue_ajoutee ». Recoupé aux runs réels du
+ledger : **12/12** runs `organize` réussis depuis l'import du poste (25/08,
+`t1-absent` posé en continu) portaient ce finding. Taux 100 % — exactement
+le garde-fou qui crie au loup (règle 2 du CLAUDE.md).
+
+**Cause** : `organize` a deux sorties légitimes selon le poste — comparaison
+locale via modèle T1, ou dépôt en ticket sur un poste sans modèle
+(`agents/t1-absent`). Ce poste tourne en permanence dans le second mode,
+mais `agents/skills/organize/SKILL.md` ne déclarait qu'un seul contrat (celui
+du premier mode), et `overseer.contrat_de()` ne savait lire qu'un bloc JSON
+par agent — il ne pouvait donc jamais reconnaître une sortie du second mode
+comme valide, quel que soit son contenu.
+
+**Décision** : `contrat_de()` lit désormais tous les blocs ```json``` sous
+« ## Contrat de sortie » d'un SKILL.md (plusieurs blocs = plusieurs modes
+valides déclarés) ; `run()` retient, par run observé, la variante qui manque
+le moins et n'exige l'exactitude que sur celle-là. `organize/SKILL.md`
+documente maintenant les deux sorties. Comportement inchangé pour les 22
+autres agents (un seul bloc chacun — vérifié).
+
+**Corrigé sur la branche dédiée `fix/overseer-organize-contract-variants`**
+(commit `5fe03bd`), volontairement séparée de `fix/retry-transient-5xx-fetcher`
+(travail en cours d'une autre session sur cette dernière, non touché). Test
+de non-régression : `agents/tests/test_overseer_contract.py` — verrouille la
+rétrocompatibilité à un bloc, la lecture multi-blocs, l'honoration du mode
+ticket, la détection d'une sortie hors contrat, et rejoue le défaut mesuré
+sur le vrai SKILL.md + une sortie réellement observée (run #292).
+
+**Limite connue** : non re-testé en conditions réelles de cycle complet —
+seulement rejoué sur les données historiques du ledger. À confirmer que le
+finding `contrat_viole` sur `organize` disparaît effectivement au cycle de
+la nuit du 03 au 04/09. La branche du correctif n'est pas mergée ; décision
+d'intégration laissée à l'utilisateur.
+
+**Vérifié en cours de route, non touché** : `volume_anormal` sur
+extract-ddproperty/extract-nestopa apparaît sur 12/12 cycles récents
+(sévérité low), variation resserrée autour de la médiane à chaque fois —
+possible second cas du même défaut, mais c'est un **seuil de garde-fou** :
+mesure posée pour arbitrage, décision laissée à l'utilisateur (règle 5).
+
+## 2026-09-03 (suite) — chaînage des républications DDproperty (`repost_of`)
+
+Demande directe de l'utilisateur, en réaction au constat `volume_anormal`
+ci-dessus : mesurer les reposts sur DDproperty, dater les annonces malgré la
+republication, puis retailler les seuils une fois le phénomène connu. Détail
+complet dans [agents/audits/reparations-2026-09-03.md](../agents/audits/reparations-2026-09-03.md)
+(annexe repost) et commit `123bd91` sur la branche dédiée
+`feat/repost-resolution-ddproperty`.
+
+**Mesuré.** DDproperty capture un champ `isAutoRepost` (adaptateur, depuis le
+31/07) jamais exploité. Sur les 7 derniers jours, **20,1 %** des « nouvelles »
+annonces DDproperty comptées par `watch-health` sont en réalité des reposts
+déclarés par la source elle-même (3 367 / 16 737) — une partie de ce que
+`volume_anormal` signale n'est donc pas de la vraie offre neuve. Cadence de
+republication (écart entre l'occasion précédente et un repost confirmé,
+n=1 682 avec la méthode par bucket large) : médiane 7,9 j, très étalée
+(p25=2,2 j, p75=18,6 j). Exemple : `agent_id=13504900` a posté 21 annonces
+quasi-identiques pour un même 1BR/30m² à Chewathai Pinklao — 17 en rafale sur
+80 s le 04/07 (découverte du stock existant lors du recensement), puis une
+nouvelle toutes les ~2 semaines ensuite. Le gros du volume anormal restant
+vient du **recensement complet du catalogue DDproperty** en cours depuis le
+03/08 (ramp 762 → 8 030 annonces/jour), un phénomène déjà documenté,
+distinct des reposts.
+
+**Ecart de prix sur repost confirmé, mesuré avant tout seuillage** (1 066
+paires : même `agent_id`, même immeuble × khet × chambres × surface à
+0,01 m² près, l'une `isAutoRepost=1`) : médian **5,3 %**, p90 **19,2 %**, max
+56,9 %. Le seuil de 2 % que `prefiltre_sql()`/`decider()` appliquent déjà à
+l'heuristique séquentielle aurait manqué l'écrasante majorité de ces reposts
+pourtant confirmés par la source — la vérité terrain de DDproperty vaut mieux
+que notre propre heuristique de prix.
+
+**Décision.** `repost_of`/`repost_reason` existent dans le schéma depuis la
+migration `unit_key_photo_sig.sql` (index déjà posé) mais n'avaient jamais
+été alimentés — 0 ligne, toutes sources, avant aujourd'hui.
+`agents/bots/organize.py::resoudre_reposts()` les alimente, deux signaux par
+ordre de confiance : `isAutoRepost` + `agent_id` identique (sans plafond de
+prix) puis, à défaut, l'heuristique déjà en place — renforcée d'une garde
+absente jusqu'ici : deux `agent_id` connus et différents ne relient jamais
+(« agences concurrentes = deux mises en marché », déjà écrit dans le
+SKILL.md, jamais appliqué par le code). `agents.core.db.date_reelle()`
+remonte une chaîne jusqu'à sa racine (CTE récursive) pour dater une annonce à
+sa première apparition réelle, même republiée plusieurs fois depuis juillet.
+
+**Appliqué à la base de référence**, vérifié d'abord sur une copie :
+**2 195 liens** (1 066 `isAutoRepost` + 1 129 heuristique). `quick_check` ok
+avant/après, comptes inchangés (103 060 / 75 150). Idempotent (2e passage :
+0 nouveau lien) et incrémental (tourne à chaque cycle via `organize.run()`,
+~8-19 s). Profondeur de chaîne observée : 1 983 à profondeur 1, jusqu'à 6
+maillons pour les cas les plus republiés. Rollback trivial si besoin :
+`update listings set repost_of=null, repost_reason=null` (la colonne était
+vide partout avant ce mécanisme).
+
+**Non fait, signalé séparément pour ne pas mélanger deux changements** :
+`prefiltre_sql()`/`decider()` (le chemin qui alimente le ticket de
+comparaison à Claude et `revue.jsonl`) ne vérifient toujours pas la
+concordance d'`agent_id` avant de conclure `same_unit` par l'heuristique
+séquentielle — seul le nouveau `resoudre_reposts()` applique cette garde.
+Noté dans `agents/skills/organize/SKILL.md`, § Modes de panne connus.
+
+**Reste à trancher par l'utilisateur (le seuil de `volume_anormal`, cf.
+l'entrée précédente)** : avec ~1 vraie repost sur 5 dans les nouvelles
+DDproperty, deux leviers restent possibles — relever la bande, ou
+soustraire les reposts confirmés (`repost_reason='is_auto_repost'` du
+cycle) du compteur `nouvelles` avant comparaison à la bande. Ce dernier
+touche `watch_health.py`, pas seulement `agents.json` ; non fait ici.
+
+## 2026-09-04 — Résilience à une coupure internet longue : capacité perdue en silence lors du passage au système d'agents, restaurée dans le code plutôt que dans un script externe
+
+Demande directe de l'utilisateur (« il y a eu une longue coupure internet,
+est-ce qu'on est blindé contre ça ? »), en session `lowi-reparation-autonome`.
+Corrigé sur la branche dédiée `fix/outage-resilience-fetcher` (non fusionnée,
+décision d'intégration laissée à l'utilisateur).
+
+**Mesuré avant d'agir (règle 1)** — l'utilisateur a explicitement demandé de
+ralentir et de vérifier plutôt que de conclure depuis des indices indirects.
+`scan_runs` sur les 15 derniers jours ne montre AUCUN scan visiblement tronqué
+en vol par une coupure réseau : les trois jours creux (08-21, 08-24, 08-29)
+sont déjà expliqués ailleurs dans ce journal par des causes SANS rapport avec
+le réseau (Task Scheduler qui tuait l'orchestrateur au retour de veille
+moderne, échec du réveil RTC). Les seize processus `python.exe`/`pythonw.exe`
+observés au premier abord comme suspects (actifs depuis le 28/08, quasi 0 %
+CPU cumulé) ont été laissés SANS conclusion — hypothèse non vérifiée,
+signalée comme telle plus bas, corrigée après le rappel de l'utilisateur de
+ne pas trancher dessus sans mesure.
+
+**Ce qui a vraiment été trouvé** : `ops/superviseur.py` (2026-08-01) faisait
+exactement ce que l'utilisateur demande — sonde toutes les 30 s contre les
+sites eux-mêmes (pas un tiers), aucune relance tant que le réseau n'est pas
+revenu, état écrit de façon atomique. Il **n'existe plus** : retiré (avec sa
+tâche planifiée `install-superviseur.ps1`) lors du passage au système à 12
+agents (~2026-07-31), sans que rien ne le remplace — pas une décision
+consignée, une capacité perdue dans la réécriture. Conséquence vérifiée dans
+le code actuel : `scraper/pipeline/fetch.py` échouait vite (3 essais rapides)
+sur une coupure de connexion, et les 5 adaptateurs (`if not html: break`)
+arrêtaient alors la pagination d'une recherche sans aucun moyen pour
+`scraper/run.py` de distinguer ça d'une fin de liste normale — **exactement
+le bug du 2026-08-01** (« une coupure réseau ressemblait à un scan réussi »),
+réintroduit parce que son correctif vivait dans le script externe supprimé,
+pas dans le code du pipeline lui-même.
+
+**Corrigé, à trois niveaux :**
+1. `Fetcher._attend_coupure()` (fetch.py) : sur une exception de CONNEXION
+   (`ConnectionError`/`Timeout`, DNS compris — PAS un 4xx/5xx, qui prouve que
+   le site répond), sonde `url` elle-même toutes les 30 s jusqu'à 20 min avant
+   d'abandonner. Si le réseau revient dans la fenêtre, la requête reprend sans
+   rien signaler ; sinon `fetcher.a_subi_coupure=True`. Tunable par site via
+   `outage_poll_seconds`/`outage_max_wait_seconds` dans `config/<source>.json`
+   (config-driven, comme le reste du pipeline).
+2. `scraper/run.py` : si `a_subi_coupure`, le scan n'est PAS marqué `full`
+   (tag `coupure-reseau`), le délistage `--full` est explicitement sauté (en
+   plus, pas à la place, du garde-fou des 50 %), et un marqueur
+   `[COUPURE-RESEAU] <source> : …` est imprimé.
+3. `agents/orchestrator.py` : le marqueur est repris SANS ticket d'escalade
+   (règle 2 — une coupure se résout seule, ce n'est pas un défaut) mais avec un
+   finding `low`/`coupure_reseau` et un flag dans les métriques du run. Ce
+   flag est relu par `is_due()` : un run marqué "ok" mais coupé ne compte pas
+   comme le succès du jour pour la cadence — la source redevient due tout de
+   suite, reprise au prochain déclenchement (nuit suivante, ou
+   `LowiBKK-RattrapageBoot` au prochain logon) au lieu d'attendre 24 h.
+
+**Ce que ce n'est PAS** : ni une sonde de l'état Wi-Fi du système
+(`netsh`/adaptateur réseau), ni un poller autonome permanent comme l'ancien
+`ops/superviseur.py`. La sonde vise délibérément les sites eux-mêmes (même
+principe que l'ancien script — « ce qui compte n'est pas d'avoir une route,
+c'est que les sites répondent »), et la reprise dépend du prochain
+déclenchement de l'orchestrateur plutôt que d'un processus qui tournerait en
+continu en arrière-plan — ce poste n'en a plus depuis le passage au système
+d'agents, et en recréer un aurait réintroduit exactement la pièce qui a été
+perdue une fois déjà.
+
+**Vérifié** : `agents/tests/test_fetch_outage.py` (nouveau) — coupure suivie
+d'un retour réseau pendant l'attente (reprise silencieuse), coupure qui
+dépasse le plafond (None + flag), et non-régression explicite : une panne
+HTTP persistante (522 × 5, le cas déjà verrouillé par
+`test_fetch_retry.py`) ne doit PAS emprunter ce chemin. Les trois passent ;
+`test_fetch_retry.py` repasse sans modification.
+
+**Non fait, signalé** :
+- Les seize processus zombies observés au début de cette investigation
+  n'ont **pas** été expliqués — hypothèse initiale (boucle de retry infinie
+  dans un adaptateur) vérifiée FAUSSE (les 5 adaptateurs font tous
+  `if not html: break`, pas de boucle sans issue), mais aucune autre cause
+  n'a été établie par la mesure. Ne pas les tuer ni conclure sur eux sans
+  preuve — à reprendre avec `Get-CimInstance`/un outil capable de lire leur
+  ligne de commande malgré la session 0 (WMI a rendu `CommandLine` vide ici).
+- Aucun page-checkpoint (reprise à la page exacte où une recherche s'est
+  arrêtée) : jugé inutile après mesure — la dédup incrémentale déjà en place
+  (prix inchangé → fiche non re-visitée) rend un nouveau départ page 1
+  suffisamment bon marché pour ne pas justifier de plomberie supplémentaire
+  dans les 5 adaptateurs.
+- `get_bytes` (images) et `get_text` partagent le même mécanisme ; `head_size`
+  (empreinte photo) ne l'a PAS reçu — déjà non bloquant en cas d'échec
+  (`try/except` dans run.py autour de l'empreinte), risque jugé mineur.
+- Non vérifié en conditions réelles de coupure longue (uniquement testé par
+  serveur HTTP local, connexion refusée simulée) — à confirmer à la prochaine
+  vraie coupure.

@@ -162,6 +162,8 @@ def main() -> None:
         respect_robots=cfg.get("respect_robots", True),
         image_rate_limit_seconds=cfg.get("image_rate_limit_seconds", 0.4),
         backend=cfg.get("fetcher_backend", "requests"),
+        outage_poll_seconds=cfg.get("outage_poll_seconds", 30.0),
+        outage_max_wait_seconds=cfg.get("outage_max_wait_seconds", 20 * 60.0),
     )
     matcher = KhetMatcher()
     geocoder = None
@@ -345,8 +347,25 @@ def main() -> None:
 
     completed = True  # boucle allée au bout
 
+    # Coupure réseau non résolue en cours de scan (fetch.py a attendu 20 min
+    # avant d'abandonner une URL, cf. Fetcher._attend_coupure) : le scan s'est
+    # arrêté au milieu, indiscernable en apparence d'une fin de liste normale
+    # (le bug du 2026-08-01 — "une coupure réseau ressemblait à un scan
+    # réussi" — dont le correctif vivait dans ops/superviseur.py, un script
+    # externe retiré depuis sans remplacement). On le rend discernable ici :
+    # pas de délistage sur un scan qu'on SAIT partiel, et un marqueur repris
+    # par agents/orchestrator.py pour redéclarer la source due tout de suite
+    # plutôt que d'attendre la cadence normale (demain).
+    coupure = fetcher.a_subi_coupure
+    if coupure:
+        print(f"[COUPURE-RESEAU] {args.source} : scan interrompu après {n_total} "
+              f"annonces vues (réseau non revenu sous {int(fetcher.outage_max_wait_seconds)}s)")
+
     removed = 0
-    if completed and args.full:
+    if coupure and args.full:
+        print("  ⚠ délistage ANNULÉ : scan coupé par une coupure réseau non résolue "
+              "(pas un « site en panne / structure cassée », voir [COUPURE-RESEAU] ci-dessus).")
+    if completed and args.full and not coupure:
         # Garde-fou anti-accident : si le scan a trouvé anormalement peu d'annonces
         # (site en panne, pagination cassée, blocage…), on ANNULE le délistage pour
         # ne pas vider la base. Seuil : < 50 % des actives en base pour ce scope.
@@ -384,7 +403,8 @@ def main() -> None:
     print(chrono.rapport(), flush=True)
 
     store.record_scan_run(args.source, n_total, n_new, removed, n_changed,
-                          notes="full" if args.full else "partial")
+                          notes="coupure-reseau" if coupure
+                          else ("full" if args.full else "partial"))
     # Snapshot des stats par quartier (séries temporelles)
     try:
         store.record_khet_snapshots()

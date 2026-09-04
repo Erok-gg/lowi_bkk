@@ -54,6 +54,18 @@ from agents.core.ledger import Ledger                     # noqa: E402
 #: consécutifs à zéro — jusqu'à 8 j de scans pour rien sinon).
 SONDE_ECHEC_RE = re.compile(r"^\[SONDE-ECHEC\] (\S+) : (.+)$", re.M)
 
+#: Marqueur émis par scraper/pipeline/fetch.py + scraper/run.py quand une
+#: coupure réseau a duré plus longtemps que l'attente inline (20 min, voir
+#: Fetcher._attend_coupure) : le scan s'est arrêté au milieu, pas délisté
+#: (garde-fou dans run.py), mais forcément incomplet. Contrairement à
+#: SONDE_ECHEC_RE (qui bloque avant même de commencer), ceci arrive APRÈS un
+#: scan partiellement fait — le run reste "ok" (le script n'a pas planté),
+#: mais is_due() ne doit pas le compter comme la réussite du jour, sinon la
+#: source attend sa cadence normale (demain) au lieu d'être reprise au
+#: prochain déclenchement de l'orchestrateur (nuit suivante ou
+#: LowiBKK-RattrapageBoot au prochain logon).
+COUPURE_RESEAU_RE = re.compile(r"^\[COUPURE-RESEAU\] (\S+) : (.+)$", re.M)
+
 #: Signature d'une panne RÉSEAU dans la sortie d'un scan. Sert à ne pas
 #: confondre « le site a changé » et « on n'a pas pu joindre le site » —
 #: distinction que la sonde elle-même ne peut pas faire (elle ne voit qu'une
@@ -130,6 +142,19 @@ def is_due(led: Ledger, spec: dict) -> tuple[bool, str]:
     if ecart >= every:
         return True, (f"dernier succès il y a {ecart} j calendaire(s) "
                       f"(cadence {every} j — {h:.0f} h)")
+    # Le dernier run "ok" est peut-être un scan coupé en vol par une coupure
+    # réseau (COUPURE_RESEAU_RE, cf. plus haut) : le script n'a pas planté
+    # (status='ok'), mais il n'a pas vu tout ce qu'un cycle normal aurait vu.
+    # Sans ce contrôle, la source attendrait sa cadence normale (demain) au
+    # lieu d'être reprise au prochain déclenchement — exactement le manque
+    # relevé le 2026-09-04 : ops/superviseur.py (2026-08-01) le faisait par
+    # sondage externe toutes les 30 min, capacité perdue au passage au
+    # système d'agents (2026-07-31) et jamais remplacée jusqu'ici.
+    try:
+        if json.loads(row["metrics"] or "{}").get("coupure_reseau"):
+            return True, "dernier succès coupé par une coupure réseau — reprise immédiate"
+    except (json.JSONDecodeError, TypeError):
+        pass
     return False, f"à jour ({ecart} j / {every} j — dernier succès il y a {h:.0f} h)"
 
 
@@ -384,6 +409,20 @@ def run_agent(led: Ledger, name: str, lane: str | None = None,
                                f"{diag}\nTicket : {ticket}\nLog : {lg}")
                     print(f"  ⚠ sonde de structure en échec — ticket {ticket} déposé "
                          f"(pas d'attente des 2 runs de watch-health)")
+
+                coupure = COUPURE_RESEAU_RE.search(out)
+                if coupure:
+                    # Pas d'escalade (règle 2 — une coupure se résout seule),
+                    # mais PAS non plus une réussite ordinaire pour la cadence :
+                    # voir is_due() plus bas, qui relit ce flag depuis le ledger.
+                    source, diag = coupure.group(1), coupure.group(2)
+                    metrics["etapes"][-1]["coupure_reseau"] = diag
+                    metrics["coupure_reseau"] = True
+                    led.finding(name, "low", "coupure_reseau",
+                                f"{name} ({label}) : scan coupé par une coupure réseau — "
+                                f"{diag}", {"diagnostic": diag, "etape": label, "log": lg}, run_id)
+                    print(f"  ⚠ {name} ({label}) : coupure réseau en cours de scan, pas de "
+                          f"ticket (reprise dès le prochain déclenchement de l'orchestrateur)")
     except Exception as e:                                   # noqa: BLE001
         led.end_run(run_id, "failed", 1, {"exception": f"{type(e).__name__}: {e}"})
         led.finding(name, "high", "exception", f"{name} a levé {type(e).__name__}",
