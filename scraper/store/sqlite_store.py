@@ -92,6 +92,27 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _contenu_a_change(existing, col: str, valeur_liee) -> bool:
+    """Le contenu synchronisable a-t-il vraiment bougé pour cette colonne ?
+
+    Compare la valeur déjà stockée (`existing`, un `sqlite3.Row` — donc déjà
+    dans la représentation SQLite : JSON pour les listes, 0/1 pour les
+    booléens) à la valeur qui vient d'être liée par `_valeur()` — MÊME
+    représentation des deux côtés, pas de conversion à inventer ici.
+    Tolérance volontaire sur `None` vs valeur : deux façons différentes de
+    dire "pas de valeur" (`None`, `""`) ne comptent pas comme un changement,
+    sinon `dirty_since` se déclencherait sur du bruit de normalisation plutôt
+    que sur un changement réel — en cas de doute persistant, on considère
+    que ça a changé (mieux vaut une remontée inutile qu'une remontée manquée).
+    """
+    ancien = existing[col] if col in existing.keys() else None
+    if ancien == valeur_liee:
+        return False
+    if not ancien and not valeur_liee:
+        return False
+    return True
+
+
 def _median(valeurs) -> float | None:
     """Médiane, définie comme `percentile_cont(0.5)` de Postgres.
 
@@ -219,6 +240,30 @@ class SqliteStore(BaseStore):
                          *details.COLONNES):
             if col not in lcols:
                 self.db.execute(f"alter table listings add column {col} {typ}")
+        # `dirty_since` : marque locale des lignes dont le CONTENU synchronisable
+        # (COLONNES_LISTING) a changé depuis le dernier envoi réussi vers
+        # Supabase — ou dont le statut vient de basculer hors 'active'. Sert de
+        # file d'attente pour `ops/remonter-local.py --delta` (2026-09-07) :
+        # avant, chaque remontée réévaluait TOUTE la fenêtre active (81 889
+        # lignes, 33 lots) pour laisser Postgres décider ce qui avait changé —
+        # demandé par l'utilisateur en observant l'incident du jour (`remonter-
+        # supabase` bloqué par le pooler Supabase, "ECIRCUITBREAKER: too many
+        # authentication failures") : "only update what's new and remove what's
+        # not updated anymore". `dirty_since` déplace le calcul du delta côté
+        # local (déjà fait à l'écriture, gratuit) au lieu d'un aller-retour
+        # réseau par lot pour le découvrir.
+        if "dirty_since" not in lcols:
+            self.db.execute("alter table listings add column dirty_since text")
+            # Backfill : toute ligne active OU déjà délistée est marquée sale UNE
+            # FOIS pour établir la base de référence sur Supabase (l'ancien
+            # mécanisme n'a jamais suivi qui était déjà synchronisé) — la
+            # prochaine remontée en mode --delta fait donc un dernier passage
+            # complet, puis devient réellement incrémentale ensuite.
+            self.db.execute(
+                "update listings set dirty_since=? where status='active' or delisted_at is not null",
+                (_now(),),
+            )
+        self.db.execute("create index if not exists idx_listings_dirty on listings (dirty_since)")
         self.db.execute("create index if not exists idx_listings_unit on listings (unit_key)")
         self.db.execute("""create table if not exists cohort_snapshots (
             id integer primary key autoincrement, taken_at text not null,
@@ -276,11 +321,24 @@ class SqliteStore(BaseStore):
 
     def touch_listing(self, listing_id: str) -> None:
         # Revue = série d'absences interrompue : on remet le compteur à zéro.
-        self.db.execute(
-            "update listings set status='active', last_seen=?,"
-            " missed_count=0, first_missed_at=null,delisted_at=null where id=?",
-            (_now(), listing_id),
-        )
+        # `dirty_since` : ne bouge QUE si la ligne n'était pas déjà active —
+        # une résurrection change ce que Supabase doit savoir, un simple
+        # "revu, rien de neuf" ne doit pas gonfler le paquet du jour.
+        row = self.db.execute("select status from listings where id=?", (listing_id,)).fetchone()
+        etait_active = row is not None and row["status"] == "active"
+        now = _now()
+        if etait_active:
+            self.db.execute(
+                "update listings set status='active', last_seen=?,"
+                " missed_count=0, first_missed_at=null,delisted_at=null where id=?",
+                (now, listing_id),
+            )
+        else:
+            self.db.execute(
+                "update listings set status='active', last_seen=?,"
+                " missed_count=0, first_missed_at=null,delisted_at=null,dirty_since=? where id=?",
+                (now, now, listing_id),
+            )
         self.db.commit()
 
     def upsert_listing(self, norm: dict, images: list[dict] | None) -> tuple[str, float | None]:
@@ -295,10 +353,10 @@ class SqliteStore(BaseStore):
 
         if existing is None:
             self.db.execute(
-                f"insert into listings (id,{','.join(cols)},status,first_seen,last_seen,raw_data) "
-                f"values (?,{','.join('?' for _ in cols)},'active',?,?,?)",
+                f"insert into listings (id,{','.join(cols)},status,first_seen,last_seen,raw_data,dirty_since) "
+                f"values (?,{','.join('?' for _ in cols)},'active',?,?,?,?)",
                 (norm["id"], *[self._valeur(c, norm) for c in cols], now, now,
-                 json.dumps(norm.get("raw_data", {}), ensure_ascii=False)),
+                 json.dumps(norm.get("raw_data", {}), ensure_ascii=False), now),
             )
             if norm.get("price") is not None:
                 self._add_price(norm["id"], norm["price"], now)
@@ -316,12 +374,21 @@ class SqliteStore(BaseStore):
         # l'ancienne valeur, et un instantané ne dit rien d'une évolution.
         self._track_posted_at(existing, norm.get("posted_at"), now)
         self._suivre_statut_marche(existing, norm.get("market_status"), now)
+        valeurs_liees = [self._valeur(c, norm) for c in cols]
+        # Une résurrection (déjà inactive/sold, revue en scan) compte comme un
+        # changement de contenu même si toutes les colonnes sont identiques :
+        # Supabase doit apprendre que l'annonce est de nouveau active.
+        contenu_change = existing["status"] != "active" or any(
+            _contenu_a_change(existing, c, v)
+            for c, v in zip(COLONNES_LISTING, valeurs_liees[:len(COLONNES_LISTING)])
+        )
+        dirty_since = now if contenu_change else existing["dirty_since"]
         self.db.execute(
             f"update listings set {','.join(c+'=?' for c in cols)},"
             f"status='active',last_seen=?,raw_data=?,"
-            f"missed_count=0,first_missed_at=null,delisted_at=null where id=?",
-            (*[self._valeur(c, norm) for c in cols], now,
-             json.dumps(norm.get("raw_data", {}), ensure_ascii=False), norm["id"]),
+            f"missed_count=0,first_missed_at=null,delisted_at=null,dirty_since=? where id=?",
+            (*valeurs_liees, now,
+             json.dumps(norm.get("raw_data", {}), ensure_ascii=False), dirty_since, norm["id"]),
         )
         status = "unchanged"
         if new_price is not None and old_price is not None and float(new_price) != float(old_price):
@@ -422,11 +489,14 @@ class SqliteStore(BaseStore):
         Voir SupabaseStore.appliquer_ventes pour le raisonnement."""
         from datetime import timedelta
         limite = (datetime.now(timezone.utc) - timedelta(days=jours)).isoformat()
+        # `dirty_since` : la sortie du stock actif est un changement de statut
+        # que --delta doit propager (retrait côté Supabase), même si aucune
+        # colonne de contenu n'a bougé.
         cur = self.db.execute(
-            "update listings set status='sold', delisted_at=market_status_since "
+            "update listings set status='sold', delisted_at=market_status_since, dirty_since=? "
             "where market_status='sold' and status='active' "
             "  and market_status_since is not null and market_status_since <= ?",
-            (limite,))
+            (_now(), limite))
         self.db.commit()
         return cur.rowcount
 
@@ -493,8 +563,8 @@ class SqliteStore(BaseStore):
             # Daté de la PREMIÈRE absence, sinon la durée de vie serait
             # surestimée d'un cycle de scan complet.
             self.db.execute(
-                "update listings set status='inactive', delisted_at=? where id=?",
-                (r["first_missed_at"] or now, r["id"]),
+                "update listings set status='inactive', delisted_at=?, dirty_since=? where id=?",
+                (r["first_missed_at"] or now, now, r["id"]),
             )
             missing.append(r["id"])
         self.db.commit()

@@ -50,6 +50,7 @@ Usage :
     python ops/remonter-local.py <dossier> --dry-run              # compte, n'écrit rien
     python ops/remonter-local.py <dossier> --statut actives       # scénario A
     python ops/remonter-local.py <dossier> --statut actives --synchro-statuts
+    python ops/remonter-local.py <dossier> --delta                # (2026-09-07) nouveau/sorti uniquement
     python ops/remonter-local.py <dossier> --avec-images          # + upload Storage
     python ops/remonter-local.py <dossier> --lot 200              # taille de lot (défaut 500)
 """
@@ -71,7 +72,7 @@ for _l in open(os.path.join(ROOT, "scraper", ".env"), encoding="utf-8"):
         os.environ.setdefault(_k.strip(), _v.strip())
 
 
-def charger(db_path: str, statut: str = "tout") -> list[dict]:
+def charger(db_path: str, statut: str = "tout", delta: bool = False) -> list[dict]:
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
     # PAS de `select *` : depuis le degraissage du 2026-08-25, la base locale
@@ -83,7 +84,16 @@ def charger(db_path: str, statut: str = "tout") -> list[dict]:
     colonnes = ("id", *COLONNES_LISTING, "status", "first_seen", "last_seen", "raw_data")
     # `actives` = scénario A. Le filtre est au SELECT et non après coup : sur
     # 76 942 lignes, charger puis jeter 23 684 dicts coûte pour rien.
-    where = " where status='active'" if statut == "actives" else ""
+    conditions = []
+    if statut == "actives":
+        conditions.append("status='active'")
+    if delta:
+        # --delta (2026-09-07) : ne remonter que ce qui a réellement changé
+        # depuis le dernier envoi réussi (`dirty_since` posé par
+        # SqliteStore.upsert_listing/mark_missing_inactive/appliquer_ventes),
+        # au lieu de réévaluer toute la fenêtre active chaque jour.
+        conditions.append("dirty_since is not null")
+    where = (" where " + " and ".join(conditions)) if conditions else ""
     lignes = [dict(r) for r in db.execute(
         f"select {','.join(colonnes)} from listings{where}")]
     for l in lignes:
@@ -119,23 +129,53 @@ def images_de(db_path: str) -> dict[str, list[dict]]:
     return out
 
 
-def statuts_morts(db_path: str) -> list[tuple[str, str, str | None]]:
+def statuts_morts(db_path: str, delta: bool = False) -> list[tuple[str, str, str | None]]:
     """Les annonces que le LOCAL sait mortes : (id, status, delisted_at).
 
     `status` distingue 'inactive' (disparue de la source) de 'sold' (marqueur
     vendu observé sur la fiche) — la nuance est portée jusqu'au serveur, elle
     ne se recalcule pas.
+
+    `delta=True` (2026-09-07) : ne prendre que celles délistées DEPUIS le
+    dernier envoi réussi (`dirty_since is not null`), pas tout l'historique
+    des mortes — sinon le lot croît indéfiniment (30 491 candidates mesurées
+    le 2026-09-06 pour un stock qui n'en a délisté qu'une poignée ce jour-là).
     """
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    where = "status<>'active'" + (" and dirty_since is not null" if delta else "")
     return [
         (r[0], r[1], r[2])
-        for r in db.execute(
-            "select id, status, delisted_at from listings where status<>'active'"
-        )
+        for r in db.execute(f"select id, status, delisted_at from listings where {where}")
     ]
 
 
-def synchroniser_statuts(store, morts, dry_run: bool, batch_size: int = 5000) -> int:
+def marquer_synchronise(db_path: str, ids: list[str]) -> None:
+    """Efface `dirty_since` pour les lignes qu'on vient de pousser avec succès
+    — qu'elles aient ou non déclenché une écriture réelle côté Postgres (le
+    garde-fou `WHERE <rien n'a changé>` peut avoir fait un no-op, ça reste un
+    envoi réussi : local et distant sont désormais alignés).
+
+    Seul point d'écriture de ce script sur la base locale (tout le reste est
+    lu en `mode=ro`) — nécessaire pour que le delta ne repousse pas demain ce
+    qui vient d'être confirmé aujourd'hui. `busy_timeout` aligné sur
+    `ATTENTE_VERROU_S` de SqliteStore : ce script tourne APRÈS les extracteurs
+    dans la lane (jamais en parallèle d'une écriture), mais un verrou WAL
+    résiduel ne doit pas faire échouer la mise à jour pour rien.
+    """
+    if not ids:
+        return
+    db = sqlite3.connect(db_path, timeout=60)
+    db.execute("pragma busy_timeout=60000")
+    for i in range(0, len(ids), 500):
+        lot = ids[i:i + 500]
+        trous = ",".join("?" * len(lot))
+        db.execute(f"update listings set dirty_since=null where id in ({trous})", lot)
+    db.commit()
+    db.close()
+
+
+def synchroniser_statuts(store, morts, dry_run: bool, batch_size: int = 5000,
+                          apres_lot=None) -> int:
     """Recopie le statut local sur les lignes que le serveur croit ACTIVES.
 
     Volontairement un UPDATE ciblé et non un upsert : l'upsert forcerait
@@ -147,6 +187,11 @@ def synchroniser_statuts(store, morts, dry_run: bool, batch_size: int = 5000) ->
     logique de mise en lots que `upsert_listings_bulk`, mesurée le 2026-08-28
     (débit ligne à ligne réseau-bound, ~2 allers-retours Bangkok↔Singapour
     par annonce).
+
+    `apres_lot(ids)`, si fourni, est appelé avec la liste COMPLÈTE des ids du
+    lot une fois l'aller-retour réussi (`--delta` : efface `dirty_since` en
+    local) — même si `RETURNING` n'en renvoie aucun (déjà à jour côté serveur
+    est un succès de synchronisation, pas un échec).
     """
     if dry_run or not morts:
         return 0
@@ -165,6 +210,8 @@ def synchroniser_statuts(store, morts, dry_run: bool, batch_size: int = 5000) ->
             (ids, statuts, delistes),
         ).fetchall()
         touchees += len(r)
+        if apres_lot:
+            apres_lot(ids)
         print(f"  … statuts {min(i + batch_size, len(morts))}/{len(morts)} ({touchees} corrigés)")
     return touchees
 
@@ -185,18 +232,27 @@ def main() -> int:
     ap.add_argument("--synchro-statuts", action="store_true",
                     help="recopie les delistages deja tranches en local sur les "
                          "lignes que le serveur croit encore actives")
+    ap.add_argument("--delta", action="store_true",
+                    help="(2026-09-07) ne remonte QUE ce qui a change depuis le "
+                         "dernier envoi reussi (dirty_since), au lieu de "
+                         "reevaluer toute la fenetre active chaque jour. Implique "
+                         "--statut actives + --synchro-statuts (les deux sont le "
+                         "meme mecanisme : nouveau contenu / sortie du stock)")
     ap.add_argument("--lot", type=int, default=500,
                     help="taille de lot pour l'upsert par lots (defaut 500 ; "
                          "voir SupabaseStore.upsert_listings_bulk)")
     a = ap.parse_args()
+    if a.delta:
+        a.statut = "actives"
+        a.synchro_statuts = True
 
     db_path = os.path.join(a.dossier, "bangkok.db")
     if not os.path.exists(db_path):
         print(f"ERREUR - base introuvable : {db_path}")
         return 2
 
-    lignes = charger(db_path, a.statut)
-    morts = statuts_morts(db_path) if a.synchro_statuts else []
+    lignes = charger(db_path, a.statut, delta=a.delta)
+    morts = statuts_morts(db_path, delta=a.delta) if a.synchro_statuts else []
     if a.limite:
         lignes = lignes[:a.limite]
     imgs = images_de(db_path)
@@ -205,7 +261,7 @@ def main() -> int:
         par_source[l["source"]] = par_source.get(l["source"], 0) + 1
 
     print(f"Source     : {db_path}")
-    print(f"Périmètre  : --statut {a.statut}"
+    print(f"Périmètre  : --statut {a.statut}" + (" --delta" if a.delta else "")
           + ("  (scénario A — le serveur ne porte que le marché consultable)"
              if a.statut == "actives" else
              "  ⚠ upsert force status='active' : les délistées seraient RESSUSCITÉES"))
@@ -273,6 +329,11 @@ def main() -> int:
                         chemin = os.path.join(a.dossier, im["storage_path"])
                         if os.path.exists(chemin):
                             storage.upload(chemin, im["storage_path"])
+            if a.delta:
+                # Envoi reussi (meme si le garde-fou anti-reecriture de
+                # Postgres a fait un no-op pour certaines lignes identiques) :
+                # local et distant sont alignes, plus besoin de repousser demain.
+                marquer_synchronise(db_path, [l["id"] for l in lot])
         except Exception as e:  # noqa: BLE001
             erreurs += len(lot)
             if erreurs <= 5 * a.lot:
@@ -282,14 +343,28 @@ def main() -> int:
 
     print(f"\nOK - Terminé — {nouvelles} nouvelles, {maj} mises à jour, {erreurs} erreur(s)")
 
+    corriges = 0
     if a.synchro_statuts:
         print(f"\nRecopie des statuts ({len(morts)} candidates)…")
-        corriges = synchroniser_statuts(store, morts, a.dry_run)
+        apres_lot = (lambda ids: marquer_synchronise(db_path, ids)) if a.delta else None
+        corriges = synchroniser_statuts(store, morts, a.dry_run, apres_lot=apres_lot)
         print(f"OK - {corriges} annonces fantômes corrigées "
               f"(les autres étaient déjà à jour côté serveur)")
     else:
         print("  Aucun délistage propagé : les annonces mortes depuis le dernier")
         print("  envoi restent 'active' en ligne. Utiliser --synchro-statuts.")
+
+    # scan_runs ne recevait plus AUCUNE écriture depuis la bascule SQLite du
+    # 2026-08-25 (les vrais scraps n'écrivent plus sur Supabase) : la table
+    # restait figée au 22/08 même quand la remontée rafraîchissait `listings`
+    # le jour même — un outil qui lit scan_runs pour juger la fraîcheur du
+    # serveur (ops/verifie-synchro.py) se trompait. Ce n'est PAS un scan : le
+    # `source` distinct ('remonter-supabase') empêche de le confondre avec un
+    # vrai passage d'extracteur dans les stats par source.
+    store.record_scan_run("remonter-supabase", scanned=len(lignes), new=nouvelles,
+                          removed=corriges, changed=changees,
+                          notes="remontée PC2→Supabase, pas un scrape")
+
     return 1 if erreurs else 0
 
 
