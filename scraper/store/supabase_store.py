@@ -6,6 +6,7 @@ DSN lu depuis SUPABASE_DB_URL.
 """
 from __future__ import annotations
 
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -26,6 +27,41 @@ from store.base import COLONNES_LISTING, BaseStore
 #: de bon.
 OUTAGE_POLL_SECONDS = 30.0
 OUTAGE_MAX_WAIT_SECONDS = 20 * 60.0
+
+#: `connect_timeout` de libpq ne borne PAS la résolution DNS (limite documentée
+#: de libpq/psycopg, pas un bug de notre code) : un `getaddrinfo()` qui bloque
+#: ignore ce paramètre. Mesuré le 2026-09-07 : `remonter-supabase` restée
+#: bloquée >4h dans un SEUL appel `_reconnect()`, sans qu'aucune des lignes de
+#: log attendues toutes les 30s (`OUTAGE_POLL_SECONDS`) ne sorte — la boucle de
+#: `_execute()` ne peut compter le temps écoulé que si l'appel bloquant
+#: lui-même est borné de l'extérieur. `CONNECT_HARD_TIMEOUT` fait ce travail
+#: (thread-watchdog, pas signal.alarm — indisponible sur Windows).
+CONNECT_HARD_TIMEOUT = 25.0
+
+
+def _connect_borne(dsn: str) -> "psycopg.Connection":
+    resultat: dict = {}
+
+    def _cible() -> None:
+        try:
+            resultat["db"] = psycopg.connect(dsn, connect_timeout=20, autocommit=True)
+        except BaseException as exc:  # noqa: BLE001 — remonté tel quel plus bas
+            resultat["erreur"] = exc
+
+    fil = threading.Thread(target=_cible, daemon=True)
+    fil.start()
+    fil.join(CONNECT_HARD_TIMEOUT)
+    if fil.is_alive():
+        # Le thread reste orphelin (daemon) si connect() finit par revenir —
+        # on ne peut pas l'interrompre de force en Python, seulement cesser
+        # de l'attendre. Compte comme une coupure pour _execute().
+        raise psycopg.OperationalError(
+            f"connect() bloqué au-delà de {CONNECT_HARD_TIMEOUT:.0f}s "
+            "(hors du contrôle de connect_timeout — DNS ou TCP) — abandon"
+        )
+    if "erreur" in resultat:
+        raise resultat["erreur"]
+    return resultat["db"]
 
 #: Exemplaire unique dans store/base.py — la liste etait tenue a la main ici ET
 #: dans sqlite_store.upsert_listing (identiques a la mesure du 2026-08-25, mais
@@ -67,7 +103,7 @@ def _now() -> str:
 class SupabaseStore(BaseStore):
     def __init__(self, dsn: str):
         self.dsn = dsn
-        self.db = psycopg.connect(dsn, connect_timeout=20, autocommit=True)
+        self.db = _connect_borne(dsn)
         self._migrate()
 
     def _migrate(self) -> None:
@@ -84,7 +120,7 @@ class SupabaseStore(BaseStore):
             self.db.close()
         except Exception:
             pass
-        self.db = psycopg.connect(self.dsn, connect_timeout=20, autocommit=True)
+        self.db = _connect_borne(self.dsn)
 
     def _execute(self, sql: str, params=()):
         """execute avec reconnexion auto si la connexion Postgres a sauté

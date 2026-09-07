@@ -13,6 +13,15 @@ coupures identiques lot par lot (chaque lot a son propre try/except dans
 `scraper/pipeline/fetch.py` (voir test_fetch_outage.py) : sonder la
 reconnexion elle-meme, a intervalle, avant d'abandonner pour de bon.
 
+Cas 4 (2026-09-07) : `connect_timeout` de libpq ne borne PAS la resolution
+DNS. Mesure en conditions reelles : `remonter-supabase` restee bloquee >4h
+dans un SEUL appel `_reconnect()` sans qu'aucune ligne de log (attendue
+toutes les 30s) ne sorte — le decompte de `_execute()` ne peut avancer que
+si l'appel bloquant lui-meme est borne de l'exterieur. `_connect_borne()`
+(watchdog thread, pas signal.alarm — indisponible sur Windows) fait ce
+travail ; le cas 4 verifie qu'un `connect()` qui ne revient jamais est
+neanmoins abandonne au bout de `CONNECT_HARD_TIMEOUT`.
+
 Ce test ne touche a AUCUN reseau ni base reelle — `psycopg.connect` est
 remplace par un faux objet controle par le test.
 
@@ -112,5 +121,30 @@ try:
     raise SystemExit("attendu une exception apres le plafond d'attente, rien n'a ete leve")
 except psycopg.OperationalError:
     print("coupure persistante au-dela du plafond : exception propagee (pas de boucle infinie), OK")
+
+# --------------------------------- 4. connect() qui ne revient JAMAIS -> abandonne au hard-timeout, pas un hang
+import time as _time                                       # noqa: E402
+
+ss.CONNECT_HARD_TIMEOUT = 0.2  # plafond tres bas, le code de prod utilise 25s
+
+
+def _connect_qui_bloque_indefiniment(dsn, **kw):
+    _time.sleep(30)  # bien plus long que le hard-timeout : ne doit JAMAIS etre attendu
+    return _FausseConnexion({"echecs_restants": 0})
+
+
+psycopg.connect = _connect_qui_bloque_indefiniment
+_debut = _time.monotonic()
+try:
+    ss._connect_borne("postgresql://test/fake")
+    raise SystemExit("attendu OperationalError sur connect() qui ne revient jamais")
+except psycopg.OperationalError:
+    _duree = _time.monotonic() - _debut
+    assert _duree < 5.0, (
+        f"_connect_borne a attendu {_duree:.1f}s — le hard-timeout ({ss.CONNECT_HARD_TIMEOUT}s) "
+        "n'a pas borne l'appel bloquant, exactement le defaut du 2026-09-07"
+    )
+    print(f"connect() bloque indefiniment : abandonne en {_duree:.2f}s "
+          f"(hard-timeout {ss.CONNECT_HARD_TIMEOUT}s), pas de hang, OK")
 
 print("test_supabase_reconnect : OK")
