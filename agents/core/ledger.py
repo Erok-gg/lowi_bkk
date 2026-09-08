@@ -103,18 +103,34 @@ class Ledger:
 
     @staticmethod
     def _processus_vivant(pid) -> bool:
-        """Le processus existe-t-il encore ? Windows : OpenProcess via ctypes."""
+        """Le processus existe-t-il encore ? Windows : OpenProcess via ctypes.
+
+        Mesuré le 2026-09-08 : `OpenProcess` échoue avec `ERROR_ACCESS_DENIED`
+        (code 5) quand l'appelant est dans une session Windows différente de
+        celle du processus visé — exactement le cas d'une session Claude Code
+        interactive qui interroge le ledger PENDANT qu'un cycle nocturne tourne
+        (tâche planifiée, session « Services »). Reproduit en direct : un
+        `OpenProcess(SYNCHRONIZE, ...)` sur le PID bien vivant de
+        l'orchestrateur a rendu un handle nul avec `GetLastError()==5`, ce qui
+        a fait classer `remonter-supabase` (alors 4 h dans une synchronisation
+        légitime) comme `interrompu` alors qu'il tournait toujours — un simple
+        `python -m agents.orchestrator status` depuis une autre session suffit
+        à le déclencher. Un handle nul ne veut donc PAS dire absent : seul
+        `ERROR_ACCESS_DENIED` distingue « existe mais inaccessible » de
+        « n'existe plus », et le code traitait les deux cas pareil."""
         if not pid:
             return True          # PID inconnu (run d'avant la migration) → on ne tranche pas
         try:
             import ctypes
+            ERROR_ACCESS_DENIED = 5
             SYNCHRONIZE = 0x00100000
-            h = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            h = kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
             if not h:
-                return False
+                return ctypes.get_last_error() == ERROR_ACCESS_DENIED
             # 0 = toujours actif ; 0x80 (WAIT_ABANDONED)/0 signalé = terminé
-            etat = ctypes.windll.kernel32.WaitForSingleObject(h, 0)
-            ctypes.windll.kernel32.CloseHandle(h)
+            etat = kernel32.WaitForSingleObject(h, 0)
+            kernel32.CloseHandle(h)
             return etat != 0
         except Exception:                                # noqa: BLE001
             return True          # dans le doute, on ne referme pas un run vivant
