@@ -1786,6 +1786,23 @@ en code 1. Mesures :
 Seules les deux étapes qui écrivent **à la même seconde** sont touchées ; les
 `then_*`, décalés, ont zéro erreur. Signature d'une contention d'écriture.
 
+**Ce n'est PAS la récidive de la collision de migration du 07/09** (entrée
+précédente), et il ne faut pas confondre les deux — ce sont deux phénomènes
+distincts qui portent le même message d'erreur :
+
+| | 07/09 | 08/09 |
+|---|---|---|
+| occurrences | **4** (une par extracteur perdant la course) | **6 747** |
+| où | `create index if not exists idx_listings_dirty`, dans `_migrate()`, **au démarrage** | `[erreur] <source>:<id>` — dans la **boucle d'upsert**, tout au long du scan |
+| nature | événement **ponctuel** (backfill `dirty_since`) | contention **récurrente** entre écrivains |
+
+La prédiction de l'entrée du 08/09 — « cette collision précise ne devrait pas
+récidiver, le backfill est un événement ponctuel » — **tient** : `dirty_since`
+existe partout (116 223/116 223 lignes marquées, vérifié) et l'index est en
+place. Le flot du 08/09 a une autre cause. La conclusion pratique est
+inchangée : le patron « migration lourde dans le constructeur » reste non
+corrigé, et reste à surveiller à la prochaine migration lourde.
+
 **Deux hypothèses testées et écartées — écrites ici parce qu'elles sont
 plausibles et qu'il ne faut pas les re-creuser :**
 
