@@ -1978,3 +1978,90 @@ entière soit perdue le temps qu'elle soit traitée. Se défait en remettant 60.
   `VACUUM`. Toujours à l'arbitrage.
 - **La cause précise du basculement 4 → 6 747 verrous n'est toujours pas
   reproduite** ; l'effet de seuil reste une explication cohérente, pas une preuve.
+
+---
+
+## 2026-09-09 (suite 2) — `remonter-supabase` : trois pannes distinctes, dont deux qui ne sont pas du réseau
+
+Diagnostic demandé par l'utilisateur, dans ces termes : « j'ai des coupures
+réseau fréquentes ces derniers temps mais je ne pense pas que ce soit aussi
+fréquent ». **Il avait raison.** Sur les 10 derniers runs (6 succès / 4 échecs),
+les 4 échecs recouvraient **trois pannes différentes**, et une seule était une
+coupure réseau. Mesuré pendant le diagnostic : **Supabase répond en 0,5 s** — le
+réseau n'est pas chroniquement mauvais.
+
+### 1. L'ouverture initiale n'avait aucune reprise (échec du 09/09)
+
+`_execute()` encaissait jusqu'à **20 min** de coupure en cours de run, mais
+`SupabaseStore.__init__` appelait `_connect_borne()` **nu** : un seul essai,
+borné à 25 s, sans la moindre reprise. L'asymétrie est indéfendable — la
+remontée survivait à une panne de vingt minutes au milieu du travail et mourait
+sur un hoquet de vingt-cinq secondes au démarrage.
+
+Run mort en **79 s** (01:12:03 → 01:13:22). Le site public est resté sur des
+données périmées une journée entière **pour cette seule raison**.
+→ `_connect_resilient()`, même tolérance que `_execute()`.
+
+### 2. On entretenait nous-mêmes le blocage (échec du 06/09)
+
+Le pooler avait répondu `ECIRCUITBREAKER: failed to retrieve database
+credentials after multiple attempts, new connections are temporarily blocked`.
+La boucle l'a rappelé à cadence **fixe de 30 s, 37 fois**, jusqu'à épuiser les
+20 min de budget — puis le process a été tué (exit −1).
+
+Ce n'est pas une coupure : le réseau va bien, c'est le **serveur qui ferme la
+porte**. Les deux situations demandent l'inverse l'une de l'autre — une coupure
+se re-sonde souvent (elle peut cesser à tout instant), une protection qui vient
+de se fermer se laisse respirer. Réessayer vite la maintient fermée.
+→ recul exponentiel (30/60/120/240/300 s, plafonné) + jitter, et palier plancher
+plus long quand le message porte `ECIRCUITBREAKER`.
+**Mesure : 7 tentatives au lieu de 40 sur le même budget de 20 min.**
+
+### 3. Vraie coupure DNS (échec du 03/09)
+
+`getaddrinfo failed`. Celle-là, et celle-là seulement, était du réseau. Déjà
+couverte par la boucle de reprise depuis le commit `6aed3a3`.
+
+### Défaut créé puis corrigé dans la même séance
+
+`plafond: float = OUTAGE_MAX_WAIT_SECONDS` en valeur par défaut : une valeur par
+défaut est figée à la **définition** de la fonction, donc insensible à toute
+reconfiguration du module. Trouvé en écrivant le test — qui, avec le budget de
+20 min figé, ne rendait jamais la main. Passé en `None` résolu à l'appel.
+
+### Deux tests qui NE POUVAIENT PAS passer
+
+Révélés au passage, et c'est le même mode de défaillance que tout le reste de la
+journée : une surveillance inerte qui ressemble à une surveillance.
+`test_supabase_reconnect.py` et `test_fetch_outage.py` exercent des chemins qui
+journalisent avec « ⚠ » ; la console de ce poste est en **cp1252**, ils mouraient
+donc en `UnicodeEncodeError` **avant la première assertion**. Vérifié en les
+rejouant sur la version d'avant les correctifs du jour : l'échec préexistait.
+La **production n'était pas concernée** — `agents/core/shell.py` force l'UTF-8
+pour les sous-processus, et les « ⚠ » sont bien présents dans les logs. C'est le
+lancement DIRECT qui manquait du réglage que `ops/pouls.py` fait déjà pour
+lui-même. Corrigé sur les deux, plus `test_local_llm.py`.
+
+> `test_local_llm.py` reste en échec sur PC2, pour une raison **attendue et
+> documentée** : il exige Ollama, absent de ce poste (marqueur `agents/t1-absent`).
+> Ses seuils ne doivent pas être relâchés pour le faire passer.
+
+### Publication faite dans la foulée
+
+Le cycle étant terminé (overseer 02:05:38) et la base libre, `remonter-supabase`
+a été relancé à la main — ce n'est pas un scrap, c'est l'étape de publication, et
+le site servait un marché vieux d'un jour et demi.
+
+**2 min 56 s** (02:15:51 → 02:18:47), **0 erreur** : 2 323 nouvelles, 370 mises à
+jour, 85 prix changés, **753 annonces fantômes corrigées**. Serveur et local sont
+désormais alignés **à l'annonce près** sur le périmètre servi :
+
+| | serveur | local | écart |
+|---|---|---|---|
+| actives | 85 327 | 85 327 | **0** |
+| ddproperty / fazwaz / nestopa / propertyscout / livinginsider | 69 149 / 10 997 / 3 287 / 1 385 / 509 | idem | **0** |
+| total | 115 045 | 116 223 | −1 178 |
+
+L'écart de 1 178 sur le total est **voulu** : le serveur ne porte que le marché
+consultable, l'historique des délistées reste local où il alimente les
+statistiques d'évolution (scénario A, arbitrage du 2026-08-26).
