@@ -30,6 +30,24 @@ Rejeu :  scraper/.venv/Scripts/python.exe agents/tests/test_supabase_reconnect.p
 import os
 import sys
 
+# CE TEST NE POUVAIT PAS PASSER, et personne ne le savait (constaté le
+# 2026-09-09, vérifié en le rejouant sur la version d'avant les correctifs du
+# jour) : `supabase_store._execute()` journalise ses reprises avec « ⚠ », le
+# test le déclenche exprès, et la console de ce poste est en cp1252 — il
+# mourait donc en UnicodeEncodeError AVANT d'atteindre la moindre assertion.
+# Un test qui plante toujours n'est pas un test, c'est une alerte qu'on apprend
+# à ignorer (règle 2).
+# La PRODUCTION, elle, n'est pas concernée : les agents sont lancés en
+# sous-processus par agents/core/shell.py, qui force l'UTF-8 — les « ⚠ » sont
+# bien présents dans agents/logs/remonter-supabase-*.log. C'est le lancement
+# DIRECT qui manquait de ce réglage, exactement comme ops/pouls.py et
+# ops/fraicheur.py le font pour eux-mêmes.
+for _flux in (sys.stdout, sys.stderr):
+    try:
+        _flux.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))), "scraper"))
 

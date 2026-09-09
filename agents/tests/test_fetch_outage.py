@@ -26,6 +26,21 @@ import http.server
 import os
 import socket
 import sys
+
+# CE TEST NE POUVAIT PAS PASSER dans une console cp1252 (l'ACP de ce poste) :
+# le code qu'il exerce journalise avec « ⚠ », et le test declenche exprès ce
+# chemin — il mourait donc en UnicodeEncodeError AVANT d'atteindre la moindre
+# assertion. Constate le 2026-09-09 en cherchant tout a fait autre chose. Un
+# test qui plante toujours n'est pas un test (regle 2).
+# La PRODUCTION n'est pas concernee : agents/core/shell.py force l'UTF-8 pour
+# les sous-processus. C'est le lancement DIRECT qui manquait du reglage, comme
+# ops/pouls.py le fait deja pour lui-meme.
+for _flux in (sys.stdout, sys.stderr):
+    try:
+        _flux.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
+
 import threading
 import time
 

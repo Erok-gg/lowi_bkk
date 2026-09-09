@@ -6,6 +6,7 @@ DSN lu depuis SUPABASE_DB_URL.
 """
 from __future__ import annotations
 
+import random
 import threading
 import time
 from datetime import datetime, timezone
@@ -27,6 +28,28 @@ from store.base import COLONNES_LISTING, BaseStore
 #: de bon.
 OUTAGE_POLL_SECONDS = 30.0
 OUTAGE_MAX_WAIT_SECONDS = 20 * 60.0
+
+#: PLAFOND DU RECUL. La cadence CONSTANTE de 30 s s'est retournée contre nous le
+#: 2026-09-06 : le pooler avait répondu « new connections are temporarily
+#: blocked » et on l'a rappelé 37 fois de suite, toutes les 30 s, jusqu'à la fin
+#: du budget de 20 min. Réessayer vite contre une protection qui vient de se
+#: fermer, c'est la maintenir fermée. Le recul double à chaque échec (30, 60,
+#: 120, 240, 300…) au lieu de rester plat.
+OUTAGE_POLL_MAX = 300.0
+
+#: Le pooler Supabase répond ECIRCUITBREAKER quand il BLOQUE volontairement les
+#: nouvelles connexions — après « multiple attempts » de récupération des
+#: identifiants. Ce n'est PAS une coupure réseau : le réseau va bien, c'est le
+#: serveur qui nous ferme la porte. Les deux demandent l'inverse l'un de
+#: l'autre : une coupure se re-sonde souvent (elle peut cesser à tout moment),
+#: une protection ouverte se laisse respirer. D'où un palier plancher distinct.
+CIRCUIT_OUVERT_MARQUEURS = ("ECIRCUITBREAKER", "temporarily blocked")
+CIRCUIT_OUVERT_PALIER = 120.0
+
+#: Jitter : 5 chemins d'écriture peuvent perdre la connexion à la même seconde
+#: (même coupure). Sans désynchronisation, ils reviendraient tous frapper le
+#: pooler ensemble — c'est précisément ce qui ouvre le disjoncteur.
+JITTER = 0.25
 
 #: `connect_timeout` de libpq ne borne PAS la résolution DNS (limite documentée
 #: de libpq/psycopg, pas un bug de notre code) : un `getaddrinfo()` qui bloque
@@ -62,6 +85,66 @@ def _connect_borne(dsn: str) -> "psycopg.Connection":
     if "erreur" in resultat:
         raise resultat["erreur"]
     return resultat["db"]
+
+
+def _circuit_ouvert(exc: BaseException) -> bool:
+    """Le pooler nous ferme-t-il la porte, plutôt que le réseau d'être coupé ?"""
+    message = str(exc)
+    return any(marqueur in message for marqueur in CIRCUIT_OUVERT_MARQUEURS)
+
+
+def _recul(exc: BaseException, palier: float) -> tuple[float, float, str]:
+    """Combien attendre avant le prochain essai, et quel palier ensuite.
+
+    Exemplaire unique : les DEUX chemins de reconnexion (ouverture initiale et
+    reprise en cours de run) doivent reculer de la même façon — c'est justement
+    parce qu'ils divergeaient que l'un mourait en 25 s quand l'autre tenait
+    20 min (cf. `_connect_resilient`)."""
+    if _circuit_ouvert(exc):
+        pause = max(palier, CIRCUIT_OUVERT_PALIER)
+        motif = ("pooler Supabase en protection (ECIRCUITBREAKER) — il bloque "
+                 "volontairement les nouvelles connexions, on le laisse respirer")
+    else:
+        pause = palier
+        motif = "connexion Postgres perdue (coupure ?)"
+    pause = min(pause, OUTAGE_POLL_MAX)
+    pause += random.uniform(0.0, pause * JITTER)
+    return pause, min(palier * 2, OUTAGE_POLL_MAX), motif
+
+
+def _connect_resilient(dsn: str, plafond: float | None = None
+                       ) -> "psycopg.Connection":
+    """Ouvre la connexion en absorbant une coupure qui DURE.
+
+    POURQUOI CETTE FONCTION EXISTE — asymétrie mesurée le 2026-09-09.
+    `_execute()` encaissait jusqu'à 20 min de coupure en cours de run, mais
+    `SupabaseStore.__init__` appelait `_connect_borne()` NU : un seul essai,
+    borné à 25 s, sans la moindre reprise. Le résultat est indéfendable — la
+    remontée survivait à une panne de vingt minutes au milieu du travail et
+    mourait sur un hoquet de vingt-cinq secondes au démarrage.
+
+    C'est ce qui a tué le run du 2026-09-09 (01:12:03 → 01:13:22, 79 s) :
+    « connect() bloqué au-delà de 25s — abandon », et le site public est resté
+    sur des données périmées une journée de plus pour cette seule raison.
+    """
+    # `plafond=None` et non `plafond=OUTAGE_MAX_WAIT_SECONDS` en défaut : une
+    # valeur par défaut est figée à la DÉFINITION de la fonction, donc elle
+    # ignorerait toute reconfiguration du module. Trouvé en écrivant le test —
+    # qui, avec le budget de 20 min figé, ne rendait jamais la main.
+    plafond = OUTAGE_MAX_WAIT_SECONDS if plafond is None else plafond
+    attente = 0.0
+    palier = OUTAGE_POLL_SECONDS
+    while True:
+        try:
+            return _connect_borne(dsn)
+        except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
+            if attente >= plafond:
+                raise
+            pause, palier, motif = _recul(exc, palier)
+            print(f"  ⚠ {motif} — nouvel essai dans {pause:.0f}s "
+                  f"(attente cumulée {attente:.0f}s/{plafond:.0f}s)", flush=True)
+            time.sleep(pause)
+            attente += pause
 
 #: Exemplaire unique dans store/base.py — la liste etait tenue a la main ici ET
 #: dans sqlite_store.upsert_listing (identiques a la mesure du 2026-08-25, mais
@@ -103,7 +186,11 @@ def _now() -> str:
 class SupabaseStore(BaseStore):
     def __init__(self, dsn: str):
         self.dsn = dsn
-        self.db = _connect_borne(dsn)
+        # `_connect_resilient` et non `_connect_borne` : voir son docstring —
+        # l'ouverture initiale n'avait AUCUNE reprise là où le reste du run en
+        # avait vingt minutes, et c'est ce hoquet de 25 s qui a coûté la
+        # remontée du 2026-09-09.
+        self.db = _connect_resilient(dsn)
         self._migrate()
 
     def _migrate(self) -> None:
@@ -135,18 +222,24 @@ class SupabaseStore(BaseStore):
             return self.db.execute(sql, params)
         except (psycopg.OperationalError, psycopg.InterfaceError):
             attente = 0.0
+            palier = OUTAGE_POLL_SECONDS
             while True:
                 try:
                     self._reconnect()
                     return self.db.execute(sql, params)
-                except (psycopg.OperationalError, psycopg.InterfaceError):
+                except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
                     if attente >= OUTAGE_MAX_WAIT_SECONDS:
                         raise
-                    print(f"  ⚠ connexion Postgres perdue (coupure ?) — nouvel essai dans "
-                          f"{OUTAGE_POLL_SECONDS:.0f}s (attente cumulée {attente:.0f}s"
+                    # Recul PROGRESSIF, et plus long encore si c'est le pooler
+                    # qui nous ferme la porte : le 2026-09-06, 37 essais à
+                    # cadence fixe de 30 s ont entretenu un ECIRCUITBREAKER
+                    # jusqu'à épuisement du budget (cf. `_recul`).
+                    pause, palier, motif = _recul(exc, palier)
+                    print(f"  ⚠ {motif} — nouvel essai dans {pause:.0f}s "
+                          f"(attente cumulée {attente:.0f}s"
                           f"/{OUTAGE_MAX_WAIT_SECONDS:.0f}s)", flush=True)
-                    time.sleep(OUTAGE_POLL_SECONDS)
-                    attente += OUTAGE_POLL_SECONDS
+                    time.sleep(pause)
+                    attente += pause
 
     def get_listing(self, listing_id: str) -> dict | None:
         row = self._execute(
