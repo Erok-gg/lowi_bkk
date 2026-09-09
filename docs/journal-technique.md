@@ -1873,3 +1873,108 @@ suspecte : `decider()` ne conclut `same_unit` que si `b_apres_a` **et**
 Sauvegarde clé USB **saine** : réussie à chaque cycle, chaque copie vérifiée 3×
 ligne à ligne (règle 8). Dernière close le 08/09 — 2 179,6 Mo, 113 912 annonces /
 83 454 actives, 3 essais concordants. D: a 37,3 Go libres.
+
+---
+
+## 2026-09-09 (suite) — Le recensement ne rafraîchissait plus rien, et rien ne le disait
+
+Trouvé en répondant à une question simple de l'utilisateur — « la base est-elle
+à jour ? ». Elle ne l'était pas, et le mécanisme censé l'y maintenir était hors
+service depuis des semaines, **en silence**.
+
+### Le défaut
+
+`_confronter()` (`scraper/recense.py`) faisait deux choses : rafraîchir
+`last_seen` des annonces vues au catalogue, **et** rendre le verdict « absente du
+catalogue ». Elle n'était appelée qu'après une série de `continue` qui
+l'écartaient dès le moindre trou dans le parcours. Or chaque recensement
+DDproperty manque **1 à 6 pages sur ~2 600** (0,04 à 0,23 %) : la fonction était
+donc écartée à **tous** les runs.
+
+Les deux opérations n'ont pourtant pas les mêmes conditions de validité. **Voir
+une annonce au catalogue prouve qu'elle est vivante, trou ou pas.** Un trou
+empêche de conclure sur ce qu'on n'a *pas* vu ; il ne dit rien de ce qu'on a vu.
+
+Coût mesuré, part des actives confirmées depuis moins de 48 h :
+
+| source | actives | < 48 h | plus ancienne |
+|---|---|---|---|
+| ddproperty | 69 149 | **9,6 %** | **2026-07-23** |
+| fazwaz | 10 997 | 60,1 % | 2026-09-05 |
+| nestopa | 3 287 | 19,4 % | 2026-07-23 |
+| propertyscout | 1 385 | 89,2 % | 2026-09-06 |
+| livinginsider | 509 | 100,0 % | 2026-09-08 |
+
+**8,9 %** des 85 327 actives n'avaient pas été revues depuis plus de 30 jours, et
+`missed_count` ne dépassait **jamais 1** : le délai de grâce ne tournait même
+pas. Le stock « actif » enflait sans que rien ne le confirme — et les
+statistiques portaient dessus.
+
+### Le correctif
+
+Scindé en `_rafraichir()` — **toujours**, dès que des annonces ont été vues — et
+`_comparer()`, réservé au parcours complet. Cette seconde prudence est juste et
+ne change pas : sur un parcours troué, « absente du catalogue » ne distingue pas
+« retirée » de « pas regardée » (12 348 annonces déclarées absentes à tort le
+2026-08-25). `rafraichies` remonte à la racine du bilan — c'est le chiffre qui
+dit si le recensement a servi à quelque chose.
+
+### Pourquoi c'est resté muet, et ce qui le rend audible
+
+`recense.py` rend **code 0** même quand il s'abstient — à raison, une abstention
+n'est pas une panne (correctif du 2026-08-25). Mais l'abstention se lisait dans
+`flux_non_conclusifs`, que **personne ne regardait**. Ni `watch-health` (il juge
+les bandes de métriques d'un extracteur, pas l'état de la base qui en résulte),
+ni l'overseer.
+
+D'où **`ops/fraicheur.py`**, agent `fraicheur` branché en lane `daily` après les
+extracteurs. Il tient les deux bouts de la règle 2 :
+
+- **il parle** si un recensement a lu des pages et rafraîchi **zéro** annonce —
+  ce n'est pas un seuil, c'est un binaire : l'outil a tourné et n'a rien fait ;
+- **il parle** si la fraîcheur d'une source tombe sous la **moitié de sa propre
+  médiane** — auto-calibré, parce que les sources n'ont pas la même cadence :
+  nestopa est gelée à une page par conception et plafonnera toujours bas, un
+  seuil commun crierait au loup sur elle chaque nuit ;
+- **il se tait** tant qu'il n'a pas 4 relevés, plutôt que de juger sur du vide —
+  et il se tait aussi, délibérément, sur tout seuil absolu de fraîcheur : en
+  fixer un aujourd'hui graverait l'état actuel, qui est cassé, comme référence.
+
+Tests : `test_recense_rafraichit.py` (dont un cas vérifie **l'ordre dans le
+fichier** — rafraîchir avant les abstentions — pour que le défaut redevienne
+structurellement impossible) et `test_fraicheur.py` (les deux sens : parle sur
+panne et sur effondrement, se tait sur fluctuation normale et sur historique
+insuffisant).
+
+### Arbitrage de l'utilisateur — données anciennes
+
+Question laissée ouverte le matin même (levier « purger / délister les anciennes
+annonces »). **Tranché : on conserve tout**, dans le format le plus simple et le
+plus efficient en stockage, **l'accès à la donnée primant sur le reste.** Le
+levier de purge est donc clos et ne doit plus être reproposé. Cela rejoint ce que
+la mesure disait déjà : le time-on-market, l'absorption et la tension se
+calculent sur les disparues.
+
+### Verrous — un levier appliqué
+
+`ATTENTE_VERROU_S` **60 → 300 s** (`scraper/store/sqlite_store.py`). La prémisse
+du commentaire d'origine (« une transaction dure quelques millisecondes ») a
+cessé d'être vraie : une écriture coûte **0,99 s** sur une base de 2,24 Go avec 5
+écrivains parallèles. 300 s **ne corrige pas** la latence — il évite qu'une passe
+entière soit perdue le temps qu'elle soit traitée. Se défait en remettant 60.
+
+### Non fait / non vérifié
+
+- **Le correctif du recensement n'est pas encore vérifié en production.**
+  `backup-apres-cycle` copiait les 2,24 Go vers la clé pendant la séance : écrire
+  dans la base à ce moment aurait violé la règle 8. La vérification se fera au
+  cycle de 01:00 — et elle sera **visible** cette fois : `rafraichies` apparaît
+  désormais à la racine du bilan, et `fraicheur` alerte si le chiffre est nul.
+- **`fraicheur` n'a aucun historique** : sa détection de dérive reste muette les
+  4 premiers cycles, par conception. Seule la détection de panne franche est
+  active immédiatement.
+- **La latence d'écriture elle-même n'est pas traitée** (0,99 s/écriture) — les
+  leviers restants sont le décalage des deux gros extracteurs (posture) et le
+  `VACUUM`. Toujours à l'arbitrage.
+- **La cause précise du basculement 4 → 6 747 verrous n'est toujours pas
+  reproduite** ; l'effet de seuil reste une explication cohérente, pas une preuve.
