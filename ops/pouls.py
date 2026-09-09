@@ -211,6 +211,41 @@ def verifier(seuil_h: int) -> int:
     return 0
 
 
+def _demarrage_processus(pid: int) -> datetime | None:
+    """Date de création du processus `pid`, ou None si indéterminable.
+
+    Windows RECYCLE les PID, et le ledger en garde la trace pour toujours :
+    mesuré le 2026-09-09, le PID 26632 portait à la fois `garde-veille` du
+    2026-08-31T18:00:21 et le cycle du 2026-09-08T18:12:13. Un `min(started_at)`
+    par PID remontait donc huit jours en arrière et annonçait « cycle en cours
+    depuis 199 h » alors que le cycle avait 14 h et tournait normalement — deux
+    tickets de sévérité haute ouverts pour rien (règle 2).
+
+    La date de création tranche : une ligne antérieure au démarrage du processus
+    appartient forcément à un homonyme, pas à ce cycle.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not h:
+            return None
+        creation = wintypes.FILETIME()
+        autres = [wintypes.FILETIME() for _ in range(3)]
+        ok = kernel32.GetProcessTimes(h, ctypes.byref(creation),
+                                      *[ctypes.byref(f) for f in autres])
+        kernel32.CloseHandle(h)
+        if not ok:
+            return None
+        # FILETIME : intervalles de 100 ns depuis le 1601-01-01 UTC.
+        ticks = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+        return datetime(1601, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=ticks / 10)
+    except Exception:                                    # noqa: BLE001
+        return None
+
+
 def _cycle_en_cours() -> dict | None:
     """Le cycle actuellement EN COURS, s'il y en a un — lu dans le ledger.
 
@@ -218,26 +253,34 @@ def _cycle_en_cours() -> dict | None:
     n'est PAS le `started_at` de cette ligne (ce serait le début de CET
     agent, pas du cycle) : toutes les lignes d'un même lancement de
     l'orchestrateur partagent le même `pid` (vérifié le 2026-08-28) — le
-    début du cycle est le plus ancien `started_at` de ce `pid`.
+    début du cycle est le plus ancien `started_at` de ce `pid`, **parmi les
+    lignes postérieures au démarrage de ce processus** (cf.
+    `_demarrage_processus` : sans ce filtre, un PID recyclé fait remonter le
+    début du cycle à celui d'un homonyme mort depuis des jours).
+
+    Quand la date de démarrage est indéterminable (processus déjà terminé,
+    accès refusé), on se replie sur le `started_at` de l'agent bloqué : c'est
+    une borne basse honnête — elle peut sous-estimer la durée du cycle, jamais
+    inventer un cycle de 199 h.
     """
     try:
         cx = sqlite3.connect(f"file:{LEDGER}?mode=ro", uri=True)
         cx.row_factory = sqlite3.Row
         bloque = cx.execute(
-            "select agent, pid from agent_runs where status='running' "
+            "select agent, pid, started_at from agent_runs where status='running' "
             "order by started_at limit 1").fetchone()
         if not bloque or bloque["pid"] is None:
             cx.close()
             return None
+        ne = _demarrage_processus(bloque["pid"])
+        plancher = ne.isoformat() if ne else bloque["started_at"]
         debut = cx.execute(
-            "select min(started_at) from agent_runs where pid=?", (bloque["pid"],)
-        ).fetchone()[0]
+            "select min(started_at) from agent_runs where pid=? and started_at >= ?",
+            (bloque["pid"], plancher)).fetchone()[0] or bloque["started_at"]
         finis = cx.execute(
-            "select count(*) from agent_runs where pid=? and status<>'running'",
-            (bloque["pid"],)).fetchone()[0]
+            "select count(*) from agent_runs where pid=? and started_at >= ? "
+            "and status<>'running'", (bloque["pid"], plancher)).fetchone()[0]
         cx.close()
-        if not debut:
-            return None
         return {"agent_bloque": bloque["agent"], "debut": debut, "agents_finis": finis}
     except sqlite3.Error:
         return None
