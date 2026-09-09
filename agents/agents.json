@@ -296,6 +296,28 @@
       ]
     },
     {
+      "_pourquoi": "Ajoute le 2026-09-09. Surveille que le stock ACTIF est reellement confirme par les scans, et non seulement marque actif. Ne pas confondre avec watch-health, qui juge la SORTIE d'un extracteur (bandes de metriques) : celui-ci juge l'ETAT de la base qui en resulte. Un extracteur peut rendre des metriques dans les clous pendant que le stock actif vieillit sans que rien ne le confirme — c'est exactement ce qui s'est passe : recense.py sautait le rafraichissement de last_seen des que le parcours avait un trou (1 a 6 pages sur ~2600, donc a TOUS les runs), et ddproperty est tombe a 9,6 % d'actives confirmees < 48 h, la plus ancienne datant du 23/07, sans une seule alerte. Place ICI, apres les extracteurs et remonter-supabase : il lit ce que le cycle vient d'ecrire. Seuil auto-calibre sur la mediane de l'historique de CHAQUE source (nestopa est gelee a une page par conception et plafonnera toujours bas : un seuil commun crierait au loup). Se tait tant qu'il n'a pas 4 releves.",
+      "name": "fraicheur",
+      "famille": "Surveillance",
+      "tier": "T0",
+      "lanes": [
+        "daily"
+      ],
+      "every_days": 1,
+      "cmd": [
+        "@py",
+        "ops/fraicheur.py",
+        "--verifier"
+      ],
+      "after": [
+        "extract-fazwaz",
+        "extract-ddproperty",
+        "extract-propertyscout",
+        "extract-nestopa",
+        "extract-livinginsider"
+      ]
+    },
+    {
       "name": "watch-health",
       "famille": "Surveillance",
       "tier": "T1",

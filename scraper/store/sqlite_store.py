@@ -147,7 +147,18 @@ def _median(valeurs) -> float | None:
 #: 60 s : une transaction d'upsert dure quelques millisecondes ; il faudrait des
 #: milliers d'ecrivains simultanes pour depasser ce delai. On attend son tour au
 #: lieu d'abandonner.
-ATTENTE_VERROU_S = 60
+#:
+#: 2026-09-09 — PORTE A 300 s. La premisse ci-dessus a cesse d'etre vraie : une
+#: ecriture coute desormais 0,99 s en moyenne (mesure du run du 08/09, table
+#: « ou est passe le temps », 1 397 appels / 22,9 min) sur une base passee de
+#: 1,19 Go (26/08) a 2,24 Go, et 5 extracteurs ecrivent en parallele. La nuit du
+#: 08/09 : 6 747 « database is locked », dont 4 402 sur fazwaz et 2 345 sur
+#: ddproperty — les deux seules etapes qui demarrent a la MEME seconde ; toutes
+#: les etapes `then_*`, decalees, en ont eu ZERO. Les 7 cycles precedents : 0.
+#: Effet de seuil, donc, sur une grandeur qui monte de ~75 Mo/jour.
+#: 300 s ne corrige pas la latence d'ecriture — il empeche qu'une passe entiere
+#: soit perdue le temps qu'elle soit traitee. Se defait en remettant 60.
+ATTENTE_VERROU_S = 300
 
 
 class SqliteStore(BaseStore):

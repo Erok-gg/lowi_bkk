@@ -214,16 +214,41 @@ class Recensement:
             list(pool.map(onglet, range(self.onglets)))
 
 
-def _confronter(store, source: str, deal: str, vus: set[str], actives: set[str]) -> dict:
-    """Compare le catalogue vu à ce que la base tient pour actif.
+def _rafraichir(store, vus: set[str], actives: set[str]) -> dict:
+    """Rafraîchit `last_seen` des annonces CONFIRMÉES PRÉSENTES au catalogue.
 
-    AUCUNE écriture destructrice : on rafraîchit ce qui est confirmé présent, on
-    compte le reste. Le délistage reste l'affaire de run.py --full."""
+    Séparé de `_comparer()` le 2026-09-09, et c'est tout l'objet du correctif.
+    Les deux opérations étaient dans une seule fonction, appelée seulement après
+    un `continue` qui l'écartait dès que le parcours avait le moindre trou — si
+    bien qu'un recensement troué ne rafraîchissait RIEN.
+
+    Or les deux n'ont pas les mêmes conditions de validité. **Voir une annonce
+    dans le catalogue prouve qu'elle est vivante, trou ou pas** : un trou empêche
+    de conclure sur ce qu'on n'a PAS vu, il ne dit rien de ce qu'on a vu.
+
+    Ce que ça coûtait, mesuré le 2026-09-09 : chaque recensement DDproperty
+    manque 1 à 6 pages sur ~2 600 (0,04 à 0,23 %), donc la confrontation était
+    écartée à TOUS les runs. Résultat : **5,9 %** seulement des 69 149 actives
+    DDproperty avaient un `last_seen` du dernier cycle, la plus ancienne
+    remontait au 23/07, et 8,9 % des actives n'avaient pas été confirmées depuis
+    plus de 30 jours. Le recensement existait précisément pour empêcher ça.
+
+    AUCUNE écriture destructrice : on ne touche que `last_seen`, et seulement
+    vers le haut. Le délistage reste l'affaire de run.py --full."""
     confirmees = actives & vus
     touchees = store.toucher_lot(confirmees, _maintenant()) if confirmees else 0
     return {"actives_en_base": len(actives), "confirmees": len(confirmees),
-            "rafraichies": touchees,
-            "absentes_du_catalogue": len(actives - vus),
+            "rafraichies": touchees}
+
+
+def _comparer(vus: set[str], actives: set[str]) -> dict:
+    """Le VERDICT de comparaison — n'a de sens que sur un parcours COMPLET.
+
+    Sur un parcours troué, « absente du catalogue » ne distingue pas « retirée »
+    de « pas regardée » (défaut mesuré le 2026-08-25 : 12 348 annonces déclarées
+    absentes à tort). Ces deux compteurs restent donc réservés au cas complet —
+    cette prudence-là est juste et ne change pas."""
+    return {"absentes_du_catalogue": len(actives - vus),
             "inconnues_de_la_base": len(vus - actives)}
 
 
@@ -290,6 +315,17 @@ def main() -> int:
             ligne["pages_ratees"] = len(rec.pages_ratees)
             ligne["pages_manquantes"] = trous
 
+            # RAFRAÎCHISSEMENT D'ABORD, VERDICT ENSUITE (2026-09-09). Il est
+            # placé AVANT les abstentions ci-dessous parce qu'il ne dépend pas
+            # d'elles : ce qu'on a vu est vivant, que le parcours soit complet ou
+            # non. Le laisser après les `continue` revenait à ne jamais
+            # rafraîchir (cf. _rafraichir : 5,9 % des actives DDproperty à jour).
+            actives: set[str] = set()
+            if store:
+                actives = store.ids_actifs(args.source, deal)
+                if vus:
+                    ligne.update(_rafraichir(store, vus, actives))
+
             if rec.fin is None and rec.pages_lues:
                 # PLAFOND ATTEINT AVANT LA FIN DU CATALOGUE. On a lu ce qu'on
                 # pouvait, mais on n'a jamais vu la page terminale : tout ce qui
@@ -328,8 +364,7 @@ def main() -> int:
                 bilan["flux"].append(ligne)
                 continue
             if store:
-                actives = store.ids_actifs(args.source, deal)
-                ligne.update(_confronter(store, args.source, deal, vus, actives))
+                ligne.update(_comparer(vus, actives))
                 for sid, stub in rec.stubs.items():
                     if f"{args.source}:{deal}:{sid}" not in actives:
                         sortie.write(json.dumps(stub, ensure_ascii=False, default=str) + "\n")
@@ -345,6 +380,10 @@ def main() -> int:
     bilan["annonces_vues"] = sum(f["annonces_vues"] for f in bilan["flux"])
     bilan["absentes_du_catalogue"] = sum(f.get("absentes_du_catalogue", 0) for f in bilan["flux"])
     bilan["inconnues_de_la_base"] = sum(f.get("inconnues_de_la_base", 0) for f in bilan["flux"])
+    # Remonté à la racine du bilan pour être LISIBLE sans ouvrir les flux : c'est
+    # le chiffre qui dit si le recensement a servi à quelque chose cette nuit.
+    # Il valait 0 à tous les runs trouées avant le correctif du 2026-09-09.
+    bilan["rafraichies"] = sum(f.get("rafraichies", 0) for f in bilan["flux"])
     # Bilan JSON terminal : lu par agents/core/shell.py (_bilan_json) et vérifié
     # par l'overseer contre le contrat de sortie du SKILL.
     print(json.dumps(bilan, ensure_ascii=False, indent=1))
