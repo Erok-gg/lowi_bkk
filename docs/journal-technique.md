@@ -1360,3 +1360,499 @@ HTTP persistante (522 × 5, le cas déjà verrouillé par
 - Non vérifié en conditions réelles de coupure longue (uniquement testé par
   serveur HTTP local, connexion refusée simulée) — à confirmer à la prochaine
   vraie coupure.
+
+## 2026-09-05 — Réparation autonome : rien de cassé, deux tickets clos, `agent_muet` non récidivé
+
+Session `lowi-reparation-autonome`, poste `REMIZDABOSS` (PC2, coureur) confirmé
+par `$env:COMPUTERNAME`. Cycle du 2026-09-05 01:00 sain (5/5 extracteurs,
+6535 annonces écrites, exit 0), base `bangkok.db` saine (`quick_check` ok,
+109 040 annonces / 79 499 actives, `last_seen` frais), sauvegarde USB du jour
+vérifiée 3/3 (109 040/79 499, cohérente avec la base vivante). Boîte
+`agents/queue/mail/` vide — rien à envoyer.
+
+**Ticket `organize/comparaison_deleguee` (60 paires, 2026-09-05T00:19)** :
+extraction mécanique des 6 champs par parsing déterministe (regex) du champ
+`texte` — même méthode que les sessions précédentes, aucun jugement porté.
+Appliqué via `organize.py --appliquer` : **60/60 abstentions**, cohérent avec
+le résultat de toutes les sessions précédentes sur ce type de lot (le
+critère `same_unit` — `b_apres_a` ET écart de prix < 2 % — n'est réuni par
+aucune paire de ce tirage). Résolu via `escalation.resolve()` (pas un simple
+déplacement de fichier comme la session du 09-04 l'avait fait par erreur pour
+un ticket similaire, réconcilié depuis) — le ledger porte maintenant la
+`resolution` correctement.
+
+**Ticket `overseer/agent_muet` sur `extract-propertyscout` (haute sévérité,
+2026-09-04T02:16), laissé ouvert par la session précédente pour surveiller
+une récidive** : non reproduit à nouveau. Preuve : le run manuel de
+récupération (id 309, 2026-09-04T02:46:59) a réussi, ET le cycle suivant
+entièrement normal (id 315, 2026-09-04T18:00:49) a démarré `extract-
+propertyscout` EN PARALLÈLE des 4 autres extracteurs comme attendu, succès.
+Deux cycles propres consécutifs sans récidive → ticket clos. La cause de
+l'absence initiale reste **non établie** (déjà vérifié faux/non concluant par
+la session du 09-04 : `is_due()`, garde-fous, runs concurrents, autres
+tâches planifiées — rien trouvé) ; à rouvrir si le phénomène revient.
+
+**Non fait, signalé** :
+- `regle-alimentation` (19,5 j) et `verifie-backup` (11,0 j) restent affichés
+  `DÛ` par `orchestrator status` — **normal, pas un défaut** : les deux ont
+  `lanes: []` dans `agents.json` (invocation manuelle seulement, `verifie-
+  backup` neutralisé depuis le 2026-08-25). Même chose pour `storage`
+  (12,7 j, cadence 7 j mais `lanes: []`). Confirmé en relisant `agents.json`
+  avant de les traiter comme des pannes.
+- `bad_rings_out.txt` (racine du dépôt, non suivi, daté du 2026-08-30) :
+  sortie de debug d'un script de validation de polygones, orpheline. Ni
+  supprimée ni ajoutée au `.gitignore` — un seul fichier isolé, pas mesuré
+  comme gênant, laissé à l'arbitrage.
+- Le dépôt reste sur `fix/outage-resilience-fetcher` avec plusieurs fichiers
+  modifiés/non suivis (données d'étude quotidiennes routinières + `ops/
+  remonter-local.py`, `ops/verifie-synchro.py`, `agents/tests/
+  test_remonter_bulk.py`, `CLAUDE.md`, `.gitignore`) hérités des sessions
+  précédentes — non touchés cette session (aucun commit demandé, rien à
+  réparer dedans), fusion sur `main` toujours à l'arbitrage de l'utilisateur.
+
+## 2026-09-06 — Réparation autonome : cycle sain, un ticket clos (résolu correctement cette fois), rien à corriger
+
+Session `lowi-reparation-autonome`, poste `REMIZDABOSS` (PC2, coureur) confirmé
+par `$env:COMPUTERNAME`. Cycle daily du 2026-09-05/06 sain (`pouls.py
+--verifier` : dernier cycle 18,6 h avant le contrôle, 5/5 extracteurs,
+6535 annonces écrites). Base `bangkok.db` : `quick_check` ok, 111 084 annonces
+dont 81 039 actives (ddproperty 65 188, fazwaz 10 816, nestopa 3 152,
+propertyscout 1 341, livinginsider 542), `last_seen` frais (2026-09-05T20:58
+UTC). Sauvegarde USB du cycle (`agents/logs/backup-apres-cycle-
+2026-09-06T002304.log`) : 3/3 essais OK, mêmes comptes que la base vivante
+(111 084/81 039) — rotation appliquée, une seule génération conservée comme
+configuré. Boîte `agents/queue/mail/` vide, aucune alerte à transmettre.
+
+**Ticket `organize/comparaison_deleguee` (60 paires, 2026-09-06T00:20)** :
+même méthode que les sessions précédentes — extraction déterministe (regex)
+des 6 champs depuis le `texte` fourni par le ticket (statut ACTIVE/INACTIVE,
+présence d'une date de délistage, comparaison des horodatages ISO exacts
+`dates.da`/`dates.fsb` plutôt que les dates jour fournies dans le texte, écart
+de prix). Vérifié à la main sur 2 paires avant application. Appliqué via
+`organize.py --appliquer` : **60/60 abstentions** — cohérent avec les tirages
+précédents de ce type de lot (aucune paire ne réunit `b_apres_a` ET écart de
+prix < 2 %, le seuil du critère `same_unit`). Les 60 paires sont marquées
+traitées dans `paires-faites`.
+
+**Défaut reproduit sur MOI-MÊME et corrigé dans la foulée** : première passe,
+j'ai clos le ticket en déplaçant le fichier à la main vers `queue/done/` —
+exactement l'erreur que la session du 2026-08-29 avait diagnostiquée
+(`escalation.reconcile()`) et que celle du 2026-09-04 avait reproduite malgré
+l'avertissement écrit la veille. Repéré en lisant le diff non commité de ce
+journal (entrée du 2026-09-05, qui documentait précisément ce piège) AVANT de
+passer à l'étape suivante. Corrigé : ajout de `resolution`/`resolved_at` au
+ticket déjà déplacé + appel direct à `Ledger.resolve()` pour fermer
+l'escalade côté base — même effet que `escalation.resolve()` sur un ticket
+qui n'y était pas encore passé. `escalation.pending()` confirme 0 escalade
+ouverte après coup.
+
+**Constats hérités, non retraités inutilement (déjà établis, revérifiés
+seulement)** :
+- `regle-alimentation`, `verifie-backup`, `storage` : `lanes: []` dans
+  `agents.json`, DÛ affiché par `orchestrator status` est normal, pas une
+  panne — confirmé en relisant le fichier, pas seulement en faisant confiance
+  au journal d'hier.
+- Les 2 constats de sévérité haute des 7 derniers jours (`extract-
+  propertyscout` agent muet du 2026-09-04, `extract-fazwaz` sonde en échec du
+  2026-09-01) étaient déjà résolus et clos avant cette session ; aucune
+  récidive observée dans les logs relus.
+- `bad_rings_out.txt` (racine, non suivi, 2026-08-30) : toujours orphelin,
+  toujours laissé à l'arbitrage — inchangé depuis la dernière relecture.
+- Le dépôt reste sur `fix/outage-resilience-fetcher` avec le même tas de
+  fichiers modifiés/non commités hérité des sessions précédentes (doc
+  restructurée `CLAUDE.md`/`masterlog.md`/`methodes-calculs.md`/
+  `replication-blueprint.md`, données d'étude quotidiennes, `ops/remonter-
+  local.py`, `ops/verifie-synchro.py`, `agents/tests/test_remonter_bulk.py`) —
+  non touché cette session, aucun commit demandé et rien à y réparer ;
+  fusion sur `main` toujours à l'arbitrage de l'utilisateur. Les fixes de
+  résilience réseau de cette branche (`SupabaseStore._execute()` qui
+  reconnecte au lieu d'échouer sur un seul essai) sont désormais **prouvés
+  sur 2 cycles réels consécutifs** (0 erreur les 2026-09-05 00:15 et 22:26,
+  contre 69 778 erreurs et un crash le 2026-09-03 avant le correctif).
+
+**Non fait** : aucune modification de code (rien de cassé à corriger),
+aucun commit sur la pile en attente (hors de mon mandat), pas de mesure sur
+`STANDBYIDLE` en fonctionnement batterie (déjà signalé non vérifié le
+2026-08-26, toujours vrai, pas dans le périmètre de cette session).
+
+## 2026-09-07 — Réparation autonome : incident réel EN COURS pendant la session, cause trouvée et corrigée, redesign en attente de l'utilisateur
+
+Session `lowi-reparation-autonome`, poste `REMIZDABOSS` (PC2, coureur) confirmé
+par `$env:COMPUTERNAME`. Contrairement aux deux sessions précédentes (rien de
+cassé), celle-ci est tombée en plein milieu d'un incident réel et encore actif
+au moment de l'intervention.
+
+**Constat initial** : `pouls.py --verifier` annonçait un dernier cycle sain
+(18,1 h, 5/5 extracteurs, 3746 annonces) — mais ce chiffre datait du cycle
+`weekly` du 09-05/09-06 (`termine_a` 2026-09-06T01:05 UTC), PAS du cycle
+`daily` de cette nuit (démarré 2026-09-06T18:00:26 UTC = 2026-09-07 01:00
+Bangkok). `orchestrator status` a montré 12 agents `DÛ` — normal à cette heure
+si le cycle est en cours, mais le ledger (`agent_runs`, id 345) a confirmé
+`remonter-supabase` en statut `running`, `ended_at` NULL, démarré
+2026-09-06T21:09:26 UTC. Vérifié 4 fois sur 25 minutes : le fichier de log
+(`agents/logs/remonter-supabase-2026-09-06T210926.log`) n'avait plus bougé
+depuis 08:20:35 (heure Bangkok) alors que la boucle de retry du code est
+censée imprimer une ligne toutes les 30 s — **bloqué depuis largement plus de
+20 minutes sans qu'aucun compteur du code lui-même n'avance**, donc coincé
+DANS un appel bloquant, pas dans la boucle de sondage qu'il est censé
+mesurer. `Get-CimInstance Win32_Process` a confirmé les deux process (PID 8424
+et son enfant 12240, parent réel de l'orchestrateur 25268) toujours vivants,
+`Responding: True`, CPU quasi nul — cohérent avec un thread bloqué dans un
+appel réseau, pas un deadlock Python.
+
+**Cause identifiée** : juste avant de se figer, le log montrait des erreurs
+Postgres explicites — `FATAL: (ECIRCUITBREAKER) too many authentication
+failures, new connections are temporarily blocked` / `failed to retrieve
+database credentials after multiple attempts` sur plusieurs IP du pooler
+Supabase (`aws-1-ap-southeast-1.pooler.supabase.com`). `SupabaseStore._reconnect()`
+appelle `psycopg.connect(dsn, connect_timeout=20, ...)` directement — mais
+`connect_timeout` de libpq **ne borne pas la résolution DNS**, limite
+documentée de libpq et pas un bug du code : si `getaddrinfo()` bloque (ou si
+la séquence d'essais sur plusieurs `hostaddr` du pooler traîne), l'appel peut
+dépasser très largement les 20 s annoncés, et la boucle de comptage de
+`_execute()` (30 s / 1200 s max) ne peut avancer que si l'appel bloquant
+lui-même revient — ce qu'il n'a pas fait pendant au moins 4 h 20.
+
+**Correctif appliqué et commité SUR LA BRANCHE `fix/outage-resilience-fetcher`**
+(pas `main`, commit `6aed3a3`) : `_connect_borne()` dans
+[supabase_store.py](../scraper/store/supabase_store.py) — thread-watchdog
+(25 s, pas `signal.alarm`, indisponible sur Windows) autour de
+`psycopg.connect()`, utilisé par `__init__` et `_reconnect`. Test ajouté dans
+[test_supabase_reconnect.py](../agents/tests/test_supabase_reconnect.py) (cas
+4) : un `connect()` qui ne revient JAMAIS (sleep 30 s, hard-timeout réduit à
+0,2 s pour le test) est désormais abandonné en 0,2 s au lieu de bloquer —
+vérifié en le rejouant (`scraper/.venv/Scripts/python.exe agents/tests/
+test_supabase_reconnect.py`, 4/4 cas OK). Les 3 cas préexistants (coupure
+résolue au 1er essai, coupure qui dure puis se résout, coupure persistante au
+plafond) restent verts — non-régression confirmée. Les tests contre le VRAI
+Supabase (`test_stores_alignes.py`, `test_remonter_bulk.py`) n'ont PAS été
+rejoués : lancer davantage de connexions contre un service qui vient de
+bloquer pour « trop d'échecs d'authentification » aurait été contre-productif
+pendant un incident actif.
+
+**Le process bloqué N'A PAS ÉTÉ ARRÊTÉ** : `Stop-Process` sur les PID 8424/12240
+a été refusé par le classificateur de permissions du mode automatique (action
+irréversible sur un process vivant, sans utilisateur présent pour confirmer —
+comportement correct, pas un obstacle à contourner). L'utilisateur, présent en
+direct pendant cette session, en a été informé explicitement pour décider
+lui-même. Conséquence en cascade tant que ce process reste bloqué : le reste
+du cycle `daily` de cette nuit (`organize`, `analyze-sale`, `analyze-rent`,
+`report`, `backup-apres-cycle`, `watch-health`, `overseer`) n'a PAS tourné —
+`remonter-supabase` a été inséré AVANT `watch-health` dans `agents.json` le
+2026-08-26 (voir CLAUDE.md § architecture) et bloque tout ce qui suit dans la
+lane. La dernière sauvegarde USB vérifiée reste donc celle du cycle précédent
+(2026-09-06, 111 084/81 039, 3/3 essais OK) — pas de perte de donnée, juste un
+cycle de retard.
+
+**Question de fond soulevée par l'utilisateur EN COURS DE SESSION, non
+tranchée** : le mécanisme actuel réévalue chaque jour la FENÊTRE ACTIVE
+ENTIÈRE (81 889 annonces, 33 lots) plutôt que de calculer le delta en local
+et n'envoyer que le paquet du jour. Le garde-fou anti-réécriture du 2026-09-02
+(commit déjà en prod, `upsert_listings_bulk` — `WHERE <rien n'a changé>`)
+limite déjà les ÉCRITURES effectives aux lignes réellement modifiées, mais le
+TRANSFERT réseau (payload complet des 81 889 lignes vers Postgres pour que
+Postgres tranche) a toujours lieu chaque jour — 33 lots, 33 fenêtres
+d'exposition à une coupure ou un blocage d'authentification comme celui de ce
+soir. L'utilisateur demande de revoir ce point : passer à un vrai paquet
+incrémental (delta calculé côté SQLite depuis le dernier envoi réussi) plutôt
+qu'un ré-envoi complet filtré côté serveur. **Décision volontairement NON
+prise dans cette session** (règle 5 : ne pas trancher la méthode à la place de
+l'utilisateur) — proposé, chiffré partiellement, laissé en attente de sa
+réponse sur le mécanisme de delta souhaité (watermark `last_seen`, table de
+suivi dédiée, ou autre).
+
+**Constats hérités, revérifiés sans être retraités** : la pile de fichiers
+modifiés/non commités sur cette branche (CLAUDE.md, docs, `ops/remonter-
+local.py`, `ops/verifie-synchro.py`, données d'étude quotidiennes) reste
+inchangée par cette session, hors les 2 fichiers du correctif ci-dessus ;
+fusion sur `main` toujours à l'arbitrage de l'utilisateur. Boîte
+`agents/queue/mail/` vide (rien à transmettre). Aucun ticket en attente dans
+`agents/queue/` (dernier traité : 2026-09-06, `organize/comparaison_deleguee`,
+déjà résolu avant cette session). Base `bangkok.db` : `quick_check` ok,
+112 380 annonces / 81 889 actives (ddproperty 65 996, fazwaz 10 856, nestopa
+3 201, propertyscout 1 336, livinginsider 500), `last_seen` frais
+(2026-09-06T19:48:42 UTC).
+
+**Suite, en cours de session — l'utilisateur a tranché** : en réponse à la
+question posée ci-dessus, réponse reçue en direct : *« only update what's new
+and remove what's not updated anymore (there is a cycle for that or a
+deadline at least) »* — confirme le sens du delta ET rappelle que le
+mécanisme de sortie du stock existe déjà (délai de grâce `missed_count`/
+`JOURS_AVANT_SORTIE_VENDU`), pas besoin d'en inventer un nouveau.
+
+**Implémenté et commité** (commit `203d01c`, même branche) : colonne locale
+`dirty_since` (SQLite) posée par `SqliteStore.upsert_listing()` (nouvelle
+ligne, ou tout changement réel d'une colonne de `COLONNES_LISTING`,
+résurrection comprise), `mark_missing_inactive()` et `appliquer_ventes()`
+(sortie du stock — les mécanismes EXISTANTS, pas un nouveau), `touch_listing()`
+(résurrection uniquement, pas une simple revue). Backfill au premier ajout de
+colonne : tout ce qui est actif ou délisté est marqué sale une fois, pour
+établir la référence côté Supabase avant de devenir réellement incrémental —
+sans ce backfill, une ligne déjà différente entre local et serveur AVANT ce
+correctif resterait invisible pour toujours.
+
+`ops/remonter-local.py --delta` (implique `--statut actives` +
+`--synchro-statuts`) : ne charge que `dirty_since is not null`, des deux
+côtés (contenu ET statut — le même marqueur sert aux deux, exactement la
+formulation « new » / « not updated anymore » de la demande).
+`marquer_synchronise()` efface le marqueur après un envoi réussi (un no-op
+côté garde-fou anti-réécriture de Postgres compte comme synchronisé, pas
+comme un échec). Test dédié (`agents/tests/test_dirty_since.py`, 10
+vérifications, aucun réseau) : pose/n'avance pas/repose selon le cas exact,
+`charger`/`statuts_morts` en mode delta ne renvoient que le non-synchronisé,
+`marquer_synchronise` cible précisément les ids donnés — 10/10 OK.
+
+**PAS branché en production** : `agents.json` invoque toujours `--statut
+actives --synchro-statuts` (plein ré-envoi filtré côté serveur). Le passage à
+`--delta` est volontairement laissé à l'utilisateur, après un premier run
+réel une fois l'incident Supabase du jour résolu — impossible à valider en
+conditions réelles pendant que le pooler bloque les nouvelles connexions
+(règle 6 : rien n'entre en production sans mesure préalable).
+
+**Non fait** : le process bloqué n'a pas été arrêté (refusé par le
+classificateur, à trancher par l'utilisateur) ; `agents.json` non modifié
+(bascule vers `--delta` en attente d'un run réel réussi) ; aucun commit sur
+le reste de la pile héritée (CLAUDE.md, docs, données d'étude) ; pas de
+fusion sur `main` ; les tests réseau réels contre Supabase non rejoués
+pendant l'incident (prudence, pas nécessaire pour valider le correctif —
+testé par simulation).
+
+## 2026-09-08 — Réparation autonome : un contrôle de routine faussait le ledger d'un run en cours, corrigé ; 4 extracteurs perdus par une collision de migration ponctuelle
+
+Session `lowi-reparation-autonome`, poste `REMIZDABOSS` (PC2, coureur) confirmé
+par `$env:COMPUTERNAME`. Ticket `organize/comparaison_deleguee` du
+2026-09-07T02:04:56 (60 paires) traité par la même méthode déterministe que
+les sessions précédentes (regex sur `texte` + horodatages ISO `dates.da`/
+`dates.fsb`, vérifiée à la main sur 2 paires avant application) : **60/60
+abstentions**, cohérent avec les tirages précédents. Résolu via
+`escalation.resolve()` avec `Ledger()` — pas de déplacement manuel de
+fichier.
+
+**Défaut trouvé EN DIRECT, causé par ma propre investigation, corrigé dans la
+foulée.** En consultant l'état du cycle nocturne encore en cours (démarré
+2026-09-07T18:00:03 UTC, soit 01:00 Bangkok du 09-08), `orchestrator status`
+et un appel `Ledger()` ont marqué `interrompu` le run `remonter-supabase` en
+cours — alors qu'il tournait encore, avec une connexion Postgres `ESTABLISHED`
+confirmée par `netstat` (port 5432, PID enfant 26588). Cause : `reap_stale()`
+ferme tout run `running` dont `_processus_vivant(pid)` rend faux, et cette
+sonde faisait `OpenProcess(SYNCHRONIZE, ..., pid)` puis `if not h: return
+False` — sans distinguer un handle nul par **absence réelle** d'un handle nul
+par **`ERROR_ACCESS_DENIED`** (code 5). Reproduit à la main sur le PID bien
+vivant de l'orchestrateur (`3528`, confirmé par `tasklist`) : `OpenProcess`
+depuis ma session interactive a rendu un handle nul avec
+`GetLastError()==5` — parce que la tâche planifiée tourne dans la session
+Windows « Services », différente de la mienne. **N'importe quel contrôle en
+lecture seule** (`orchestrator status`, `Ledger()` nu, `pouls.py --verifier`
+appelle aussi `Ledger()`) lancé depuis une autre session pendant un cycle
+suffit donc à faire croire qu'un run vivant est mort. Corrigé dans
+`agents/core/ledger.py` : seul `ERROR_ACCESS_DENIED` bascule vers « vivant » ;
+un autre refus (PID invalide) continue de fermer le run comme avant. Testé :
+4 scénarios dans `agents/tests/test_processus_vivant.py` (PID vivant réel, PID
+mort réel via `subprocess.wait()`, `OpenProcess` simulé refusé par accès,
+refusé pour une autre raison) — les 4 passent, ainsi que l'ensemble des tests
+existants (`test_cadence.py` avait déjà 2 cas sur cette fonction, toujours
+verts). Le run `remonter-supabase` faussement fermé a été remis à `running`
+à la main une fois la preuve (connexion réseau active) établie ; sans mon
+intervention, il se serait de toute façon corrigé tout seul à la fin réelle
+du run (`end_run()` réécrit la même ligne par `id`), donc aucune perte, mais
+l'état affiché aurait menti pendant des heures. Commit `0492db7`, sur
+`fix/outage-resilience-fetcher` (uniquement `ledger.py` + le nouveau test —
+rien d'autre de la pile héritée touché).
+
+**Ce que ce run en cours EST réellement, mesuré, pas supposé** : la toute
+première remontée `--delta` depuis le commit `203d01c` (2026-09-07). Le
+backfill à l'ajout de `dirty_since` a marqué sale la fenêtre active +
+délistée entière (113 912/113 912 lignes, vérifié en base) — c'est
+exactement le run « réel réussi » que l'entrée d'hier attendait. Démarré
+21:47:17 UTC, encore actif à 02:02 UTC (>4 h), connexion Postgres établie,
+aucune ligne de log depuis 01:36:28 (`_execute()` ne journalise que les
+ÉCHECS de reconnexion, jamais un retour réussi — un vrai trou
+d'observabilité, non corrigé cette session par prudence : modifier le
+comportement de log d'un composant en cours d'exécution pendant l'incident
+lui-même n'a pas semblé sage). Pas un run structurellement anormal : c'est
+la contrepartie attendue et déjà documentée (rollback = base de référence
+locale intacte, le prochain cycle redevient incrémental) du choix de faire
+le premier passage en une fois plutôt qu'en lots.
+
+**4 extracteurs perdus par une collision de migration, mesuré, pas supposé**
+: à 18:00:03, les 5 extracteurs démarrent en parallèle, chacun ouvrant
+`SqliteStore` → `_migrate()`. `fazwaz`, `ddproperty`, `propertyscout`,
+`livinginsider` ont tous levé `sqlite3.OperationalError: database is locked`
+sur `create index if not exists idx_listings_dirty` — `nestopa` seul a
+réussi (probablement le gagnant de la course, tenant le verrou le temps du
+backfill `dirty_since` ci-dessus). `fazwaz` et `ddproperty` ont quand même
+écrit des données ce soir via leurs passes de secours (`then_0`/`then_1`
+couloirs ciblés, `then_2` recensement pour ddproperty) — mesuré : 168 et
+1334 nouvelles annonces respectivement. `propertyscout` et `livinginsider`
+n'ont **aucune** passe de secours dans leur config et n'ont donc rien écrit
+cette nuit (0 nouvelle, 0 changement). Pas de perte de données actives :
+le délai de grâce (`missed_count`/`first_missed_at`) absorbe une nuit
+manquée sans délistage à tort. Cette collision précise ne devrait pas
+récidiver (le backfill est un événement ponctuel, `dirty_since` existe
+maintenant partout — vérifié : 113 912/113 912 lignes déjà marquées), mais
+le patron (migration lourde embarquée dans le constructeur, sans
+coordination entre connexions concurrentes) referait la même chose à la
+prochaine migration qui touche une bonne fraction des lignes — **non
+corrigé cette session** : ce serait modifier un mécanisme de migration en
+tirant une conclusion d'un seul cas, contraire à la règle 1 ; à surveiller
+à la prochaine migration lourde plutôt qu'à corriger par anticipation.
+
+**Boîte mail vidée** : 5 alertes de sévérité haute en attente (remonter-
+supabase de la veille, les 4 extracteurs ci-dessus) envoyées via le
+connecteur Gmail à schoenauer.anthony@gmail.com, avec pour les 4
+extracteurs un post-scriptum donnant la cause mesurée ci-dessus. Fichiers
+retirés de `agents/queue/mail/` après envoi confirmé.
+
+**Base `bangkok.db`** : `quick_check` ok, 113 912 annonces / 83 454 actives
+(ddproperty 67 396, fazwaz 10 980, nestopa 3 242, propertyscout 1 336,
+livinginsider 500), `last_seen` frais (2026-09-07T20:26:40 UTC). Sauvegarde
+USB : rien de nouveau à vérifier, `backup-apres-cycle` n'a pas encore
+tourné ce cycle (étape postérieure à `remonter-supabase`, qui n'est toujours
+pas terminé) — celle d'hier (2026-09-07 02:07-02:53) restait cohérente avec
+la base vivante au moment mesuré (112 380/81 889, 3/3 essais OK).
+
+**Non fait, signalé** :
+- Le cycle nocturne n'a pas été attendu jusqu'à sa fin réelle (`remonter-
+  supabase` seul peut prendre plusieurs heures pour ce premier passage
+  complet) — cette session ne bloque pas dessus, la suite (`watch-health`,
+  `analyze-sale`/`rent`, `organize`, `report`, `backup-apres-cycle`,
+  `overseer`) reprendra d'elle-même quand `remonter-supabase` rendra la
+  main.
+- Le manque de log de RECONNEXION RÉUSSIE dans `SupabaseStore._execute()`
+  (seul l'échec est journalisé) n'a pas été corrigé — changer le
+  comportement de log d'un composant pendant qu'il tourne réellement en
+  production n'a pas semblé prudent ; à faire au calme, hors incident.
+- Le patron structurel « migration lourde non coordonnée entre connexions
+  concurrentes » n'a pas été corrigé — un seul cas mesuré, règle 1 : ne pas
+  généraliser à partir d'un exemple.
+- `regle-alimentation`, `verifie-backup`, `storage` toujours affichés `DÛ`
+  par `orchestrator status` — confirmé (ré-vérifié) normal, `lanes: []` dans
+  `agents.json`, pas une panne.
+- Le dépôt reste sur `fix/outage-resilience-fetcher` avec la pile héritée
+  des sessions précédentes non commitée (CLAUDE.md, données d'étude,
+  `ops/verifie-synchro.py`, `agents/tests/test_remonter_bulk.py`,
+  `.gitignore`) — non touchée cette session, fusion sur `main` toujours à
+  l'arbitrage de l'utilisateur. Seul le correctif du ledger (+ son test) a
+  été commité, isolé du reste.
+
+---
+
+## 2026-09-09 — Un PID recyclé annonçait un cycle de 199 h ; et le retour de « database is locked »
+
+Séance de réparation autonome (PC2). Compte-rendu détaillé :
+[agents/audits/reparations-2026-09-09.md](../agents/audits/reparations-2026-09-09.md).
+
+### Le garde-fou criait au loup, et c'est la mesure qui était fausse
+
+Deux tickets de sévérité haute annonçaient « cycle en cours depuis 199 h (seuil
+16 h) — bloqué sur extract-ddproperty ». **Faux.** Au moment du constat le cycle
+avait 14 h et tournait : le recensement DDproperty écrivait sa page 2559/3200,
+log modifié moins d'une minute avant. Il a fini pendant la séance (7 h 00 au
+total, 18:12:13 → 01:12:03).
+
+`_cycle_en_cours()` (`ops/pouls.py`) datait le début du cycle par
+`min(started_at)` **sur le seul PID**. Windows réattribue les PID et le ledger
+les garde pour toujours : le PID **26632** portait à la fois `garde-veille` du
+**2026-08-31T18:00:21** et le cycle du **2026-09-08T18:12:13**. D'où les 199 h.
+
+Le commentaire de `Ledger.reap_stale()` mentionnait pourtant déjà « un PID
+recyclé par le système » comme cas à couvrir — la garde existait d'un côté du
+système et manquait de l'autre. C'est la **quatrième fois** (règle 1) que c'est
+l'instrument, et non le système mesuré, qui est en cause.
+
+**Correctif** (commit `87ab652`, branche `fix/pouls-pid-recycle`) : le début du
+cycle se lit parmi les seules lignes postérieures au démarrage du processus
+(`GetProcessTimes`). Quand ce démarrage est indéterminable — `OpenProcess`
+refusé depuis une autre session, cas courant face à un cycle en session
+« Services », et c'est ce qui s'est produit en vérifiant — le repli borne le
+début au `started_at` de l'agent bloqué : il peut **sous-estimer** la durée,
+jamais en inventer une. `agents/tests/test_pouls_pid_recycle.py` couvre les deux
+chemins **et** vérifie qu'un cycle réellement bloqué depuis 20 h alerte
+toujours : corriger une fausse alerte ne doit pas rendre la surveillance muette.
+
+### « database is locked » : 6 747 occurrences, et deux hypothèses fausses
+
+Vraie panne du cycle du 08/09 — `extract-fazwaz` et `extract-ddproperty` sortent
+en code 1. Mesures :
+
+| | |
+|---|---|
+| par cycle | **0** du 31/08 au 06/09 · **4** le 07/09 · **6 747** le 08/09 |
+| répartition | fazwaz `principal` 4 402 · ddproperty `principal` 2 345 · **toutes** les étapes `then_*` : **0** |
+| coût d'une écriture | **0,99 s** (1 397 appels, 22,9 min) |
+| base | 1,19 Go (26/08) → **2,24 Go** (09/09), **~75 Mo/jour**, sans rupture le 07/09 |
+| annonces | 105 621 (04/09) → **116 223** · actives 76 778 → **85 327** |
+
+Seules les deux étapes qui écrivent **à la même seconde** sont touchées ; les
+`then_*`, décalés, ont zéro erreur. Signature d'une contention d'écriture.
+
+**Deux hypothèses testées et écartées — écrites ici parce qu'elles sont
+plausibles et qu'il ne faut pas les re-creuser :**
+
+1. **Curseur laissé ouvert.** `get_listing` fait `.fetchone()` sans épuiser le
+   curseur ; la théorie était qu'une transaction de lecture restait ouverte et
+   que la promotion en écriture était refusée *sans consulter le `busy_timeout`*
+   (SQLITE_BUSY_SNAPSHOT). **Reproduit hors production : aucune erreur.** `id`
+   étant clé primaire, SQLite libère le snapshot. **Faux.**
+2. **WAL non recyclé.** Le WAL pèse 137 Mo, mais son en-tête d'index donne
+   `nBackfill == mxFrame == 33303` : toutes les trames reversées, un seul
+   lecteur, aucune trame bloquée. **Le WAL n'est pas le blocage** — et les ~16
+   processus orphelins des 28–31/08 ne le retiennent donc pas non plus.
+
+**Ce qui reste** : un effet de seuil sur une grandeur qui croît régulièrement. À
+~1 s par écriture et 5 extracteurs en parallèle, la file dépasse les 60 s de
+`ATTENTE_VERROU_S`. Cela réconcilie une croissance sans rupture avec une
+apparition brutale. C'est une **explication cohérente avec toutes les mesures,
+pas une preuve** : elle n'a pas été reproduite (il faudrait rejouer 5 écrivains
+concurrents sur une copie de 2,24 Go).
+
+**Aucune donnée perdue** : chaque échec est rattrapé annonce par annonce et
+l'annonce sort de `seen_ids` — le garde-fou anti-délistage a tenu et l'a dit
+(`scan 504 annonces < 50 % des 33672 actives → délistage ANNULÉ`).
+`pragma quick_check` : **ok** (96 s sur 2,24 Go).
+
+**Rien n'a été appliqué**, les leviers sont chiffrés et laissés à l'arbitrage
+(règle 5) : (a) `ATTENTE_VERROU_S` 60 → 300 s, une ligne, ne change aucun chiffre
+produit ; (b) décaler les deux gros extracteurs — **posture**, donc décision
+utilisateur ; (c) `VACUUM` (831 Go libres, base à l'arrêt requise) ; (d) purger
+les anciennes annonces — **méthode**, hors périmètre. Sur (d), le point factuel
+qui doit précéder la décision : le time-on-market, l'absorption et la tension se
+calculent **sur les disparues** (c'est la raison même du rejet du scénario A le
+2026-08-26) ; les supprimer casserait ces statistiques et serait la seule option
+irréversible de la liste (règle 7).
+
+### Non fait, et pourquoi
+
+- **Aucun processus orphelin tué.** ~16 survivent depuis les 28–31/08 (session
+  0, quasi sans CPU). Ils ne bloquent pas le WAL (mesuré). Je n'ai pas pu établir
+  ce qu'ils sont : `CommandLine` vide pour ma session, `handle.exe` absent,
+  `openfiles` exige un drapeau système et un redémarrage. Les tuer à l'aveugle
+  serait le raccourci destructeur à éviter — **à identifier avant d'agir**.
+- **`remonter-supabase` non réparé** : échec à 01:13:22 sur `connect() bloqué
+  au-delà de 25s (DNS ou TCP)` — le watchdog du commit `6aed3a3` a fait son
+  travail. **6 succès / 4 échecs** sur les 10 derniers runs, tous réseau ; le DNS
+  résout normalement depuis. Une coupure se reprend seule : on consigne, on
+  n'escalade pas (règle 2). À rouvrir si le taux d'échec monte. Conséquence
+  inchangée : le site public reste en retard.
+- **Aucun e-mail envoyé.** Deux des cinq messages en attente étaient les fausses
+  alertes « 199 h » — les envoyer aurait propagé ce qui venait d'être rétracté ;
+  ils sont marqués rétractés dans `agents/queue/mail/done/`. Les trois autres
+  sont laissés en place, l'utilisateur étant présent en séance.
+- **Ticket `2026-09-09T011339-organize` laissé en file** (déposé pendant la
+  séance) : il sera drainé par `drain-agent-queue-lowi-bkk`, sa voie normale.
+- Le dépôt reste sur `fix/outage-resilience-fetcher` avec la pile héritée non
+  commitée ; seul le correctif de `pouls.py` (+ son test) a été commité, isolé,
+  sur `fix/pouls-pid-recycle`. Fusion sur `main` toujours à l'arbitrage.
+
+### Traité
+
+Ticket `organize` du 2026-09-08 : 60 paires constatées selon le contrat
+d'extraction et appliquées — **60 réponses, 60 abstentions, 0 entrée de revue, 0
+rejet**, aucune fusion ni suppression. L'abstention totale est cohérente et non
+suspecte : `decider()` ne conclut `same_unit` que si `b_apres_a` **et**
+`ecart_prix_pct < 2,0`, et aucune des 60 paires ne réunit les deux (la seule sous
+2 %, `fazwaz:sale:1960841|6565403` à 1,6 %, a B vue *avant* le retrait de A).
+
+Sauvegarde clé USB **saine** : réussie à chaque cycle, chaque copie vérifiée 3×
+ligne à ligne (règle 8). Dernière close le 08/09 — 2 179,6 Mo, 113 912 annonces /
+83 454 actives, 3 essais concordants. D: a 37,3 Go libres.
