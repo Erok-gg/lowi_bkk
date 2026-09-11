@@ -2065,3 +2065,117 @@ désormais alignés **à l'annonce près** sur le périmètre servi :
 L'écart de 1 178 sur le total est **voulu** : le serveur ne porte que le marché
 consultable, l'historique des délistées reste local où il alimente les
 statistiques d'évolution (scénario A, arbitrage du 2026-08-26).
+
+---
+
+## 2026-09-11 — Réparation autonome : un rattrapage isolé effaçait le témoin d'un vrai cycle (`cycle_vide` crié à tort)
+
+Session `lowi-reparation-autonome` (PC2, `REMIZDABOSS`, confirmé par
+`$env:COMPUTERNAME`). Compte-rendu détaillé :
+[agents/audits/reparations-2026-09-11.md](../agents/audits/reparations-2026-09-11.md).
+
+### Le vrai défaut : `battement()` recalculait sur une fenêtre glissante insensible à ce qui s'était réellement passé
+
+Cycle du 08/09-09/09 réel : extraction 18:12→01:12 (4/5 extracteurs ok, 5 403
+annonces), témoin sain déposé. À 11:00:22, un rattrapage isolé (aucun agent dû
+sauf `garde-veille`, `always_run`) a néanmoins redéposé un battement — et
+`battement()` recalcule `extracteurs_lances` sur les lignes du ledger des
+« 12 dernières heures depuis maintenant », sans savoir que CETTE invocation
+n'avait rien à voir avec l'extraction. À 16 h 48 du début réel, la fenêtre ne
+voyait plus les 5 extracteurs : le témoin a été réécrit à
+`extracteurs_lances: 0`, et `ops/pouls.py --verifier` a crié `cycle_vide`
+(ticket `2026-09-09T130002`) pour un cycle qui avait pourtant tourné.
+
+**Correctif** (commit `3d663e6`, branche `fix/pouls-pid-recycle`) :
+`battement(lane, extraction_tentee=bool)`. Quand l'invocation ne pouvait de
+toute façon pas produire d'extraction (`--boot`, `run-lane
+--skip-extraction`, ou `run <agent>` sur un agent qui n'est pas un
+extracteur — déduit dans `orchestrator.py` de la famille de l'agent visé),
+elle reconduit le dernier témoin au lieu de le recalculer. Vérifié en
+conditions réelles sur ce dépôt : `orchestrator.py run garde-veille` isolé
+préserve désormais les 5/5 extracteurs et 5 403 annonces au lieu de les
+remettre à 0 ; `ops/pouls.py --verifier` ne crie plus. Test de
+non-régression : `agents/tests/test_pouls_battement_sans_extraction.py`
+(couvre aussi qu'un vrai cycle vide continue d'alerter — règle 2, envers).
+
+C'est la même famille de défaut que le PID recyclé du 2026-09-09 : un signal
+externe au cycle (ici une invocation incidente, là un PID réutilisé) contamine
+une mesure qui se croyait fraîche. Deuxième occurrence du même patron en trois
+jours sur `pouls.py` — la surface qui date « depuis maintenant » plutôt que
+« depuis l'événement réel » reste le point faible de ce module.
+
+### Tickets traités (5/5)
+
+- 3× `organize/comparaison_deleguee` (60 paires chacun, 09/09 et 09/10 ×2) —
+  extraction mécanique des 6 champs par parsing déterministe du `texte`
+  fourni (même méthode que les sessions précédentes) : 180/180 réponses,
+  180 abstentions, 0 `same_unit`, 0 rejet. Cohérent : le pré-filtre SQL a déjà
+  éliminé les paires à écart <2 % séquentielles, il ne reste que des écarts
+  plus larges que `decider()` refuse à raison.
+- `overseer/agent_muet` (`fraicheur`, 09/09 02:05) — vérifié non récidivé :
+  `fraicheur` a tourné avec succès 55 min plus tard puis chaque jour depuis.
+  Incident isolé lié à la nuit chargée (extraction terminée tard), pas de
+  correctif de code nécessaire.
+- `pouls/cycle_vide` (09/09 13:00) — root-causé et corrigé, voir ci-dessus.
+
+Les 5 tickets étaient fermés par déplacement manuel vers `queue/done/` (comme
+lors de sessions précédentes) ; `escalation.reconcile()` relancé ensuite pour
+refermer dans le ledger l'entrée qui y était réellement suivie (`overseer`,
+seul appel qui passe `ledger=`). Constat : `organize.py` et `ops/pouls.py`
+n'appellent `escalation.create()` **sans** `ledger=` — leurs tickets ne sont
+donc jamais dans le compteur « escalades ouvertes » du ledger, seulement dans
+la file de fichiers. Pas un défaut nouveau (déjà la situation lors de la
+session du 09-05), non corrigé cette fois non plus — changer la signature de
+`create()` pour ces deux appelants est un choix hors du périmètre de cette
+séance.
+
+### Boîte mail (5/5 traités)
+
+4 alertes envoyées avec 3 jours de retard (`extract-fazwaz`,
+`extract-ddproperty`, `remonter-supabase`, `overseer/fraicheur`) — toutes
+décrivent des incidents déjà diagnostiqués et déjà consignés (nuit du 08/09,
+entrée du 2026-09-09) ; contexte de résolution ajouté dans chaque corps de
+message. La 5e (`pouls/cycle_vide`) **retractée, non envoyée** : c'est
+exactement l'alerte que ce correctif vient d'invalider — l'envoyer aurait
+propagé ce qui vient d'être rétracté (règle 2, même logique que les deux
+mails « 199 h » retirés le 2026-09-09).
+
+### Vérifications de routine — rien d'autre à signaler
+
+- Erreurs des logs d'extraction (05/09→10/09) : uniquement les 6 747
+  occurrences déjà diagnostiquées de la nuit du 08/09 et les 4 de la collision
+  de migration du 07/09 (toutes deux déjà journalisées) — **aucune
+  récidive**, aucun nouveau motif.
+- `pragma quick_check` : `ok`. 122 175 annonces, 90 233 actives
+  (ddproperty 74 054 · fazwaz 10 989 · nestopa 3 376 · propertyscout 1 365 ·
+  livinginsider 449). `last_seen` le plus récent cohérent avec la fin du
+  dernier cycle.
+- Sauvegarde USB du dernier cycle : 3/3 essais vérifiés, 122 175/90 233 —
+  identique à la base vivante. 2 415,5 Mo copiés en 967,1 s.
+
+### Non fait, et pourquoi
+
+- **`regle-alimentation` (25,5 j), `verifie-backup` (17,1 j), `storage`
+  (18,7 j)** affichés `DÛ` par `orchestrator status` : **pas une panne**. Les
+  trois ont `lanes: []` dans `agents.json`, neutralisés/manuels à dessein
+  (`verifie-backup` et `storage` explicitement le 2026-08-25, leur rôle repris
+  par `ops/sauvegarde-cle.py` + `ops/pouls.py`). Vérifié dans `agents.json`
+  avant de les traiter comme des défauts.
+- **`organize.py`/`pouls.py` sans `ledger=` sur `escalation.create()`** —
+  signalé ci-dessus, non corrigé (hors périmètre de cette séance, pas demandé
+  par un ticket).
+- **`Archives/Lowi_bkk/`** (racine du dépôt, non suivi git, 21 Mo) — fichiers
+  personnels visiblement déposés là par erreur ou pour archivage manuel
+  (captures `.mhtml` d'annonces, `Lowi.pptx`, raccourcis `.lnk` vers les
+  scripts de scrap). Sans rapport avec le pipeline, ne bloque rien. Signalé,
+  non supprimé — pas créé par cette session, pas de preuve qu'il faille le
+  retirer.
+- **`bad_rings_out.txt`** (racine, non suivi, daté 2026-08-30) — même constat
+  que la session du 09-05 : sortie de debug orpheline, signalée, non
+  supprimée.
+- Dépôt sur `fix/pouls-pid-recycle`, non fusionné, avec des fichiers
+  modifiés/non suivis hérités de sessions précédentes (données d'étude
+  quotidiennes routinières, `ops/verifie-synchro.py`,
+  `agents/tests/test_remonter_bulk.py`, `CLAUDE.md`, `.gitignore`,
+  `docs/etudes/data/*`). Non touchés cette session — fusion sur `main`
+  laissée à l'arbitrage de l'utilisateur.
