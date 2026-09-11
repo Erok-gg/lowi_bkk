@@ -673,7 +673,19 @@ def main() -> None:
     try:
         if a_tourne and not a.dry_run:
             from ops.pouls import battement
-            battement(current_lane())
+            # `--boot` et `--skip-extraction` sautent délibérément
+            # l'extraction ; un `run <agent>` isolé ne l'attaque que si
+            # l'agent visé EST un extracteur. Dans tous les autres cas,
+            # cette invocation ne peut rien dire sur l'extraction — voir
+            # ops/pouls.battement() pour l'incident du 2026-09-09 que ça
+            # corrige (cycle_vide crié à tort par un rattrapage isolé).
+            extraction_tentee = not (a.boot or a.skip_extraction)
+            if a.command == "run" and a.target:
+                cible = next((s for s in REGISTRY["agents"]
+                              if s["name"] == a.target), None)
+                extraction_tentee = bool(
+                    cible and cible.get("famille") == "Extraction")
+            battement(current_lane(), extraction_tentee=extraction_tentee)
     except Exception as e:                                   # noqa: BLE001
         # Un témoin qui plante ne doit jamais faire échouer un cycle réussi.
         print(f"[pouls] témoin non déposé : {type(e).__name__}: {e}")

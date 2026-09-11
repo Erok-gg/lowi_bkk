@@ -93,8 +93,37 @@ def _maintenant() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def battement(lane: str = "?") -> dict:
-    """Déposé par le cycle, à la fin. Contient de quoi juger SANS le ledger."""
+def battement(lane: str = "?", extraction_tentee: bool = True) -> dict:
+    """Déposé par le cycle, à la fin. Contient de quoi juger SANS le ledger.
+
+    `extraction_tentee=False` : cette invocation n'a délibérément pas touché à
+    l'extraction (`--boot`, `run-lane --skip-extraction`, ou `run <agent>` sur
+    un agent qui n'est pas un extracteur). Mesuré le 2026-09-09 : un
+    rattrapage au logon (PC2) a relancé `garde-veille` seul, 16 h 48 après le
+    début du cycle réel (extraction 18:12 → 01:12, `docs/journal-technique.md`
+    du 09/09) ; la fenêtre de calcul (« dernières 12 h ») ne voyait plus les
+    extracteurs de la veille, pourtant réussis à 4/5, et a redéposé
+    `extracteurs_lances: 0` — `cycle_vide` a crié à tort
+    (ticket `2026-09-09T130002-pouls-cycle_vide.json`). Une invocation qui ne
+    pouvait de toute façon pas produire d'extraction ne doit pas écraser le
+    dernier constat réel : elle reconduit le témoin précédent sur ces champs."""
+    if not extraction_tentee:
+        etat = {"termine_a": _maintenant().isoformat(), "lane": lane,
+                 "extraction_sautee_ici": True}
+        precedent = {}
+        try:
+            precedent = json.loads(POULS.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+        for cle in ("agents_lances", "extracteurs_lances", "extracteurs_ok",
+                    "annonces_ecrites"):
+            if cle in precedent:
+                etat[cle] = precedent[cle]
+        POULS.parent.mkdir(parents=True, exist_ok=True)
+        POULS.write_text(json.dumps(etat, ensure_ascii=False, indent=1),
+                          encoding="utf-8")
+        return etat
+
     etat = {"termine_a": _maintenant().isoformat(), "lane": lane}
     try:
         cx = sqlite3.connect(f"file:{LEDGER}?mode=ro", uri=True)
