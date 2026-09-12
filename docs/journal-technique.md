@@ -2179,3 +2179,103 @@ mails « 199 h » retirés le 2026-09-09).
   `agents/tests/test_remonter_bulk.py`, `CLAUDE.md`, `.gitignore`,
   `docs/etudes/data/*`). Non touchés cette session — fusion sur `main`
   laissée à l'arbitrage de l'utilisateur.
+
+## 2026-09-12 — Réparation autonome : trou de diagnostic sur l'orchestrateur lui-même
+
+**Contexte** : tâche planifiée `lowi-reparation-autonome`. Dernier cycle daily
+(2026-09-11 18:00 → 2026-09-12 00:50 UTC) terminé sain — 4/5 extracteurs, 6 211
+annonces écrites — mais `overseer` a ouvert une escalade **haute** :
+`extract-livinginsider` muet alors qu'il était dû.
+
+**Investigation.** Piste par défaut du ticket (guillemets échappés dans le XML
+de la tâche `LowiBKK-Agents`) écartée en premier : `Get-ScheduledTaskInfo`
+donne `LastTaskResult=0`, et `Get-ScheduledTask` montre des `Arguments` propres
+(`"orchestrator.py" --due`). Le ledger confirme que les 4 autres extracteurs
+ont bien tourné en parallèle (`ThreadPoolExecutor`) sur ce cycle, mais ne
+contient **aucune ligne** pour `extract-livinginsider` — ni `ok`, ni `failed`,
+ni `running` orphelin (écarte l'hypothèse d'un PID recyclé, déjà traitée par
+ailleurs sur cette branche, commit `87ab652`). Rejoué `is_due()` avec l'état du
+ledger d'avant et d'après le cycle : **due dans les deux cas**. L'agent aurait
+dû être sélectionné.
+
+**Root cause NON établie — défaut non reproduit, donc traité comme hypothèse
+(règle 1).** En cherchant où l'information manquante aurait dû apparaître,
+trouvé que `agents/core/shell.py` documente depuis le 2026-08-22 que les
+sous-processus héritaient d'un souci d'encodage sous la tâche planifiée (pas
+de console), corrigé à l'époque — mais **le correctif ne portait que sur les
+sous-processus**. Les `print()` et exceptions de l'**orchestrateur lui-même**
+(la boucle de sélection, le `except Exception` autour du `ThreadPoolExecutor`)
+n'ont jamais eu de destination sous la tâche planifiée : ils partent dans le
+vide. Si `extract-livinginsider` a levé une exception avant
+`led.start_run()` (ex. dans `shell.log_path()`, à l'intérieur de son thread),
+l'unique trace qui aurait expliqué l'incident n'a jamais existé.
+
+**Corrigé : le trou de diagnostic, pas le symptôme.** `agents/orchestrator.py`
+— classe `Tee`, branchée sur `sys.stdout`/`sys.stderr` pour les modes
+`--due`/`--boot`/`run-lane` (ceux que la tâche planifiée utilise ; `status`/
+`due` interactifs gardent leur console normale). Écrit désormais TOUJOURS dans
+`agents/logs/orchestrator-<horodatage>.log`, en plus de la console d'origine
+en best-effort. Bug trouvé EN TESTANT ce correctif avant de le valider :
+fermer le fichier sans restaurer `sys.stdout` fait tenter à Python de reflusher
+un `Tee` sur fichier fermé à la sortie de l'interpréteur
+(`Exception ignored while flushing sys.stdout`) — corrigé en restaurant les
+flux d'origine avant `close()`. Test de non-régression :
+`agents/tests/test_orchestrator_tee.py` (le Tee ne doit jamais planter même
+si la console d'origine est cassée). Vérifié par `--due --dry-run` et
+`run-lane daily --dry-run` : exit 0, propre.
+
+Ticket `2026-09-12T005036-overseer-agent_muet.json` fermé (`queue/done/`) avec
+la chronologie complète en champ `resolution` — explicitement marqué
+« non établi avec certitude ». **À surveiller** : si `extract-livinginsider`
+redevient muet au cycle du 2026-09-13 01:00, le nouveau log dira enfin
+pourquoi ; à relire en priorité avant toute nouvelle hypothèse.
+
+**Ticket `organize/comparaison_deleguee` traité** (60 paires, poste sans
+modèle local — `agents/t1-absent`). Extraction MÉCANIQUE des 6 champs
+(`a_active`, `b_active`, `a_retiree`, `b_retiree`, `b_apres_a`,
+`ecart_prix_pct`) depuis le champ `texte` (format généré par code, donc
+stable) et les dates `da`/`fsb` déjà fournies sans ambiguïté par le ticket —
+vérifié à la main sur 8 paires avant application, aucun écart. `organize.py
+--appliquer` : **60/60 abstentions, 0 revue ajoutée, 0 rejet**. Conforme au
+principe du mode extraction (`decider()` tranche, pas l'extraction) — un peu
+au-dessus du taux de base mesuré (77 %) mais sur un échantillon de 60 paires
+déjà pré-filtrées comme ambiguës, pas une anomalie en soi.
+
+### Vérifications de routine
+
+- Erreurs des logs (05/09→12/09) : rien de nouveau depuis le 10/09. Les seules
+  occurrences `Traceback`/`[erreur]`/`SONDE-ECHEC` trouvées datent du 07/09 et
+  08/09, déjà diagnostiquées lors de sessions précédentes.
+- `pragma quick_check` : `ok`. 125 223 annonces, 93 009 actives (ddproperty
+  76 825 · fazwaz 10 962 · nestopa 3 415 · propertyscout 1 358 · livinginsider
+  449 — ce dernier chiffre inchangé depuis le 09/09, cohérent avec l'absence
+  de run depuis le 10/09). `last_seen` max cohérent avec la fin du cycle.
+- Sauvegarde USB du dernier cycle : 3/3 essais vérifiés, 125 223/93 009 —
+  identique à la base vivante. 2 509,2 Mo copiés en 966,3 s.
+- Suite de tests (`agents/tests/test_*.py`, 25 fichiers) : toute la suite
+  passe. `test_local_llm.py` et le benchmark `test_prose_ddproperty.py` sont
+  dégradés par l'absence d'Ollama sur ce poste (`agents/t1-absent`, attendu,
+  pas une régression). `test_fetch_outage.py` a juste besoin de plus de 60 s
+  (simule une coupure réseau) — passe à 180 s, faux positif de mon script de
+  test, pas un défaut du code.
+- Boîte mail (`agents/queue/mail/`) : 1/1 traité. Alerte
+  `extract-livinginsider muet` envoyée avec le contexte de résolution ajouté
+  (connecteur Gmail disponible).
+
+### Non fait, et pourquoi
+
+- **Root cause du `extract-livinginsider` muet** — non établie, voir
+  ci-dessus. Le correctif posé rend la PROCHAINE occurrence diagnosticable ;
+  il ne prétend pas expliquer celle du 2026-09-11→12.
+- **`regle-alimentation`, `verifie-backup`, `storage`** toujours `DÛ` dans
+  `orchestrator status` : toujours pas une panne, `lanes: []` inchangé,
+  reconfirmé dans `agents.json` avant de les ignorer.
+- **`organize.py`/`pouls.py` sans `ledger=` sur `escalation.create()`** —
+  toujours signalé, toujours non corrigé (hors périmètre, pas demandé par un
+  ticket cette fois non plus).
+- **`Archives/Lowi_bkk/`**, **`bad_rings_out.txt`**, et les fichiers hérités de
+  sessions précédentes sur `fix/pouls-pid-recycle` (données d'étude
+  quotidiennes, `ops/verifie-synchro.py`, `agents/tests/test_remonter_bulk.py`,
+  `CLAUDE.md`, `.gitignore`, `docs/etudes/data/*`) — toujours en l'état, non
+  touchés cette session, mêmes constats que le 2026-09-09.
+- Compte-rendu complet : `agents/audits/reparations-2026-09-12.md`.

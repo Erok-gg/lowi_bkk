@@ -47,6 +47,38 @@ from agents.core import alert, escalation, shell           # noqa: E402
 from agents.core.metrics import aplatir                    # noqa: E402
 from agents.core.ledger import Ledger                     # noqa: E402
 
+
+class Tee:
+    """Duplique l'écriture vers un fichier ET la console d'origine.
+
+    Sous la tâche planifiée, sys.stdout n'a pas de console attachée : ses
+    écritures partent dans le vide (même défaut que shell.py documentait déjà
+    côté sous-processus avant le correctif du 2026-08-22, jamais posé côté
+    process orchestrateur lui-même). Constaté le 2026-09-12 : extract-
+    livinginsider absent d'un cycle sans aucune trace du print()/exception qui
+    l'aurait expliqué — la piste s'arrêtait net, root-cause non mesurable.
+    Ce tee écrit TOUJOURS dans le fichier ; la console d'origine reste en
+    best-effort (une écriture cassée dessus ne doit jamais faire planter le
+    cycle réel)."""
+
+    def __init__(self, original, fichier):
+        self._original = original
+        self._fichier = fichier
+
+    def write(self, s: str) -> int:
+        try:
+            self._original.write(s)
+        except Exception:                                   # noqa: BLE001
+            pass
+        return self._fichier.write(s)
+
+    def flush(self) -> None:
+        try:
+            self._original.flush()
+        except Exception:                                   # noqa: BLE001
+            pass
+        self._fichier.flush()
+
 #: Marqueur émis par scraper/run.py quand la sonde de structure (page 1)
 #: échoue AVANT le scan complet — voir scraper/adapters/base.py:sonder().
 #: Repris ici pour escalader tout de suite, sans attendre watch-health (qui
@@ -626,6 +658,21 @@ def main() -> None:
         a.local = os.path.abspath(a.local)
         os.makedirs(a.local, exist_ok=True)
 
+    # Capture des prints DE L'ORCHESTRATEUR LUI-MÊME (pas des sous-processus,
+    # déjà journalisés par shell.py) — seulement pour les modes que la tâche
+    # planifiée utilise réellement. Un `status`/`due` interactif garde sa
+    # console normale sans fichier superflu.
+    log_orchestrateur = None
+    stdout_origine, stderr_origine = sys.stdout, sys.stderr
+    if a.due or a.boot or a.command == "run-lane":
+        os.makedirs(shell.LOG_DIR, exist_ok=True)
+        chemin_log = os.path.join(
+            shell.LOG_DIR,
+            f"orchestrator-{datetime.now(timezone.utc):%Y-%m-%dT%H%M%S}.log")
+        log_orchestrateur = open(chemin_log, "w", encoding="utf-8", errors="replace")
+        sys.stdout = Tee(stdout_origine, log_orchestrateur)
+        sys.stderr = Tee(stderr_origine, log_orchestrateur)
+
     led = Ledger()
     # Seuls les modes qui EXÉCUTENT une lane déposent le témoin de vie. Une
     # consultation (`status`, `due`) ne doit surtout pas faire croire qu'un
@@ -689,6 +736,14 @@ def main() -> None:
     except Exception as e:                                   # noqa: BLE001
         # Un témoin qui plante ne doit jamais faire échouer un cycle réussi.
         print(f"[pouls] témoin non déposé : {type(e).__name__}: {e}")
+
+    if log_orchestrateur:
+        # Restaurer AVANT de fermer : sinon sys.stdout reste un Tee pointant
+        # sur un fichier fermé, et le nettoyage de l'interpréteur à la sortie
+        # tente de le reflusher — "Exception ignored while flushing sys.stdout"
+        # (mesuré en testant ce correctif, 2026-09-12).
+        sys.stdout, sys.stderr = stdout_origine, stderr_origine
+        log_orchestrateur.close()
 
     if a.veille_a_la_fin:
         from agents.core import veille
