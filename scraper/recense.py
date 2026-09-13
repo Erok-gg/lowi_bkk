@@ -241,6 +241,64 @@ def _rafraichir(store, vus: set[str], actives: set[str]) -> dict:
             "rafraichies": touchees}
 
 
+#: Part maximale de pages trouées au-delà de laquelle on refuse de compter une
+#: absence. Mesuré du 09 au 12/09 : 0 à 5 pages sur ~2 600 (≤ 0,2 %).
+DELIST_MAX_TROUS = 0.01
+#: Nuits CONSÉCUTIVES d'absence avant délistage. À 0,2 % de pages trouées, la
+#: probabilité qu'une annonce vivante tombe dans un trou trois nuits de suite
+#: est de l'ordre de 1e-8 — le délai absorbe les trous sans laisser traîner.
+DELIST_GRACE = 3
+#: Sous ce ratio vues/actives on ne délist rien (site en panne, parcours
+#: tronqué) — même seuil que run.py (FULL_DELIST_MIN_RATIO).
+DELIST_MIN_RATIO = 0.5
+
+
+def _delister(store, source: str, deal: str, vus: set[str], actives: set[str],
+              trous: int, derniere: int, fin_atteinte: bool) -> dict:
+    """Délistage par le recensement, avec délai de grâce — ajouté le 2026-09-13.
+
+    POURQUOI. run.py --full ne délist jamais DDproperty : son scan couvre 16 %
+    des actives et le garde-fou des 50 % l'annule chaque nuit (documenté le
+    2026-08-23). Mesuré au ledger le 2026-09-13 : `retirees: 0` sur 12/12 runs,
+    +1 100 à 2 800 nouvelles par nuit, et 12 700 actives DDproperty (16 %) que le
+    recensement n'avait pas revues depuis 3 à 60 jours. Le stock ne peut que
+    monter : la base locale est passée de 1,19 à 2,56 Go en 18 j et Supabase de
+    139 à 336 Mo (67 % du quota). Le recensement, lui, énumère le catalogue
+    ENTIER chaque nuit : c'est le seul scan dont l'absence veut dire quelque
+    chose.
+
+    CE QUI EST ÉCRIT. `mark_missing_inactive` : +1 sur `missed_count` des
+    actives non vues, `status='inactive'` + `delisted_at` (daté de la PREMIÈRE
+    absence) quand `missed_count` ≥ DELIST_GRACE. Rien n'est supprimé, pas même
+    les photos (contrairement à run.py --full). Une annonce revue ensuite est
+    réactivée par `toucher_lot`/`touch_listing`, qui remettent `missed_count` à
+    zéro.
+
+    RETOUR EN ARRIÈRE. Les lignes délistées par ce chemin sont celles dont
+    `dirty_since` = l'instant du run :
+        update listings set status='active', delisted_at=null
+         where source='ddproperty' and status='inactive'
+           and dirty_since >= '<début du run>';
+
+    QUAND ON S'ABSTIENT (et on le dit dans le bilan) : page terminale jamais
+    vue (plafond atteint), trous > DELIST_MAX_TROUS des pages, ou moins de
+    DELIST_MIN_RATIO des actives revues. Un trou de 1 % laisse passer l'absence
+    d'une nuit ; le délai de grâce fait le reste."""
+    if not fin_atteinte:
+        return {"delistees": 0, "delistage": "abstention — page terminale non atteinte"}
+    if derniere and trous / derniere > DELIST_MAX_TROUS:
+        return {"delistees": 0,
+                "delistage": f"abstention — {trous} pages trouées sur {derniere} "
+                             f"(> {DELIST_MAX_TROUS:.0%})"}
+    if actives and len(vus & actives) < DELIST_MIN_RATIO * len(actives):
+        return {"delistees": 0,
+                "delistage": f"abstention — {len(vus & actives)} actives revues sur "
+                             f"{len(actives)} (< {DELIST_MIN_RATIO:.0%})"}
+    delistees = store.mark_missing_inactive(source, vus, deal_type=deal, grace=DELIST_GRACE)
+    return {"delistees": len(delistees), "absentes_cette_nuit": len(actives - vus),
+            "delistage": f"grâce {DELIST_GRACE} nuits"}
+
+
 def _comparer(vus: set[str], actives: set[str]) -> dict:
     """Le VERDICT de comparaison — n'a de sens que sur un parcours COMPLET.
 
@@ -264,6 +322,9 @@ def main() -> int:
                     help="defaut local depuis la bascule du 2026-08-23")
     ap.add_argument("--sans-base", action="store_true",
                     help="parcours seul, sans lecture ni écriture en base (mesure)")
+    ap.add_argument("--delister", action="store_true",
+                    help="marque inactives les actives absentes du catalogue "
+                         f"{DELIST_GRACE} nuits de suite (cf. _delister) ; rien supprimé")
     args = ap.parse_args()
 
     config = json.loads((CONFIG_DIR / f"{args.source}.json").read_text(encoding="utf-8"))
@@ -325,6 +386,12 @@ def main() -> int:
                 actives = store.ids_actifs(args.source, deal)
                 if vus:
                     ligne.update(_rafraichir(store, vus, actives))
+                    # DÉLISTAGE APRÈS RAFRAÎCHISSEMENT, AVANT LES ABSTENTIONS DE
+                    # VERDICT : il tolère un parcours légèrement troué (délai de
+                    # grâce), là où _comparer exige un parcours parfait.
+                    if args.delister:
+                        ligne.update(_delister(store, args.source, deal, vus, actives,
+                                               trous, derniere, rec.fin is not None))
 
             if rec.fin is None and rec.pages_lues:
                 # PLAFOND ATTEINT AVANT LA FIN DU CATALOGUE. On a lu ce qu'on
@@ -384,6 +451,7 @@ def main() -> int:
     # le chiffre qui dit si le recensement a servi à quelque chose cette nuit.
     # Il valait 0 à tous les runs trouées avant le correctif du 2026-09-09.
     bilan["rafraichies"] = sum(f.get("rafraichies", 0) for f in bilan["flux"])
+    bilan["delistees"] = sum(f.get("delistees", 0) for f in bilan["flux"])
     # Bilan JSON terminal : lu par agents/core/shell.py (_bilan_json) et vérifié
     # par l'overseer contre le contrat de sortie du SKILL.
     print(json.dumps(bilan, ensure_ascii=False, indent=1))

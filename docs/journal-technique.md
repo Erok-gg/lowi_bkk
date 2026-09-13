@@ -2468,3 +2468,65 @@ modifié. Points saillants, tous mesurés :
   alors que le mode sitemap les résout.
 
 Non fait : les 7 arbitrages listés en §4 du rapport.
+
+## 2026-09-13 (suite 3) — Suites de l'audit : délistage DDproperty, bruit des garde-fous
+
+Décision de l'utilisateur : **le mot de passe ne bouge pas** ; le reste des
+recommandations s'applique.
+
+**1. Le recensement DDproperty délist (`recense.py --delister`).** Mesuré
+avant d'écrire : `retirees: 0` sur 12/12 runs `--full` (scan à 16 % des
+actives, garde-fou des 50 % annulé chaque nuit — connu depuis le 23/08) ;
+**12 700 actives DDproperty (16 %) non revues par le recensement depuis 3 à
+60 j** (rent 7 367, sale 5 338) ; les recensements du 09 au 12/09 atteignent
+la page terminale (2 561-2 779) avec 0 à 5 pages trouées (≤ 0,2 %). Règle :
+`mark_missing_inactive` (déjà en place pour `--full`) avec **grâce de 3 nuits
+consécutives** — à 0,2 % de trous, une vivante prise dans un trou 3 nuits de
+suite est de l'ordre de 1e-8. Trois abstentions explicites dans le bilan :
+page terminale non atteinte, trous > 1 %, moins de 50 % des actives revues.
+**Rien n'est supprimé, photos gardées** (à la différence de `--full`).
+Rollback documenté dans `_delister` (`dirty_since` du run). Branché dans
+`agents.json` (`then_2`). Test `agents/tests/test_recense_delister.py`.
+Attendu : ~0 délistée la 1re et la 2e nuit (compteur), **~12 000 la 3e nuit
+(16/09)**, puis un flux quotidien de l'ordre des sorties réelles du marché.
+`remonter-supabase --synchro-statuts` propage ensuite ; le serveur devrait
+**décroître** de ~40 Mo.
+
+**2. `organize` en mode ticket** rend désormais `paires_modele`, `abstentions`,
+`revue_ajoutee`, `pannes_llm` à 0 au lieu de les omettre — 19 `contrat_viole`
+en 14 j pour un agent qui faisait ce qu'on lui demandait.
+
+**3. `garde-veille`** : `power_request_absent` n'est plus émis à chaque cycle
+(12/14 j sans aucune coupure derrière — un état permanent du matériel, pas un
+signal) ; seulement si une coupure de veille est détectée dans le même run.
+L'état reste dans les métriques.
+
+**4. Escalades** : `escalation.reconcile()` a fermé 4 escalades au ledger
+(3 FazWaz + 1 organize) dont les tickets étaient déjà dans `queue/done/`.
+0 ouverte.
+
+**5. Port 3000** identifié : `next dev` du projet **`C:\blog`**, lancé le 11/09
+à 10:09 et jamais arrêté, écoute sur toutes les interfaces. Pas Lowi, non
+touché. **Tâche `LowiBKK-ScrapeImmoFacebook`** : script `C:\agentic\...`
+(hors dépôt, décision du 12/09), son dernier log dit `ok: true` mais la tâche
+rend 0x1 — le code retour du script ne reflète pas son résultat ; non corrigé
+(hors dépôt).
+
+### Non fait
+- Nestopa : 2 417/3 456 actives non revues depuis > 3 j, même mécanisme
+  (`--full` à 493 annonces contre 3 456 actives → garde-fou) ; pas de
+  recensement Nestopa, rien de fait.
+- Capacité de D: et nombre de copies quotidiennes de 2,5 Go : non mesurés.
+- Protection de déploiement Vercel, `authorized_keys` sshd : non vérifiés.
+
+**Addendum (mesure faite APRÈS avoir branché `--delister`, avant le premier
+run)** — la mesure du 23/08 qui avait interdit le délistage (« 10/12 actives
+non revues encore en ligne ») a été faite sur un recensement qui ne
+rafraîchissait rien dès qu'une page manquait (défaut corrigé le 09/09) :
+« non revue » signifiait alors « pas regardée ». Re-mesuré ce jour, en direct
+via le Fetcher curl_cffi de l'adaptateur : **16/16 actives DDproperty absentes
+du catalogue depuis 3 à 60 j sont mortes** (12 × HTTP 404, 4 × page servie
+sans `listingDetail` — gabarit « annonce expirée »), **4/4 vivantes** parmi
+celles revues la veille (`listingDetail` présent, `statusCode = ACT`). Le
+délistage par le recensement est donc juste, et il l'est dès 3 jours
+d'absence — la grâce de 3 nuits n'est pas trop courte.

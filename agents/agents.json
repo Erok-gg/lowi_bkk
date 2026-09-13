@@ -163,9 +163,11 @@
           "--onglets",
           "5",
           "--store",
-          "sqlite"
+          "sqlite",
+          "--delister"
         ]
       ],
+      "_delister_pourquoi_2026-09-13": "Le recensement DELISTE désormais (grâce de 3 nuits consécutives d'absence, rien supprimé, photos gardées — voir recense._delister). Mesure du jour : run.py --full ne retirait RIEN sur DDproperty (retirees: 0 sur 12/12 runs, garde-fou des 50 % annulé chaque nuit), 12 700 actives non revues depuis 3 à 60 j, base locale 1,19 → 2,56 Go et Supabase 139 → 336 Mo en 18 j. Le recensement est le seul scan qui voit le catalogue entier (2 600-2 800 pages, 0-5 trous), donc le seul où l'absence a un sens. Retour arrière : update listings set status='active', delisted_at=null where source='ddproperty' and status='inactive' and dirty_since >= '<début du run>'.",
       "bandes": {
         "nouvelles": [
           30,
@@ -176,7 +178,7 @@
           3
         ]
       },
-      "_recensement_pourquoi": "4e etape, APRES vente, location et couloirs — arbitrage du 2026-08-23. Mesure du jour : nos 150 pages couvrent 2,7 % du catalogue (2748 pages en vente, 2899 en location, ~113 000 annonces), donc le garde-fou anti-delistage de run.py s'annule a chaque cycle (scan a 16 % des actives, seuil a 50 %) et le stock ne fait que monter : 6 671 actives le 31/07, 32 142 le 22/08. Le recensement enumere les identifiants du catalogue entier sans une seule page detail : 1 h 40 a 5 onglets (1,06 s/page contre 5,24 s a un onglet). Il NE DELISTE RIEN et N'INSERE RIEN — il rafraichit last_seen des actives confirmees et compte le reste. En 'then' et non en agent separe : les agents d'une meme lane demarrent en parallele, ce qui ferait cogner deux scans DDproperty en meme temps."
+      "_recensement_pourquoi": "4e etape, APRES vente, location et couloirs — arbitrage du 2026-08-23. Mesure du jour : nos 150 pages couvrent 2,7 % du catalogue (2748 pages en vente, 2899 en location, ~113 000 annonces), donc le garde-fou anti-delistage de run.py s'annule a chaque cycle (scan a 16 % des actives, seuil a 50 %) et le stock ne fait que monter : 6 671 actives le 31/07, 32 142 le 22/08. Le recensement enumere les identifiants du catalogue entier sans une seule page detail : 1 h 40 a 5 onglets (1,06 s/page contre 5,24 s a un onglet). Il N'INSERE RIEN — il rafraichit last_seen des actives confirmees et compte le reste (et depuis le 2026-09-13, avec --delister, marque inactives les absentes 3 nuits de suite — voir _delister_pourquoi). En 'then' et non en agent separe : les agents d'une meme lane demarrent en parallele, ce qui ferait cogner deux scans DDproperty en meme temps."
     },
     {
       "name": "extract-propertyscout",

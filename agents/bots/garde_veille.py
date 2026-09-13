@@ -83,16 +83,13 @@ def _evenements_veille(depuis: datetime, jusqu_a: datetime) -> list[tuple[dateti
 
 def run(led, run_id: int, lane: str, spec: dict) -> dict:
     verrou_pose, verrou_power_request_pose = wake_lock.acquire_detail()
-    if verrou_pose and not verrou_power_request_pose:
-        # Pas une panne (le legacy a réussi, le cycle continue) mais un signal
-        # a suivre : c'est exactement cette combinaison (verrou_veille_pose=true
-        # seul) qui a précédé les 12 h 44 de veille moderne du 2026-08-28 sans
-        # que rien ne le distingue d'un verrou pleinement pose. Bas, pas de mail.
-        led.finding("garde-veille", "low", "power_request_absent",
-                    "SetThreadExecutionState a reussi mais PowerCreateRequest a "
-                    "echoue : le verrou legacy seul ne suffit pas a bloquer la "
-                    "veille moderne sur ce materiel (mesure le 2026-08-28).",
-                    {}, run_id)
+    # `verrou_pose and not verrou_power_request_pose` : combinaison qui avait
+    # précédé les 12 h 44 de veille du 2026-08-28. Elle produisait un finding
+    # par cycle — 12 en 14 j au 2026-09-13, sans qu'AUCUNE coupure ne suive :
+    # un état permanent de ce matériel, pas un signal (règle 2). L'état reste
+    # dans les métriques ci-dessous ; le finding n'est émis que si une coupure
+    # de veille est effectivement détectée dans le même run (voir plus bas).
+    power_request_absent = verrou_pose and not verrou_power_request_pose
 
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=FENETRE_HEURES)).isoformat()
     interrompus = led.conn.execute(
@@ -124,6 +121,13 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
             f"pas une panne — relancé automatiquement au prochain cycle dû.",
             {"run_id": r["id"], "started_at": r["started_at"], "ended_at": r["ended_at"]},
             run_id)
+
+    if detectees and power_request_absent:
+        led.finding("garde-veille", "low", "power_request_absent",
+                    "SetThreadExecutionState a reussi mais PowerCreateRequest a "
+                    "echoue, et une coupure de veille a suivi : le verrou legacy "
+                    "seul ne suffit pas sur ce materiel (mesure le 2026-08-28).",
+                    {"coupures": detectees}, run_id)
 
     return {"verrou_veille_pose": verrou_pose,
             "verrou_power_request_pose": verrou_power_request_pose,

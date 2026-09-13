@@ -520,7 +520,14 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
         m = deposer_en_ticket(led, run_id, ambigues)
         m.update({"backfills": 0, "bornes_alignees": bornes_ok,
                   "paires_candidates": len(paires), "paires_sql": tranchees_sql,
-                  "reste_ambigues": len(ambigues) - m["paires_deposees"]})
+                  "reste_ambigues": len(ambigues) - m["paires_deposees"],
+                  # Le contrat de sortie (SKILL.md) est le même dans les deux
+                  # modes : ici rien n'est tranché localement, donc zéro — et
+                  # non absent. Absents, l'overseer comptait un `contrat_viole`
+                  # par nuit (19 en 14 j au 2026-09-13) sur un agent qui faisait
+                  # exactement ce qu'on lui demande (règle 2).
+                  "paires_modele": 0, "abstentions": 0, "revue_ajoutee": 0,
+                  "pannes_llm": 0})
         return m
 
     lot = ambigues[:int(os.environ.get("ORGANIZE_LOT", LOT_MAX))]

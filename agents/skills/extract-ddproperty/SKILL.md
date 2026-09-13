@@ -19,7 +19,7 @@ elle porte donc la vérité terrain qui rend la question des doublons décidable
 ## Procédure
 1. `run.py --source ddproperty --deal-type <deal> --full --geocode --store supabase`
 2. **Puis** passe ciblée couloirs (même raison que FazWaz : restauration).
-3. **Puis** recensement : `recense.py --source ddproperty --onglets 5 --store supabase`.
+3. **Puis** recensement : `recense.py --source ddproperty --onglets 5 --store sqlite --delister`.
 
 ### Le recensement (étape 3, ajoutée le 2026-08-23)
 Nos 150 pages couvrent **2,7 %** du catalogue (2 748 pages en vente, 2 899 en
@@ -30,10 +30,18 @@ seuil à 50 %) et le stock ne fait que monter : 6 671 actives le 31/07, 32 142 l
 une seule page détail** : 1 h 35 à 5 onglets (1,01 s/page mesurée contre 5,24 s à
 un onglet).
 
+Ce qu'il fait depuis le **2026-09-13** (`--delister`, `recense._delister`) :
+- **délistage avec grâce de 3 nuits consécutives** d'absence du catalogue,
+  rien supprimé, photos gardées. La mesure du 23/08 (« 10 actives sur 12 non
+  revues encore en ligne ») datait d'un recensement qui **ne rafraîchissait
+  rien** dès qu'une page manquait (corrigé le 09/09) : « non revue » ne
+  voulait alors pas dire « absente ». Re-mesuré le 13/09, recensement sain :
+  **16/16 actives absentes depuis 3 à 60 j sont mortes** (12 × HTTP 404,
+  4 × page sans `listingDetail`) contre **4/4 vivantes** parmi les revues la
+  veille. Abstentions explicites : page terminale non atteinte, > 1 % de
+  pages trouées, < 50 % des actives revues.
+
 Ce qu'il **ne fait pas**, et c'est voulu (arbitrage du 2026-08-23) :
-- **aucun délistage** — les actives absentes du catalogue sont comptées, pas
-  touchées. Vérifié avant de décider : sur 12 actives non revues depuis début
-  août, **10 étaient encore en ligne** ; les délister aurait été une erreur.
 - **aucune insertion** — les inconnues partent dans
   `output/recensement/ddproperty-inconnues.jsonl`. Les enregistrer toutes
   pèserait ~540 Mo sur une base à 810 Mo en formule gratuite (mesuré).
