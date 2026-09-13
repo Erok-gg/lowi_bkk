@@ -1,5 +1,6 @@
 {
   "_comment": "Scrap CIBLÉ (temporaire) — khet sous-couverts des couloirs montants : rive ouest (Orange Ouest 2030 + Purple Sud 2029 + antenne Siriraj) et couloir Orange Est (2028). Focus LOCATION partout ; VENTE seulement là où le stock vente est aussi maigre. À lancer avec : run.py --source fazwaz --config config/targets/fazwaz-corridors.json --store supabase. Jamais avec --full (scan partiel → délistage interdit).",
+  "_obsolete_2026-09-13": "RETIRÉ de agents.json le 2026-09-13. Deux raisons : (1) robots.txt interdit désormais order_by, sans lequel 6 pages par district = la tête du classement sponsorisé ; (2) le mode sitemap de config/fazwaz.json énumère le catalogue ENTIER (84 534 condos Bangkok), tous districts confondus — la passe ciblée n'a plus rien à réactiver ni à compléter. Fichier conservé pour DDproperty (ddproperty-corridors.json, inchangé) et comme trace ; ne pas relancer tel quel.",
   "source": "fazwaz",
   "base_url": "https://www.fazwaz.com",
   "user_agent": "Mozilla/5.0 (compatible; bkk-perso/0.1; personal research)",
@@ -7,7 +8,6 @@
   "image_rate_limit_seconds": 0.4,
   "timeout_seconds": 30,
   "max_pages": 6,
-  "order_by": "user_updated_at|desc",
   "respect_robots": true,
   "searches": [
     { "path": "/condo-for-rent/thailand/bangkok/bang-kapi",      "deal_type": "rent" },

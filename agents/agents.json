@@ -98,19 +98,9 @@
           "--full",
           "--store",
           "sqlite"
-        ],
-        [
-          "@py",
-          "scraper/run.py",
-          "--source",
-          "fazwaz",
-          "--config",
-          "config/targets/fazwaz-corridors.json",
-          "--store",
-          "sqlite"
         ]
       ],
-      "_then_pourquoi": "1er 'then' = location, enchaînée dès que la vente finit (indépendamment des autres sources). 2e 'then' = passe ciblée corridors, EN DERNIER : la fenêtre 150 pages du --full délisterait à tort les districts ciblés, la passe ciblée les réactive après coup.",
+      "_then_pourquoi": "1er 'then' = location, enchaînée dès que la vente finit (indépendamment des autres sources). La passe ciblée corridors (2e 'then' jusqu'au 2026-09-13) est retirée : robots.txt interdit order_by depuis le 2026-09-12, et le mode sitemap (config/fazwaz.json, discovery='sitemap') énumère le catalogue entier — plus de fenêtre de 150 pages qui délistait à tort les districts ciblés, donc plus rien à réactiver. Mesure du 2026-09-13 : 84 534 condos Bangkok dans le sitemap, 17/17 URL testées vivantes, dont 7 que la base croyait délistées.",
       "bandes": {
         "nouvelles": [
           50,

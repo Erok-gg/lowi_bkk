@@ -2360,3 +2360,83 @@ sauvegarde USB 3/3 essais vérifiés, identique à la base vivante.
   `CLAUDE.md`, `.gitignore`, `study/official/*`) — non touchés, mêmes
   constats que les sessions précédentes.
 - Compte-rendu complet : `agents/audits/reparations-2026-09-13.md`.
+
+## 2026-09-13 (suite) — FazWaz : découverte par sitemap, `order_by` abandonné
+
+**Décision de l'utilisateur** : « trouve une solution de contournement, on ne
+peut pas perdre cette source ». Posture retenue : ne pas contourner le
+`Disallow: /*?*order_by=` (aucun autre paramètre de tri cherché), mais lire
+ce que le **même robots.txt déclare** — `Sitemap: …/sitemap-listings.xml`.
+C'est le canal que le site publie lui-même pour les robots.
+
+**Mesuré sur fazwaz.com** (scratch, 27 requêtes, 75 Mo) :
+- 27 fichiers × 8 000 URL = **213 683 annonces nationales**, chacune avec
+  `<lastmod>` (100 %) et une image ; index régénéré vers 02:00 Bangkok.
+- **84 534 condos Bangkok** (49 019 location, 35 515 vente) ; la base n'en
+  portait que **10 915 actives**. 6 666 identifiants présents en vente ET en
+  location (même lot, deux annonces — déjà notre convention `deal_type` dans
+  l'id).
+- Sur la fenêtre 60 j de `lastmod` : 25 977 URL, dont 9 017 actives chez nous,
+  **5 825 que la base croit délistées**, **11 135 inconnues**.
+- **17/17 URL tirées au sort** (7 « délistées », 5 inconnues, 4 datées
+  2020-2023, 1 location fraîche) répondent 200 avec un prix affiché. Le sitemap
+  décrit le stock vivant ; nos ~300 « retirées »/jour au ledger (289 le 09-11,
+  403 le 09-10) étaient, pour une part non mesurée, des artefacts de la fenêtre
+  de 150 pages.
+- La fiche porte tout ce que la page de liste (JSON-LD) fournissait : meta
+  `title` (« 2 Bedroom Condo for Sale at X for ฿4,045,300 | U6741301 »), meta
+  `description` (SqM, SDB) quand elle est générée, `:lat="…" :lng="…"` sur le
+  composant carte.
+
+**Livré (branche `fix/pouls-pid-recycle`)** : `scraper/pipeline/sitemap.py`
+(parsing, cache disque 3 h partagé entre le run vente et le run location,
+règle `trier()`), `adapters/fazwaz.py` (`discovery: "sitemap"`, sonde en
+3 requêtes qui nomme le marqueur manquant, fiche complétée depuis les meta),
+`run.py` (verdicts confirmer / visiter / reporter / ignorer, budget
+`max_detail_visits`, ligne `sitemap :` dans le résumé), `config/fazwaz.json`,
+`agents.json` (passe couloirs retirée — plus de fenêtre à réactiver),
+SKILL.md, `docs/pipeline.md`, test `agents/tests/test_fazwaz_sitemap.py` (3/3 ;
+`test_metrics`, `test_lanes`, `test_cadence`, `test_fetch_retry` rejoués sans
+régression).
+
+**Règle de tri, et pourquoi dans cet ordre** : (1) présente dans le sitemap =
+vivante → `touch` sans rouvrir la fiche, quel que soit l'âge du `lastmod`
+(sinon `last_seen` vieillit et `fraicheur` crie au loup) ; (2) `lastmod` >
+`last_seen` = mise à jour côté site → rouvrir ; budget épuisé → **reporter
+sans toucher** (un `touch` écraserait `last_seen` et la mise à jour serait
+perdue) ; (3) fenêtre 60 j **seulement** pour les inconnues et les délistées
+— c'est la définition de série des 150 pages (« ~2 mois »), conservée pour ne
+pas casser les courbes.
+
+**Run de mesure** (`--deal-type sale --limit 40`, mode sitemap) : sonde OK,
+27 fichiers lus en ~1 min 30, **40/40 fiches écrites avec prix, coords, khet
+et image** — 9 nouvelles, 3 changées (hausses réelles : 6,2 → 7,5 M ;
+1,75 → 1,85 M ; 2,70 → 2,79 M), 0 erreur. **2,79 s d'attente + 0,47 s de
+réseau par fiche** → ~3,3 s/fiche, soit ~55 min pour un budget de 1 000.
+Défaut trouvé sur ce run et corrigé : **18/40 sans surface, 16/40 sans SDB**
+— la meta `description` est rédigée par l'agent sur ces fiches, pas générée ;
+repli ajouté sur le bloc d'infos (`118 SqM <small>Size</small>`,
+`2 <small> Bathrooms </small>`). Au passage : la base historique avait
+**9 567/10 980 actives FazWaz sans SDB** (87 %) — l'ancien regex
+`(\d+)\s+Bathroom` ne matchait pas ce balisage ; le repli corrige aussi cela
+pour toute fiche rouverte.
+
+### Non fait, et pourquoi
+
+- **Aucun run `--full` en production** : le premier part au cycle de 01:00.
+  À relire le 2026-09-14 : la ligne `sitemap :` (confirmées ≈ 9 000, visitées
+  1 000, reportées ≈ 16 000 la première nuit, décroissant ensuite), la durée
+  (~1 h par deal_type attendue contre 55 min avant), et `retirées` (devrait
+  chuter : les actives absentes du sitemap ne sont que 262).
+- **`lastmod` = « dernière mise à jour de l'annonce »** est une hypothèse
+  cohérente avec `user_updated_at` mais non prouvée ; si elle est fausse, on
+  rouvre trop (coût) ou pas assez (prix périmés). Mesure possible : comparer
+  `lastmod` aux changements de prix constatés sur 2 semaines.
+- **Reprise du retard** : 16 960 fiches dans la fenêtre à 1 000/nuit = ~9
+  nuits par deal_type ; `max_detail_visits` est le seul bouton (chiffré,
+  laissé à l'arbitrage — 2 000 doublerait la durée du run).
+- **Le mode `list` reste dans le code** sans `order_by` : rallumable
+  (`discovery: "list"`) mais ne verrait que la tête du classement sponsorisé.
+- **Bandes `agents.json` inchangées** (`nouvelles` 50–2000) : la première
+  semaine dépassera 2 000/run (reprise), `watch-health` le signalera — attendu.
+- `fazwaz-corridors.json` conservé avec une note d'obsolescence, non supprimé.
