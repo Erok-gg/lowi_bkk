@@ -580,7 +580,22 @@ def run_lane(led: Ledger, lane: str, dry: bool = False, only_due: bool = True,
                 try:
                     f.result()
                 except Exception as e:                      # noqa: BLE001
+                    # 2026-09-13 : une exception levée AVANT ou APRÈS le try/except
+                    # interne de run_agent (ex. led.start_run()/last_run() pris dans
+                    # la course d'accès concurrent au ledger, corrigée le même jour
+                    # dans core/ledger.py) remontait jusqu'ici et s'arrêtait à un
+                    # simple print — aucune ligne au ledger, aucun finding, aucune
+                    # escalade. extract-livinginsider a ainsi disparu de la cadence
+                    # sans alerte pendant 3 cycles (09-11 au 09-13). Un agent qui
+                    # plante ici doit laisser une trace aussi exploitable qu'un
+                    # plantage DANS le try de run_agent.
                     print(f"  ✗ {nom} — {type(e).__name__}: {e}")
+                    led.finding(nom, "high", "exception_hors_run",
+                                f"{nom} a levé {type(e).__name__} en dehors du "
+                                f"try/except de run_agent (voir orchestrator.run_lane)",
+                                {"message": str(e)[:500]})
+                    alert.alert(nom, f"{nom} a échoué hors run_agent ({type(e).__name__})",
+                                str(e)[:1500])
     else:
         for spec in extracteurs:
             run_agent(led, spec["name"], lane, dry, local)

@@ -2279,3 +2279,84 @@ déjà pré-filtrées comme ambiguës, pas une anomalie en soi.
   `CLAUDE.md`, `.gitignore`, `docs/etudes/data/*`) — toujours en l'état, non
   touchés cette session, mêmes constats que le 2026-09-09.
 - Compte-rendu complet : `agents/audits/reparations-2026-09-12.md`.
+
+## 2026-09-13 — Réparation autonome : FazWaz bloqué par robots.txt (pas un parseur cassé) + la course qui rendait `extract-livinginsider` muet, enfin trouvée
+
+**FazWaz — `Disallow: /*?*order_by=` apparu entre le 09-11 et le 09-12.**
+`curl https://www.fazwaz.com/robots.txt` en direct confirme le nouveau motif
+sous `User-agent: *`, absent du dernier run réussi (2026-09-11T18:00, 11 143
+annonces). Or `order_by=user_updated_at|desc` est le paramètre qu'on utilise
+sur `fazwaz.json` ET `fazwaz-corridors.json` pour trier par fraîcheur plutôt
+que par le classement par défaut (biaisé sponsoring/catalogue trop profond,
+voir `config/fazwaz.json._order_by_comment`) : **FazWaz est désormais
+intégralement bloqué** (vente, location, 21 couloirs ciblés) tant qu'on
+l'utilise. Les 3 tickets `parser_break` du cycle (principal/then_0/then_1)
+sont un seul événement.
+
+Le `sonder()` par défaut de `BaseAdapter` remontait « structure changée » —
+faux : la page SANS `order_by` charge son JSON-LD normalement, c'est
+`list_urls()` (appelé ensuite avec `order_by` dans l'URL) qui se heurte au
+`Disallow`. Corrigé dans `scraper/adapters/fazwaz.py::sonder()` : détecte le
+cas via `fetcher.allowed(url_triee)` et nomme la vraie cause. **Pas de
+contournement du blocage** — c'est une décision de posture (règle 5),
+options chiffrées laissées à trancher dans
+`agents/audits/reparations-2026-09-13.md` §2.A. Le ticket se redéposera
+chaque jour tant que ce n'est pas tranché.
+
+**`extract-livinginsider` muet depuis 3 cycles — root cause enfin établie,
+confirmant l'hypothèse non prouvée du 2026-09-12.** La classe `Tee` posée ce
+jour-là (capture des prints de l'orchestrateur sous tâche planifiée) a
+produit son premier log exploitable
+(`agents/logs/orchestrator-2026-09-12T180040.log`) : `✗
+extract-livinginsider — InterfaceError: bad parameter or other API misuse`.
+
+Cause : `agents/core/ledger.py` ne sérialisait par `self._verrou` QUE les
+écritures (`start_run`, `end_run`, `finding`, `escalate`, `resolve`) — pas
+les lectures (`last_run`, `recent_runs`, `runs_since`, `findings_since`,
+`open_escalations`), alors que `last_run()` est appelé en tête de
+`run_agent()` par les 5 threads d'extracteurs parallèles. Le module
+`sqlite3` de Python n'est pas sûr pour un usage concurrent d'une connexion
+partagée au-delà de PEP 249, même avec `check_same_thread=False` (qui lève
+l'interdiction, pas le besoin de sérialiser) — d'où l'`InterfaceError`
+intermittente. Deuxième défaut trouvé en creusant : `orchestrator.run_lane`
+absorbait cette exception avec un simple `print()` dans la boucle
+`ThreadPoolExecutor` — aucune ligne au ledger, aucun finding, aucune
+escalade. Un agent qui plante à cet endroit précis disparaissait de la
+cadence sans laisser aucune trace, ce qui avait déjà rendu le ticket du
+09-12 impossible à trancher sans la capture `Tee`.
+
+Corrigé : les 5 méthodes de lecture du ledger sous verrou comme les
+écritures ; le `except` du `ThreadPoolExecutor` enregistre désormais un
+`finding` haute sévérité + une alerte. Test de non-régression
+`agents/tests/test_ledger_concurrence.py` (12 threads × 40 cycles) : échoue
+de façon fiable sur le code d'avant (rejoué 3 fois), passe proprement après,
+aucune perte d'écriture (480/480). Suite complète (25 fichiers) rejouée sans
+régression.
+
+**Ticket `organize` (60 paires)** traité par un parseur déterministe du
+gabarit fixe de `texte` plutôt qu'une lecture manuelle — vérifié sur 2 paires
+avant application, 60/60 réponses rendues, 60/60 abstentions (comportement
+attendu de `decider()`, pas une anomalie).
+
+**Base** : `pragma quick_check` ok, 126 411 annonces (94 160 actives),
+sauvegarde USB 3/3 essais vérifiés, identique à la base vivante.
+
+### Non fait, et pourquoi
+
+- **Le blocage FazWaz lui-même** — décision de posture réservée à
+  l'utilisateur (règle 5), rien changé à la config.
+- **Le correctif ledger** n'a pas encore été observé guérir un vrai cycle en
+  production (seulement vérifié sur DB de test) — à relire au cycle du
+  2026-09-14 01:00 avant de clore le dossier.
+- **`regle-alimentation`, `verifie-backup`, `storage`** toujours `DÛ` dans
+  `orchestrator status` : reconfirmé volontairement neutralisés (`lanes:
+  []`), pas une panne, pas corrigé (cosmétique, hors périmètre).
+- **`ddproperty` classé `volume_anormal` par `watch-health`** le 12/09
+  (nouvelles sous la médiane, pas au-dessus) — pas creusé, aucun ticket
+  dessus.
+- Fichiers hérités de sessions précédentes sur `fix/pouls-pid-recycle`
+  (`Archives/`, `bad_rings_out.txt`, exports `docs/etudes/data/*.xlsx`
+  quotidiens, `ops/verifie-synchro.py`, `agents/tests/test_remonter_bulk.py`,
+  `CLAUDE.md`, `.gitignore`, `study/official/*`) — non touchés, mêmes
+  constats que les sessions précédentes.
+- Compte-rendu complet : `agents/audits/reparations-2026-09-13.md`.

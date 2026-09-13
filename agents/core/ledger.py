@@ -82,7 +82,17 @@ def connect(path: str | None = None) -> sqlite3.Connection:
 class Ledger:
     def __init__(self, path: str | None = None):
         self.conn = connect(path)
-        self._verrou = threading.Lock()   # écritures sérialisées (extracteurs parallèles)
+        # Sérialise TOUT accès à self.conn, lectures comprises — pas seulement les
+        # écritures comme le disait ce commentaire jusqu'au 2026-09-13. Mesuré ce
+        # jour-là : 5 extracteurs en parallèle, extract-livinginsider a levé
+        # `sqlite3.InterfaceError: bad parameter or other API misuse` (silencieux —
+        # aucune ligne au ledger, voir orchestrator.run_lane) alors que last_run()
+        # (lecture, hors verrou jusqu'ici) tournait dans un thread pendant qu'un
+        # autre committait via start_run()/end_run(). Le module sqlite3 de Python
+        # n'est pas sûr pour un usage concurrent d'UNE connexion partagée au-delà
+        # de ce que documente PEP 249 — check_same_thread=False lève juste
+        # l'interdiction, ça ne rend pas les appels concurrents sûrs pour autant.
+        self._verrou = threading.Lock()
         self._migrer_pid()
         self.reap_stale()
 
@@ -185,17 +195,20 @@ class Ledger:
         if only_ok:
             q += " and status='ok'"
         q += " order by started_at desc limit 1"
-        return self.conn.execute(q, (agent,)).fetchone()
+        with self._verrou:
+            return self.conn.execute(q, (agent,)).fetchone()
 
     def recent_runs(self, agent: str, limit: int = 20) -> list[sqlite3.Row]:
-        return self.conn.execute(
-            "select * from agent_runs where agent=? and status='ok'"
-            " order by started_at desc limit ?", (agent, limit)).fetchall()
+        with self._verrou:
+            return self.conn.execute(
+                "select * from agent_runs where agent=? and status='ok'"
+                " order by started_at desc limit ?", (agent, limit)).fetchall()
 
     def runs_since(self, iso: str) -> list[sqlite3.Row]:
-        return self.conn.execute(
-            "select * from agent_runs where started_at >= ? order by started_at",
-            (iso,)).fetchall()
+        with self._verrou:
+            return self.conn.execute(
+                "select * from agent_runs where started_at >= ? order by started_at",
+                (iso,)).fetchall()
 
     # ── findings ────────────────────────────────────────────────────────
     def finding(self, agent: str, severity: str, kind: str, subject: str,
@@ -215,24 +228,28 @@ class Ledger:
         if severity:
             q += " and severity=?"
             p.append(severity)
-        return self.conn.execute(q + " order by created_at desc", p).fetchall()
+        with self._verrou:
+            return self.conn.execute(q + " order by created_at desc", p).fetchall()
 
     # ── escalations ─────────────────────────────────────────────────────
     def escalate(self, ticket: str, agent: str, kind: str, severity: str) -> None:
-        self.conn.execute(
-            "insert or ignore into escalations(ticket,agent,kind,severity,created_at,status)"
-            " values(?,?,?,?,?, 'open')", (ticket, agent, kind, severity, now()))
-        self.conn.commit()
+        with self._verrou:
+            self.conn.execute(
+                "insert or ignore into escalations(ticket,agent,kind,severity,created_at,status)"
+                " values(?,?,?,?,?, 'open')", (ticket, agent, kind, severity, now()))
+            self.conn.commit()
 
     def resolve(self, ticket: str, resolution: str, status: str = "done") -> None:
-        self.conn.execute(
-            "update escalations set status=?, resolved_at=?, resolution=? where ticket=?",
-            (status, now(), resolution, ticket))
-        self.conn.commit()
+        with self._verrou:
+            self.conn.execute(
+                "update escalations set status=?, resolved_at=?, resolution=? where ticket=?",
+                (status, now(), resolution, ticket))
+            self.conn.commit()
 
     def open_escalations(self) -> list[sqlite3.Row]:
-        return self.conn.execute(
-            "select * from escalations where status='open' order by created_at").fetchall()
+        with self._verrou:
+            return self.conn.execute(
+                "select * from escalations where status='open' order by created_at").fetchall()
 
     def close(self) -> None:
         self.conn.close()

@@ -109,6 +109,24 @@ class FazwazAdapter(BaseAdapter):
             return False, "page de liste inaccessible (0 octet ou erreur réseau)"
         if "application/ld+json" not in html:
             return False, "JSON-LD absent de la page de liste (attendu : 1 bloc par annonce, ou '@graph' depuis juil. 2026)"
+        # 2026-09-13 : la page SANS order_by passe (ci-dessus), mais
+        # list_urls() (appelé par super().sonder) construit sa requête AVEC
+        # order_by — si robots.txt l'interdit désormais, list_urls ne voit
+        # jamais la vraie page et remonte "structure changée" à tort. Ce
+        # n'est pas un parseur cassé : nommer la vraie cause ici évite de
+        # chercher un changement de structure qui n'existe pas.
+        order_by = self.config.get("order_by")
+        if order_by:
+            url_triee = urljoin(base + "/", searches[0]["path"].lstrip("/")) + \
+                f"?order_by={quote(order_by, safe='')}"
+            if not fetcher.allowed(url_triee):
+                return False, (
+                    f"robots.txt interdit désormais order_by ({url_triee}) — "
+                    "PAS un changement de structure (la page sans order_by charge son "
+                    "JSON-LD normalement). Décision de posture requise : voir "
+                    "config/fazwaz.json._order_by_comment et CLAUDE.md § posture scraping "
+                    "avant de toucher au tri par fraîcheur."
+                )
         return super().sonder(fetcher)
 
     # ───────────────────────── liste ─────────────────────────
