@@ -2440,3 +2440,31 @@ pour toute fiche rouverte.
 - **Bandes `agents.json` inchangées** (`nouvelles` 50–2000) : la première
   semaine dépassera 2 000/run (reprise), `watch-health` le signalera — attendu.
 - `fazwaz-corridors.json` conservé avec une note d'obsolescence, non supprimé.
+
+## 2026-09-13 (suite 2) — Audit sécurité / stockage / agents (règle 10)
+
+Rapport complet : `agents/audits/audit-2026-09-13.md`. Lecture seule, rien
+modifié. Points saillants, tous mesurés :
+
+- **HAUTE — mot de passe du site dans `CLAUDE.md:196`, dépôt GitHub PUBLIC**
+  (1 commit). À traiter comme compromis : rotation de `BASIC_AUTH_PASSWORD`
+  sur Vercel + retrait de la ligne. Non fait (action externe).
+- Supabase : 0 vue definer, 0 grant anon, RLS partout, 9 lints INFO attendus
+  — le durcissement du 20/08 tient. Protection de déploiement Vercel : non
+  vérifiée (MCP 404 sur le projet).
+- Poste : sshd 0.0.0.0:22 clé seule ; RDP activé ; un `node` non identifié sur
+  `:3000` ; tâche `LowiBKB-ScrapeImmoFacebook` (hors dépôt, `C:\agentic`)
+  échoue chaque nuit rc 0x1 — inconnue de la doc.
+- **Stockage : `bangkok.db` 1,19 → 2,56 Go en 18 j ; Supabase 139 → 336 Mo
+  (67 % du quota).** Cause mesurée : DDproperty `retirees: 0` sur 12/12
+  runs (garde-fou anti-délistage annulé, documenté le 23/08) + Nestopa idem
+  → +2 500 annonces/jour, ~9 Mo/jour côté serveur, **quota atteint fin
+  octobre** à ce rythme. `archive/` vide sur PC2 (chemin CLAUDE.md périmé) ;
+  la vraie sauvegarde est `D:\++SCRAP DB++`, 14/14 ok, capacité non mesurée.
+- Agents : 601 min-agent/jour, DDproperty = 60 % (médiane 5 h 43, max
+  16 h 51) ; le cycle occupe 21-26 h par jour, la veille à 13 h ne le couvre
+  plus. Bruit : 19 `contrat_viole` sur `organize` (0,1 min par conception),
+  12 `power_request_absent` sans coupure. 3 escalades FazWaz encore ouvertes
+  alors que le mode sitemap les résout.
+
+Non fait : les 7 arbitrages listés en §4 du rapport.
