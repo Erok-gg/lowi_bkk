@@ -2565,3 +2565,53 @@ Demande : ne pas laisser le script dans `C:\agentic`. Fait :
 Non fait : pas de run complet de la tâche (ferme tout Chrome ; à laisser au
 créneau de 01:00). La routine Claude/Haiku d'extraction annoncée le 12/09
 n'existe pas — l'aval reste manuel (README).
+
+## 2026-09-13 (suite 5) — Aval Facebook automatisé : agent `social-leads`
+
+Demande : « mets ça en automatique ». L'extraction exige un modèle et PC2
+n'a pas d'Ollama ; le CLI `claude` y est depuis le 2026-08-21 — vérifié :
+`claude -p --model haiku` répond en 3 s. **Mesuré** : un appel à contexte
+minimal (`--tools ""`, `--setting-sources ""`, prompt système propre, cwd
+hors dépôt) crée ~48 k tokens de cache (64 k si lancé dans le dépôt, qui
+charge CLAUDE.md) → des lots de 15 posts par appel, pas un appel par post.
+
+`agents/bots/social_leads.py` (T2, `daily`, après `extract-nestopa`) :
+prompt et schéma d'`immo-extract.mjs` repris tels quels, `vendeur`/`quota`
+tranchés par le code (regex portées), puis `immo-resolve.mjs` et
+`load_social_leads.py --sqlite` appelés tels quels. Contrat dans
+`agents/skills/social-leads/SKILL.md`, lu par l'overseer (vérifié). Garde-fou
+`collecte_facebook_muette` (dernier `immo_*.json` > 48 h, medium, pas de
+mail) — le défaut trouvé par l'audit du matin. Test
+`agents/tests/test_social_leads.py` (4/4, sans appel au modèle).
+
+**Run de mesure sur la collecte du 12/09 (92 posts)** : 7 appels, 92/92
+extraits, 0 échec ; 92 « annonces » dont 65 condos, 75 avec nom d'immeuble,
+50 avec prix ou loyer, 39 avec surface ; `vendeur` : 20 agents, 7
+propriétaires, 65 inconnus ; `quota` : 92 inconnus (aucun marqueur dans le
+texte — le code n'invente pas). Rapprochement : 54 condos reconnus (72 %),
+31 avec écart au marché. **25 chargées** dans `social-leads.db` (filtre
+`collecte_solide` : condo + nom + surface + prix + chambres). La collecte de
+juillet (209 posts, extraction Ollama de l'époque) a été chargée au passage :
+53 lignes. Base : 78 lignes, 60 rapprochées, 56 avec écart.
+
+**Trois défauts trouvés en faisant tourner, corrigés** :
+1. `immo-resolve.mjs` appelait `python` du PATH → sur PC2 c'est le raccourci
+   Microsoft Store (« Python est introuvable »). → Python du venv (`LOWI_PY`
+   sinon `scraper/.venv`).
+2. Son référentiel faisait **3 requêtes par condo** (8 165 condos, pas
+   d'index sur `condo_name`) : **> 10 min** sur la base de 2,5 Go (écrit pour
+   l'archive de 69 k lignes). → une passe agrégée en Python : **2 s**.
+3. `stdout` Python en cp1252 sous Windows : un U+200B dans un nom de condo
+   faisait tout tomber. → `PYTHONIOENCODING=utf-8` dans l'appel.
+Et un défaut de conception de l'agent lui-même, trouvé au 2e run : le
+marqueur « traité » était `_extrait_resolu.json` — un `immo-resolve` lancé à
+la main l'avait produit, l'agent tenait le fichier pour fini sans rien avoir
+chargé. → marqueur `_charge.json` écrit APRÈS le chargement. Le garde-fou de
+fraîcheur triait aussi par nom (`immo_facebook_2026-07-25` > `immo_2026-09-12`
+alphabétiquement → « 1 197 h de silence » sur une collecte de la veille) →
+tri par date de fichier.
+
+Non fait : coût réel des 7 appels non relevé (sortie tronquée) — borne
+haute ~0,25 $ ; bandes du SKILL provisoires, à recalibrer après une semaine ;
+`claude -p` sous tâche planifiée sans session ouverte non testé (la lane
+tourne en session interactive, comme les autres agents).

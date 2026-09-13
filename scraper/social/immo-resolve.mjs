@@ -22,41 +22,51 @@ const file = process.argv[2] ?? "../output/social/immo_facebook_2026-07-25_extra
 // pas archive/lowi-archive.db — celle-ci n'existe même plus sur ce poste (PC2), et même
 // quand elle existe elle retarde sur le dernier scrap. Cf. CLAUDE.md § Architecture des données.
 const REFERENCE_DB = join(dirname(fileURLToPath(import.meta.url)), "..", "output", "bangkok.db");
+// Python du venv du scraper, pas "python" du PATH : sur PC2 ce nom est le
+// raccourci Microsoft Store ("Python est introuvable"), mesuré le 2026-09-13.
+const PYTHON = process.env.LOWI_PY || join(dirname(fileURLToPath(import.meta.url)), "..", ".venv", "Scripts", "python.exe");
 
 // ─── Référentiel : les condos connus de Lowi_bkk ────────────────────────────
 // Lecture SEULE de la base de référence (aucune écriture, aucun impact sur le scrap en cours).
 function chargerReferentiel() {
   const py = `
 import sqlite3, json
+from collections import defaultdict
 c = sqlite3.connect('file:${REFERENCE_DB.replace(/\\/g, "/")}?mode=ro', uri=True)
-rows = c.execute('''
-  select condo_name, khet,
-         count(*) as n,
-         avg(lat) as lat, avg(lng) as lng,
-         sum(case when deal_type='sale' then 1 else 0 end) as n_sale,
-         sum(case when deal_type='rent' then 1 else 0 end) as n_rent
-  from listings
-  where condo_name is not null and trim(condo_name) <> ''
-  group by condo_name
-''').fetchall()
+# UNE passe sur la table, agrégée en Python. La version d'avant faisait 3
+# requêtes PAR condo (8 165 condos × 3 balayages de listings sans index sur
+# condo_name) : sur la base de 2,5 Go de PC2 elle dépassait 10 minutes,
+# mesuré le 2026-09-13. Ici : ~2 s pour 126 244 lignes.
+acc = defaultdict(lambda: {'khet': None, 'n': 0, 'lat': [], 'lng': [],
+                           'sale': [], 'rent': [], 'ppsqm': []})
+for name, khet, deal, price, ppsqm, lat, lng in c.execute('''
+  select condo_name, khet, deal_type, price, price_per_sqm, lat, lng
+  from listings where condo_name is not null and trim(condo_name) <> ''
+'''):
+    a = acc[name]
+    a['n'] += 1
+    if khet and not a['khet']: a['khet'] = khet
+    if lat is not None: a['lat'].append(lat)
+    if lng is not None: a['lng'].append(lng)
+    if price and price > 0:
+        a['sale' if deal == 'sale' else 'rent'].append(price)
+        if deal == 'sale' and ppsqm and ppsqm > 0: a['ppsqm'].append(ppsqm)
+def med(v):
+    v = sorted(v); return v[len(v)//2] if v else None
 out = []
-for name, khet, n, lat, lng, ns, nr in rows:
-    # médianes séparées vente / location
-    def med(dt, col):
-        v = [r[0] for r in c.execute(
-            'select ' + col + ' from listings where condo_name=? and deal_type=? and ' + col + ' > 0 order by 1',
-            (name, dt)).fetchall()]
-        return v[len(v)//2] if v else None
-    out.append({
-        'nom': name, 'khet': khet, 'n': n, 'lat': lat, 'lng': lng,
-        'n_sale': ns, 'n_rent': nr,
-        'med_vente': med('sale', 'price'),
-        'med_loyer': med('rent', 'price'),
-        'med_prix_m2_vente': med('sale', 'price_per_sqm'),
-    })
+for name, a in acc.items():
+    out.append({'nom': name, 'khet': a['khet'], 'n': a['n'],
+                'lat': sum(a['lat'])/len(a['lat']) if a['lat'] else None,
+                'lng': sum(a['lng'])/len(a['lng']) if a['lng'] else None,
+                'n_sale': len(a['sale']), 'n_rent': len(a['rent']),
+                'med_vente': med(a['sale']), 'med_loyer': med(a['rent']),
+                'med_prix_m2_vente': med(a['ppsqm'])})
 print(json.dumps(out, ensure_ascii=False))
 `;
-  return JSON.parse(execFileSync("python", ["-c", py], { encoding: "utf-8", maxBuffer: 64 * 1024 * 1024 }));
+  return JSON.parse(execFileSync(PYTHON, ["-c", py], { encoding: "utf-8", maxBuffer: 64 * 1024 * 1024,
+    // sans ca, stdout Python est en cp1252 sous Windows : un espace insecable
+    // (U+200B) dans un nom de condo faisait tout tomber (2026-09-13)
+    env: { ...process.env, PYTHONIOENCODING: "utf-8" } }));
 }
 
 // ─── Normalisation des noms ─────────────────────────────────────────────────

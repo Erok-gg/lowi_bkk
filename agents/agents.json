@@ -388,6 +388,26 @@
       "_pourquoi": "REACTIVE le 2026-08-25 apres portage. Il avait ete suspendu quelques heures le meme jour : ses requetes utilisaient `regexp_replace`, `greatest`, `interval` et `pg_get_viewdef`, du Postgres pur, absent de SQLite. L'appariement des paires ne se fait plus en SQL mais en Python : l'auto-jointure de la table sur elle-meme tournait encore apres 10 min sous SQLite (la cle de regroupement est CALCULEE, aucun index ne porte sur un calcul, soit ~4,8 milliards de comparaisons). Range par paquets en Python : 88 361 paires en 1,9 s, memes conditions mot pour mot. Une seule implementation pour les deux moteurs, plus deux versions a maintenir."
     },
     {
+      "name": "social-leads",
+      "famille": "Analyse",
+      "tier": "T2",
+      "lanes": [
+        "daily"
+      ],
+      "every_days": 1,
+      "module": "agents.bots.social_leads",
+      "after": [
+        "extract-nestopa"
+      ],
+      "_pourquoi": "Ajouté le 2026-09-13. Aval de la collecte Facebook (LowiBKK-ScrapeImmoFacebook, 01:00, 30 min max) : extraction par Claude en ligne de commande (Haiku, lots de 15 posts), rapprochement immo-resolve.mjs, chargement social-leads.db. Rien ne lisait ces collectes depuis le 12/09 — la routine annoncée n'avait jamais été créée. 'after' extract-nestopa : le place plusieurs heures après 01:00, la collecte du jour est finie ; il traite de toute façon tout immo_*.json sans _extrait_resolu.json, donc un retard se rattrape seul.",
+      "bandes": {
+        "echecs_extraction": [
+          0,
+          15
+        ]
+      }
+    },
+    {
       "name": "report",
       "famille": "Data reporting",
       "tier": "T0",
