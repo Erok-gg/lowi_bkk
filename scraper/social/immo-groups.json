@@ -1,0 +1,14 @@
+{
+  "_comment": "Groupes Facebook d'annonces immobilières Bangkok — alimente le projet Lowi_bkk (recherche d'opportunités d'investissement). Collecte brute uniquement : l'extraction structurée se fait en aval côté Lowi_bkk. Séparé de la veille prospection Equance, qui a sa propre liste dans config.js.",
+  "groups": [
+    "https://www.facebook.com/groups/2157264477895406/",
+    "https://www.facebook.com/groups/520830169335840/",
+    "https://www.facebook.com/groups/661207761960248/",
+    "https://www.facebook.com/groups/bangkokcondoforsalerent/",
+    "https://www.facebook.com/groups/bangkokapartments/"
+  ],
+  "_notes": {
+    "661207761960248": "location uniquement (indiqué par Anthony)",
+    "page_a_traiter_separement": "https://www.facebook.com/bangkokcondoandapartment — c'est une PAGE, pas un groupe : structure DOM différente, à gérer dans un second temps"
+  }
+}

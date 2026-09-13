@@ -2530,3 +2530,38 @@ sans `listingDetail` — gabarit « annonce expirée »), **4/4 vivantes** parmi
 celles revues la veille (`listingDetail` présent, `statusCode = ACT`). Le
 délistage par le recensement est donc juste, et il l'est dès 3 jours
 d'absence — la grâce de 3 nuits n'est pas trop courte.
+
+## 2026-09-13 (suite 4) — Collecteur Facebook immo rapatrié de C:\agentic
+
+Demande : ne pas laisser le script dans `C:\agentic`. Fait :
+- `scraper/social/` : `scrape-immo-facebook.ps1` (réécrit, chemins relatifs
+  au dépôt), `facebook/agent.js` + `utils/` (**copies** — l'original sert
+  encore la veille Equance ; les modifications non commitées d'agentic du
+  12/09 ont été prises telles quelles), `config.js` dégraissé,
+  `immo-groups.json`, `immo-extract.mjs`, `immo-resolve.mjs` (chemin de la
+  base rendu relatif), `diag/`, `package.json` propre (4 dépendances).
+  Anciennes sorties `immo_*.json` déplacées dans `scraper/output/social/`.
+- Côté agentic : `git rm` des 3 fichiers immo (commits `d2d6940`, `76ce2ad`),
+  le `.ps1` et les diag supprimés — plus rien d'immo là-bas.
+- **Tâche `LowiBKK-ScrapeImmoFacebook` réenregistrée** par
+  `ops/install-facebook-task.ps1` (même méthode et mêmes contrôles que les
+  autres installeurs), `RunLevel Limited` au lieu de `Highest` (rien dans le
+  script n'exige l'élévation — à surveiller au 1er run).
+- **Cause du 0x1 quotidien trouvée** : le `.ps1` n'appelait pas `exit`, donc
+  PowerShell rendait le `$LASTEXITCODE` du dernier natif exécuté — le
+  `taskkill` du `finally`, 128 quand il n'y a plus de Chrome à tuer. Le code
+  retour est désormais celui de `node facebook/agent.js`.
+- Deux pièges rencontrés en route : (1) `npm install` lancé depuis Git Bash a
+  atterri à la racine du dépôt (cwd non pris) — sans effet (lock inchangé),
+  refait avec `--prefix` ; (2) PowerShell 5.1 lit un `.ps1` sans BOM en
+  ANSI, et le tiret cadratin devient un guillemet typographique qui coupe
+  la chaîne → 6 erreurs de parse. Les deux `.ps1` sont en **UTF-8 avec BOM**.
+- Vérifié : parse des 2 `.ps1` = 0 erreur ; `node --check` OK ; smoke test
+  `node facebook/agent.js` → s'est connecté à un Chrome CDP **déjà ouvert
+  sur 9222 depuis le 12/09 09:06** (profil d'automatisation, reliquat des
+  diagnostics de la veille) et a commencé à parcourir les groupes ; coupé à
+  90 s, aucune sortie écrite. La tâche de nuit ferme ce Chrome de toute façon.
+
+Non fait : pas de run complet de la tâche (ferme tout Chrome ; à laisser au
+créneau de 01:00). La routine Claude/Haiku d'extraction annoncée le 12/09
+n'existe pas — l'aval reste manuel (README).
