@@ -2660,3 +2660,35 @@ Trois options chiffrées dans le rapport (statu quo / isoler le blocage à
 l'agent concerné / plafond de durée globale sur `remonter-local.py`), aucune
 tranchée — nécessite de choisir un seuil ou une politique de contournement,
 hors mandat d'une session autonome.
+
+## 2026-09-16 (suite) — Tranché en cours de session : Supabase ne bloque plus les extracteurs
+
+Décision de l'utilisateur, en réaction directe à l'entrée précédente :
+« supabase ne bloque pas les extracteurs » — choix de l'option (b) listée
+ci-dessus. Détail complet et preuves de test :
+[agents/audits/reparations-2026-09-16.md](../agents/audits/reparations-2026-09-16.md) §8.
+
+`scrap_en_cours()` (`agents/orchestrator.py`) scindée en deux gardes :
+`extraction_en_cours()` garde son périmètre d'origine (famille `Extraction` +
+`scraper/run.py`/`recense.py`) et continue de reporter le cycle ENTIER — seule
+vraie collision à protéger, `report`/`backup-apres-cycle` liraient sinon une
+base en cours d'écriture. `remontee_en_cours()` est nouvelle : elle ne
+détecte que `remonter-supabase`/`ops/remonter-local.py` (confirmé en relisant
+le script : il LIT `bangkok.db`, n'y écrit jamais — aucune collision réelle
+avec les extracteurs), et `run_lane()` l'utilise pour sauter CET agent seul,
+jamais pour reporter le reste de la lane. `scrap_en_cours()` (nom d'origine)
+devient un simple OU des deux, gardée pour le smoke test existant.
+
+Vérifié : nouveau test `agents/tests/test_remontee_isolee.py` (3/3) —
+`remonter-supabase` seul en cours n'est plus vu par `extraction_en_cours()`
+mais l'est par `remontee_en_cours()` ; un extracteur seul en cours est
+toujours vu par `extraction_en_cours()` (comportement de protection
+inchangé). Suite existante rejouée sans régression. Rejeu à blanc de la lane
+du jour (`run_lane(dry=True)`) : câblage confirmé. Commit `6bfc64b` sur
+`fix/pouls-pid-recycle`.
+
+Non fait : l'option (c) (plafond de durée sur les retries Postgres de
+`remonter-local.py`) reste hors mandat — inutile maintenant que (b) résout le
+vrai problème sans qu'aucun seuil n'ait à être choisi. Confirmation en
+conditions réelles reportée au cycle du 17/09 01:00 (pas de scrap manuel
+lancé en pleine journée pour vérifier plus tôt).
