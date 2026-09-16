@@ -190,14 +190,45 @@ def is_due(led: Ledger, spec: dict) -> tuple[bool, str]:
     return False, f"à jour ({ecart} j / {every} j — dernier succès il y a {h:.0f} h)"
 
 
-def scrap_en_cours(led: Ledger) -> str | None:
-    """Un scrap tourne-t-il DÉJÀ ? Rend sa description, ou None.
+def _process_manuel(motifs: tuple[str, ...]) -> str | None:
+    """Sonde WMI générique : un process `python` vivant dont la ligne de
+    commande contient l'un de `motifs`. Factorisée le 2026-09-16 en séparant
+    `scrap_en_cours()` en deux gardes distinctes (extraction / remontée) —
+    voir leurs docstrings pour le pourquoi de cette séparation."""
+    moi = os.getpid()
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
+             "ForEach-Object { \"$($_.ProcessId)|$($_.CommandLine)\" }"],
+            capture_output=True, text=True, timeout=25).stdout
+    except Exception as e:                                  # noqa: BLE001
+        print(f"  ⚠ sonde « process manuel » indisponible ({type(e).__name__}) — "
+              f"on ne bloque pas le cycle sur ça")
+        return None
+
+    for ligne in out.splitlines():
+        pid, _, cmd = ligne.partition("|")
+        bas = cmd.replace("\\", "/").lower()
+        if not pid.strip().isdigit() or int(pid) == moi:
+            continue
+        if any(m in bas for m in motifs):
+            return f"PID {pid.strip()} — {cmd.strip()[:110]}"
+    return None
+
+
+def extraction_en_cours(led: Ledger) -> str | None:
+    """Un `run.py`/`recense.py` tourne-t-il DÉJÀ ? Rend sa description, ou None.
 
     C'est la contrepartie de la cadence en jours calendaires (cf. is_due) :
     « tous les jours à 01:00 » ne doit jamais vouloir dire « quitte à couper
     celui d'hier ». Un extracteur tué en vol est pire qu'un cycle manqué — la
     passe `--full` en cours n'a vu qu'une partie du site, et ce qu'elle n'a pas
     revu, le diff le compte comme délisté. On perdrait des annonces vivantes.
+    C'est CE risque, et lui seul, qui justifie de reporter le cycle ENTIER
+    (`run_lane` — `report`/`backup-apres-cycle` liraient une base en cours
+    d'écriture).
 
     Deux sondes, par ordre de fiabilité :
 
@@ -214,33 +245,55 @@ def scrap_en_cours(led: Ledger) -> str | None:
     for r in led.conn.execute(
             "select agent, started_at, pid from agent_runs where status='running'"):
         spec = AGENTS.get(r["agent"], {})
-        if spec.get("famille") != "Extraction" and r["agent"] not in LONGS_A_NE_PAS_COUPER:
+        if spec.get("famille") != "Extraction":
             continue
         if r["pid"] and int(r["pid"]) != moi and led._processus_vivant(r["pid"]):
             return (f"{r['agent']} tourne encore (démarré {r['started_at']}, "
                     f"PID {r['pid']}) — ledger")
 
-    try:
-        import subprocess
-        out = subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
-             "ForEach-Object { \"$($_.ProcessId)|$($_.CommandLine)\" }"],
-            capture_output=True, text=True, timeout=25).stdout
-    except Exception as e:                                  # noqa: BLE001
-        print(f"  ⚠ sonde « scrap manuel » indisponible ({type(e).__name__}) — "
-              f"on ne bloque pas le cycle sur ça")
-        return None
+    proc = _process_manuel(("scraper/run.py", "scraper/recense.py"))
+    return f"scrap lancé hors cycle : {proc}" if proc else None
 
-    for ligne in out.splitlines():
-        pid, _, cmd = ligne.partition("|")
-        bas = cmd.replace("\\", "/").lower()
-        if not pid.strip().isdigit() or int(pid) == moi:
+
+def remontee_en_cours(led: Ledger) -> str | None:
+    """`remonter-supabase` (ou son script `ops/remonter-local.py` lancé à la
+    main) tourne-t-il déjà ? Rend sa description, ou None.
+
+    Distincte d'`extraction_en_cours()` depuis le 2026-09-16. Constat mesuré
+    la nuit du 2026-09-15→16 : `remonter-local.py` — qui LIT bangkok.db et
+    écrit vers Supabase, mais n'écrit JAMAIS dans bangkok.db — est resté
+    bloqué ~14h par un incident du pooler Supabase (externe, confirmé par
+    mesure directe, voir docs/journal-technique.md du 2026-09-16), et
+    l'ancien `scrap_en_cours()` unique en a profité pour reporter TOUT le
+    cycle : 0 extracteur, 0 annonce écrite cette nuit-là. Décision de
+    l'utilisateur le jour même : une panne Supabase ne doit bloquer QUE la
+    remontée, jamais les extracteurs, qui n'en dépendent pas.
+
+    Sert uniquement à éviter de relancer un second `remonter-supabase` en
+    parallèle du premier (double écriture vers Supabase) — PAS à décider si
+    le reste de la lane doit attendre : `run_lane` ne l'utilise que pour
+    sauter CET agent, jamais pour reporter le cycle entier."""
+    moi = os.getpid()
+    for r in led.conn.execute(
+            "select agent, started_at, pid from agent_runs where status='running'"):
+        if r["agent"] not in LONGS_A_NE_PAS_COUPER:
             continue
-        if ("scraper/run.py" in bas or "scraper/recense.py" in bas
-                or "ops/remonter-local.py" in bas):
-            return f"scrap lancé hors cycle : PID {pid.strip()} — {cmd.strip()[:110]}"
-    return None
+        if r["pid"] and int(r["pid"]) != moi and led._processus_vivant(r["pid"]):
+            return (f"{r['agent']} tourne encore (démarré {r['started_at']}, "
+                    f"PID {r['pid']}) — ledger")
+
+    proc = _process_manuel(("ops/remonter-local.py",))
+    return f"remontée lancée hors cycle : {proc}" if proc else None
+
+
+def scrap_en_cours(led: Ledger) -> str | None:
+    """Compatibilité : les deux sondes combinées (extraction OU remontée).
+
+    Gardée pour les appelants qui veulent juste savoir « quelque chose
+    tourne-t-il ? » (ex. smoke test) sans distinguer lequel — `run_lane`,
+    lui, appelle `extraction_en_cours()` et `remontee_en_cours()` séparément
+    depuis le 2026-09-16, précisément pour NE PLUS les confondre."""
+    return extraction_en_cours(led) or remontee_en_cours(led)
 
 
 def ouvre_dashboard(led: Ledger) -> None:
@@ -531,7 +584,7 @@ def run_lane(led: Ledger, lane: str, dry: bool = False, only_due: bool = True,
     # en cours d'écriture. La garde `MultipleInstances=IgnoreNew` de la tâche
     # Windows ne couvre que la tâche elle-même, pas un scrap lancé à la main.
     if not dry:
-        occupe = scrap_en_cours(led)
+        occupe = extraction_en_cours(led)
         if occupe:
             print(f"  ⏸ CYCLE REPORTÉ — {occupe}")
             print("     (rien n'est lancé : le prochain créneau reprendra ce qui est dû)")
@@ -539,6 +592,25 @@ def run_lane(led: Ledger, lane: str, dry: bool = False, only_due: bool = True,
                         "cycle sauté : un scrap était encore en cours",
                         {"raison": occupe, "lane": lane})
             return
+
+    # REMONTÉE SUPABASE EN COURS : ne saute QUE cet agent, jamais le cycle
+    # entier. Décidé le 2026-09-16 après mesure : la nuit du 15→16, un
+    # remonter-local.py bloqué ~14h par une panne EXTERNE du pooler Supabase
+    # a fait sauter les 5 extracteurs avec lui via l'ancien scrap_en_cours()
+    # unique — alors qu'ils n'ont besoin ni de Supabase ni d'attendre
+    # remonter-local.py (qui ne fait que LIRE bangkok.db, jamais y écrire).
+    # remontee_en_cours() sert uniquement à éviter un second remonter-supabase
+    # en parallèle (double écriture vers Supabase), pas à protéger la base
+    # locale — extraction_en_cours() s'en charge déjà, séparément.
+    if not dry and any(s["name"] in LONGS_A_NE_PAS_COUPER for s in a_lancer):
+        occupe_remontee = remontee_en_cours(led)
+        if occupe_remontee:
+            a_lancer = [s for s in a_lancer if s["name"] not in LONGS_A_NE_PAS_COUPER]
+            print(f"  ⏭ remonter-supabase sauté ce cycle — {occupe_remontee} "
+                  f"(le reste de la lane continue)")
+            led.finding("orchestrator", "low", "remontee_sautee",
+                        "remonter-supabase sauté : une remontée était encore en cours",
+                        {"raison": occupe_remontee, "lane": lane})
 
     # PRELUDE : avant toute extraction, séquentiel. Sert au backup local
     # (ops/sync_supabase_local.py, agent backup-avant-cycle) — un point de
