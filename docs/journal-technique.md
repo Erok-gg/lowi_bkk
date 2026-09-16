@@ -2615,3 +2615,48 @@ Non fait : coût réel des 7 appels non relevé (sortie tronquée) — borne
 haute ~0,25 $ ; bandes du SKILL provisoires, à recalibrer après une semaine ;
 `claude -p` sous tâche planifiée sans session ouverte non testé (la lane
 tourne en session interactive, comme les autres agents).
+
+## 2026-09-16 — Cycle du 16/09 vide : panne Supabase externe, pas une régression
+
+Réparation autonome. Détail complet : [agents/audits/reparations-2026-09-16.md](../agents/audits/reparations-2026-09-16.md).
+
+Cycle de nuit terminé sans lancer un seul extracteur (0 annonce écrite).
+`scrap_en_cours()` a fonctionné comme conçu : il a repéré (sonde WMI en
+direct, pas le ledger) un `ops/remonter-local.py` toujours vivant — lancé la
+veille à 11:03 UTC, bloqué depuis en boucle de reconnexion Postgres — et a
+reporté tout le cycle plutôt que de le couper en vol.
+
+**Cause confirmée externe par mesure directe, pas supposée** : la connexion
+Postgres au pooler Supabase (`aws-1-ap-southeast-1.pooler.supabase.com:5432`)
+échoue encore ce matin (`ConnectionTimeout` après 45 s) alors que le port TCP
+répond (`Test-NetConnection` → `True`) — la couche applicative Postgres/pooler
+est en cause, pas le réseau du poste. Confirmé indépendant de PC2 : le MCP
+Supabase lui-même (`execute_sql`, `get_advisors`), qui passe par
+l'infrastructure Supabase et non par ce poste, échoue avec la même erreur de
+timeout sur ce projet. Le run du 14/09 avait échoué plus vite avec une erreur
+explicite côté pooler (`EAUTHQUERY "auth_query secret check timed out"` +
+`ECHECKOUTTIMEOUT`). Trois nuits de suite (13→ok, 14→échec rapide, 15→bloqué
+~14h) : dégradation progressive du pooler ap-southeast-1, pas un défaut
+introduit dans ce dépôt. Site public (lowi-bkk.vercel.app) répond HTTP 200 —
+pas une panne totale du projet Supabase, seule la connexion Postgres directe
+est touchée au moment de la mesure.
+
+**Corrigé au passage, sans rapport avec la panne** : `orchestrator.py::
+cmd_status()` calculait `is_due()` pour tous les agents y compris ceux à
+`lanes: []` (`regle-alimentation`, `verifie-backup`, `storage`, neutralisés à
+dessein le 2026-08-16/25) et affichait `DÛ` avec 22 à 30 jours de retard sur
+des agents que `--due` n'invoque jamais — garde-fou qui crie au loup (règle 2
+du CLAUDE.md), déjà repéré et volontairement laissé de côté aux sessions du
+09-09/09-12/09-13 faute de lien avec le sujet du jour. Cette fois corrigé
+(affiche `manuel (hors lanes)`), testé (`agents/tests/test_status_hors_lanes.py`,
+2/2), commit `4a3f88e` sur `fix/pouls-pid-recycle`.
+
+**Non fait, décision requise (règle 5)** : `scrap_en_cours()` bloque toute la
+lane `daily` dès qu'un agent `LONGS_A_NE_PAS_COUPER` (`remonter-supabase`,
+qui a besoin de Supabase) tourne encore — même si les 5 extracteurs, eux,
+n'ont besoin ni de Supabase ni d'attendre. Une panne Supabase de plusieurs
+heures coûte donc une nuit complète de scrap, pas seulement la remontée.
+Trois options chiffrées dans le rapport (statu quo / isoler le blocage à
+l'agent concerné / plafond de durée globale sur `remonter-local.py`), aucune
+tranchée — nécessite de choisir un seuil ou une politique de contournement,
+hors mandat d'une session autonome.
