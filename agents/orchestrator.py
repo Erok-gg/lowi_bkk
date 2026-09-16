@@ -624,10 +624,20 @@ def cmd_status(led: Ledger) -> None:
     for spec in REGISTRY["agents"]:
         d = days_since_ok(led, spec["name"])
         last = "jamais" if d is None else f"il y a {d:.1f} j"
-        due, why = is_due(led, spec)
+        if not spec.get("lanes"):
+            # `lanes: []` = invocation manuelle seulement, jamais par --due
+            # (regle-alimentation, verifie-backup, storage neutralisés le
+            # 2026-08-25 — cf. leurs `_pourquoi` dans agents.json). Calculer
+            # et afficher DÛ pour un agent que le scheduler ne regarde jamais
+            # est le garde-fou qui crie au loup que la règle 2 du CLAUDE.md
+            # interdit : trouvé le 2026-09-16 sur ces 3 agents précisément.
+            statut = "manuel (hors lanes)"
+        else:
+            due, why = is_due(led, spec)
+            statut = "DÛ" if due else "à jour"
         print(f"{spec['name']:24s} {spec['tier']:5s} "
               f"{str(spec.get('every_days', 1)) + ' j':8s} {last:22s} "
-              f"{'DÛ' if due else 'à jour'}")
+              f"{statut}")
 
     hi = led.findings_since(
         (datetime.now(timezone.utc) - timedelta(days=7)).isoformat(), "high")
