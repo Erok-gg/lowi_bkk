@@ -2692,3 +2692,67 @@ Non fait : l'option (c) (plafond de durée sur les retries Postgres de
 vrai problème sans qu'aucun seuil n'ait à être choisi. Confirmation en
 conditions réelles reportée au cycle du 17/09 01:00 (pas de scrap manuel
 lancé en pleine journée pour vérifier plus tôt).
+
+## 2026-09-26 — État des lieux après une semaine d'absence (PC2, lecture du ledger 18→26/09)
+
+**Ce que le ledger montre (mesuré).** Cycles complets les 18, 22, 23, 24, 25 et
+26/09. **Trois nuits perdues, 19, 20 et 21/09** : aucun extracteur n'a tourné.
+
+1. **Les 3 nuits perdues — l'option (c) écartée le 16/09 était nécessaire.**
+   `remonter-supabase` (run 518) a tourné **69 h** (19/09 01:02 → 21/09 22:19
+   UTC) : 204 lots ont chacun épuisé leur budget d'attente de 1 200 s contre un
+   pooler en panne (`ECIRCUITBREAKER`, `EAUTHQUERY`), 51 500 erreurs. Le
+   correctif `6bfc64b` ne couvrait qu'une remontée dans un AUTRE process ; ici
+   elle tenait le process orchestrateur lui-même, et `LowiBKK-Agents`
+   (`MultipleInstances=IgnoreNew`, vérifié) a refusé les déclenchements
+   suivants. L'entrée précédente disait « inutile maintenant que (b) résout le
+   vrai problème » : c'était faux, (b) n'en résolvait que la moitié.
+   **Corrigé** (`9d0dd9d`) : disjoncteur `--max-lots-en-echec` (défaut 3, soit
+   ~1 h de panne continue) → abandon sans recopie des statuts ni `scan_run`,
+   code 1. Sans perte : le passage suivant réévalue la fenêtre active. Test
+   `agents/tests/test_remonter_disjoncteur.py` (panne longue → rend la main ;
+   échecs isolés → se tait ; tout passe → code 0). **Seuil proposé, à arbitrer.**
+2. **`social-leads` : 0 fiche chargée depuis le 21/09.** `load_social_leads.py`
+   appelé en tube retombait sur cp1252 et plantait au premier « → » — 10
+   collectes (13→22/09) rejetées à chaque cycle. Reproduit, **corrigé**
+   (`2ace611`, même idiome que `orchestrator.py`), vérifié : collecte du 13/09
+   → 36 pistes, relance idempotente. Le rattrapage des 9 autres collectes est
+   laissé à l'agent au prochain cycle. Distinct : les collectes 23→25/09
+   sortent « aucune fiche extraite » — non investigué.
+3. **LivingInsider cassé depuis le 17/09 — changement côté site, pas chez nous.**
+   Aucun commit sur l'adaptateur depuis le 29/08. Sonde du 26/09 (6 requêtes à
+   3 s) : les URL `/searchword_en/…/<page>/…` redirigent vers `/en/condo-buysell`
+   ou `/en/condo-rent/<n>` ; le `ld+json ItemList` est désormais un bloc fixe
+   (les 12 mêmes identifiants sur toutes les pages), la vraie liste n'est plus
+   que dans les liens HTML (59 identifiants distincts par page) ; et **les
+   fiches détail (`/en/detail/…` comme `/detail_en/…`) répondent 202 avec un
+   corps vide** — un challenge anti-bot. Effet en base : 6 annonces créées le
+   17/09 sans prix, titre = nom de zone, toujours `active` ; le garde-fou
+   « scan < 50 % des actives » a bien annulé le délistage des 522 autres.
+   La sonde de structure passe (elle trouve « 1 stub ») : **elle ne détecte
+   pas ce mode de panne**. `fraicheur` et `watch-health` l'ont vu, eux —
+   chaque nuit depuis le 23/09. **Non réparé : contourner un challenge est une
+   décision de posture (règle 5).**
+4. **`fraicheur` en « failed » tous les jours : ce n'est pas une panne.** Son code
+   de sortie 1 signifie « alerte levée » ; il alerte à juste titre (tous les
+   extracteurs le 21/09, LivingInsider seul ensuite). Mais l'overseer le compte
+   en `contrat_viole` et `status` l'affiche DÛ depuis 8 j : un vrai constat
+   compté deux fois. Non modifié.
+5. **`watch-sources` DÛ depuis 20 j** : sa lane hebdo tombait le dimanche 20/09,
+   perdu dans le trou. Rattrapage attendu au cycle du 27/09 (dimanche). Rien à
+   faire.
+6. **File T2 abandonnée.** `drain-agent-queue-lowi-bkk` est **désactivée** (dernier
+   run 25/08), 31 tickets en attente dans `agents/queue/`, dont les lots
+   `organize` (60 paires/jour déposées, 0 réponse depuis le 15/09). Le ledger
+   porte 62 escalades `open`, dont des `agent_muet` de juillet.
+7. Vu en passant, non creusé : `extract-ddproperty` du 25/09 n'a scanné que
+   4 264 annonces contre ~6 700 les nuits précédentes.
+
+**Non fait, et pourquoi.** Aucune réparation LivingInsider (posture). Aucune
+correction des 6 annonces sans prix (aucune suppression sans décision). Aucune
+clôture d'escalade ni réactivation de la tâche de drainage (choix
+d'organisation). Double comptage `fraicheur`/overseer laissé en l'état. Le
+disjoncteur n'a pas encore rencontré de vraie panne : sa confirmation en
+conditions réelles attend la prochaine coupure du pooler. Travail sur la
+branche `fix/reparations-2026-09-26` (tirée de `fix/pouls-pid-recycle`), non
+fusionnée — c'est l'arbre de travail que la tâche de 01:00 exécute.
