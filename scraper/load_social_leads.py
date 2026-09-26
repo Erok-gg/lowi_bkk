@@ -30,6 +30,15 @@ import sqlite3
 import sys
 from pathlib import Path
 
+# Appelé par l'agent social-leads avec stdout en tube : Python retombe alors sur
+# cp1252 et le premier « → » plantait en UnicodeEncodeError. Mesuré : 10
+# collectes (13→22/09) rejetées chaque nuit du 21 au 26/09, 0 fiche chargée.
+for _flux in (sys.stdout, sys.stderr):
+    try:
+        _flux.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
+
 BASE = Path(__file__).resolve().parent.parent
 MIGRATION = BASE / "supabase" / "migrations" / "social_leads.sql"
 
