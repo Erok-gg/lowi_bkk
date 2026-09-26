@@ -40,7 +40,13 @@ assert not manquants, f"le jour hebdomadaire perd des agents : {sorted(manquants
 print(f"hebdo ⊇ quotidien : OK  ({len(quotidien)} agents quotidiens, {len(hebdo)} le jour hebdo)")
 
 # --------------------------------- 2. l'extraction tourne les DEUX jours
-extracteurs = {a["name"] for a in REGISTRY["agents"] if a.get("famille") == "Extraction"}
+# Un extracteur suspendu à dessein (`lanes` vide ET motif écrit dans
+# `_suspendu`) est exclu — extract-livinginsider le 2026-09-26. Exiger le motif
+# garde le test utile : une lane vidée par erreur, sans explication, échoue
+# toujours.
+extracteurs = {a["name"] for a in REGISTRY["agents"]
+               if a.get("famille") == "Extraction"
+               and not (not a.get("lanes") and a.get("_suspendu"))}
 assert extracteurs, "registre sans agent d'extraction — test sans objet"
 for lane in ("daily", "weekly"):
     absents = extracteurs - agents_de(lane)

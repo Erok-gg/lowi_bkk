@@ -243,9 +243,8 @@
       "name": "extract-livinginsider",
       "famille": "Extraction",
       "tier": "T0",
-      "lanes": [
-        "daily"
-      ],
+      "lanes": [],
+      "_suspendu": "SUSPENDU le 2026-09-26 sur decision utilisateur (lanes vide = plus jamais lance par --due ; retour : remettre \"daily\"). Le site a ete refondu vers le 17/09 : les URL /searchword_en/.../<page>/ redirigent vers /en/condo-buysell|condo-rent/<n>, le ld+json ItemList est un bloc fixe (12 memes annonces sur toutes les pages) et les fiches detail repondent 202 a corps vide (challenge anti-bot). Resultat mesure : 0 nouvelle annonce 5 nuits d'affilee, ~50 min perdues par nuit, 6 annonces sans prix creees le 17/09 (passees inactive le 26/09). watch-health et fraicheur ignorent un extracteur suspendu (sinon alerte haute quotidienne sur une source arretee a dessein). Reprise = adapter list_urls a la nouvelle pagination ET trancher le challenge des fiches (posture).",
       "every_days": 1,
       "cmd": [
         "@py",

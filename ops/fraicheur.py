@@ -89,6 +89,27 @@ CHUTE_ALERTE = 0.5
 GARDE_RELEVES = 30
 
 
+def _sources_suspendues() -> set[str]:
+    """Sources dont l'extracteur est suspendu (`lanes` vide dans agents.json).
+
+    Ajouté le 2026-09-26 avec la suspension d'extract-livinginsider : plus rien
+    ne confirme ses annonces, sa fraîcheur s'effondre PAR CONSTRUCTION, et le
+    garde-fou aurait crié chaque nuit sur un arrêt voulu (règle 2). On continue
+    de la RELEVER (l'historique reste continu), on cesse de la JUGER."""
+    try:
+        registre = json.loads((ROOT / "agents" / "agents.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    out = set()
+    for a in registre.get("agents", []):
+        cmd = a.get("cmd") or []
+        if a.get("famille") == "Extraction" and not a.get("lanes") and "--source" in cmd:
+            i = cmd.index("--source")
+            if i + 1 < len(cmd):
+                out.add(cmd[i + 1])
+    return out
+
+
 def _maintenant() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -230,7 +251,12 @@ def verifier(chute: float = CHUTE_ALERTE) -> int:
               f"{MIN_HISTORIQUE} requis (le garde-fou se tait plutôt que de "
               f"juger sur du vide)")
     else:
+        suspendues = _sources_suspendues()
         for source, cour in releve["sources"].items():
+            if source in suspendues:
+                print(f"  · {source} non jugée — extracteur suspendu "
+                      f"({cour['pct']} % confirmées < {FENETRE_H} h)")
+                continue
             anciens = [r["sources"][source]["pct"] for r in passe
                        if source in r.get("sources", {})]
             if len(anciens) < MIN_HISTORIQUE:

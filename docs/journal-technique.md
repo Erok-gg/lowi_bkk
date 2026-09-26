@@ -2756,3 +2756,34 @@ disjoncteur n'a pas encore rencontré de vraie panne : sa confirmation en
 conditions réelles attend la prochaine coupure du pooler. Travail sur la
 branche `fix/reparations-2026-09-26` (tirée de `fix/pouls-pid-recycle`), non
 fusionnée — c'est l'arbre de travail que la tâche de 01:00 exécute.
+
+## 2026-09-26 (suite) — LivingInsider suspendu, 6 annonces fantômes passées inactive
+
+Décision utilisateur, en réponse au point 3 de l'entrée précédente.
+
+- **Suspension** : `extract-livinginsider` → `lanes: []` + motif `_suspendu`
+  (`agents/agents.json`). Retour : remettre `"daily"`. Vérifié par
+  `run-lane daily --all --dry-run` : 4 extracteurs, plus LivingInsider.
+- **Pour que l'arrêt voulu ne crie pas chaque nuit (règle 2)** : `watch-health`
+  ne juge plus que les extracteurs ayant une lane (sinon « parseur_casse » en
+  sévérité haute sur son dernier run figé) ; `fraicheur` continue de relever
+  la source mais ne la juge plus (`_sources_suspendues()`, lit agents.json) —
+  sinon ses 516 actives, que plus rien ne confirme, auraient alerté à vie.
+  `test_lanes.py` exclut un extracteur à lanes vide **seulement s'il porte un
+  `_suspendu`** : une lane vidée par erreur échoue toujours.
+- **6 annonces passées inactive** (`livinginsider:sale:3048952`, `3189961`,
+  `3222636`, `3222631`, `rent:2974692`, `3222639`) : garde vérifiée avant
+  écriture (6 lignes, toutes actives, prix nul, créées le 17/09). État
+  antérieur sauvegardé dans
+  `agents/audits/2026-09-26-livinginsider-inactives-rollback.json`.
+  `delisted_at` et `dirty_since` posés : la prochaine remontée propagera le
+  statut au serveur.
+
+**Non fait.** `livinginsider:rent:3160325` a le même symptôme (prix nul,
+titre = URL) mais date du 16/09, avant la panne — hors du périmètre demandé,
+laissé actif. Les 516 autres actives LivingInsider restent `active` sans
+confirmation : leur délistage n'aura lieu qu'à la reprise d'un scan complet.
+Escalades `parser_break` LivingInsider laissées ouvertes dans le ledger.
+`fraicheur --verifier` pas rejoué en réel (il écrit son historique et peut
+ouvrir des tickets) : vérification par `test_fraicheur.py` + lecture directe de
+`_sources_suspendues()` → `{'livinginsider'}`.

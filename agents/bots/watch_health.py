@@ -19,7 +19,11 @@ from agents.core.metrics import aplatir
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REGISTRY = json.load(open(os.path.join(ROOT, "agents.json"), encoding="utf-8"))
-EXTRACTEURS = [a for a in REGISTRY["agents"] if a["famille"] == "Extraction"]
+# Lanes vide = extracteur suspendu à dessein (extract-livinginsider le
+# 2026-09-26). Le juger sur son dernier run, figé, relevait « parseur_casse »
+# en sévérité haute chaque nuit sur une source arrêtée volontairement (règle 2).
+EXTRACTEURS = [a for a in REGISTRY["agents"]
+               if a["famille"] == "Extraction" and a.get("lanes")]
 
 # CONSIGNES EN ANGLAIS, CONTENU EN FRANÇAIS.
 #
