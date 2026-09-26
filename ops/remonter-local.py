@@ -241,6 +241,12 @@ def main() -> int:
     ap.add_argument("--lot", type=int, default=500,
                     help="taille de lot pour l'upsert par lots (defaut 500 ; "
                          "voir SupabaseStore.upsert_listings_bulk)")
+    # 3 : chaque lot épuise jusqu'à 1 200 s d'attente avant d'échouer, donc ~1 h
+    # de panne continue avant d'abandonner. Une coupure brève (1 lot perdu, cas
+    # du 18/09) ne déclenche rien. Seuil PROPOSÉ le 2026-09-26, à arbitrer.
+    ap.add_argument("--max-lots-en-echec", type=int, default=3,
+                    help="lots consecutifs en echec avant abandon (defaut 3, "
+                         "~1 h de panne Supabase)")
     a = ap.parse_args()
     if a.delta:
         a.statut = "actives"
@@ -315,6 +321,16 @@ def main() -> int:
     # annonces (défaut 500) → le nombre d'allers-retours tombe d'un facteur
     # ~1000.
     nouvelles = maj = changees = erreurs = 0
+    # DISJONCTEUR. Chaque lot a son propre budget d'attente réseau (1 200 s dans
+    # SupabaseStore) : sur une panne longue du pooler, ce budget se rejoue lot
+    # après lot. Mesuré le 2026-09-19 : 204 lots, 51 500 erreurs, **69 h** de
+    # run — le process orchestrateur est resté pris, la tâche planifiée
+    # (MultipleInstances=IgnoreNew) a refusé les cycles des 19, 20 et 21/09 :
+    # 3 nuits sans aucun extracteur. Abandonner ne perd rien : sans --delta, le
+    # passage suivant réévalue toute la fenêtre active ; avec --delta, un lot
+    # non envoyé n'est pas marqué synchronisé et repart la nuit suivante.
+    echecs_consecutifs = 0
+    abandon = False
     for i in range(0, len(lignes), a.lot):
         lot = lignes[i:i + a.lot]
         try:
@@ -329,6 +345,7 @@ def main() -> int:
                         chemin = os.path.join(a.dossier, im["storage_path"])
                         if os.path.exists(chemin):
                             storage.upload(chemin, im["storage_path"])
+            echecs_consecutifs = 0
             if a.delta:
                 # Envoi reussi (meme si le garde-fou anti-reecriture de
                 # Postgres a fait un no-op pour certaines lignes identiques) :
@@ -336,12 +353,26 @@ def main() -> int:
                 marquer_synchronise(db_path, [l["id"] for l in lot])
         except Exception as e:  # noqa: BLE001
             erreurs += len(lot)
+            echecs_consecutifs += 1
             if erreurs <= 5 * a.lot:
                 print(f"  [erreur lot {i}-{i + len(lot)}] {type(e).__name__} {e}")
+            if echecs_consecutifs >= a.max_lots_en_echec:
+                print(f"\n✗ ABANDON : {echecs_consecutifs} lots d'affilée en échec — "
+                      f"Supabase est indisponible, on rend la main au cycle. "
+                      f"{len(lignes) - i - len(lot)} annonces non tentées, "
+                      f"repoussées au prochain passage.")
+                abandon = True
+                break
         fait = min(i + a.lot, len(lignes))
         print(f"  … {fait}/{len(lignes)} ({nouvelles} nouvelles, {maj} mises à jour, {changees} prix changés)")
 
     print(f"\nOK - Terminé — {nouvelles} nouvelles, {maj} mises à jour, {erreurs} erreur(s)")
+
+    if abandon:
+        # Ni recopie des statuts ni scan_run : le serveur est injoignable, et un
+        # scan_run écrit maintenant (s'il passait) ferait croire à
+        # verifie-synchro.py que le serveur a été rafraîchi.
+        return 1
 
     corriges = 0
     if a.synchro_statuts:
