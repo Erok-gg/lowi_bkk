@@ -2787,3 +2787,53 @@ Escalades `parser_break` LivingInsider laissées ouvertes dans le ledger.
 `fraicheur --verifier` pas rejoué en réel (il écrit son historique et peut
 ouvrir des tickets) : vérification par `test_fraicheur.py` + lecture directe de
 `_sources_suspendues()` → `{'livinginsider'}`.
+
+## 2026-09-28 — Revue des scraps, éditions mal datées, file de tickets abandonnée
+
+**Scraps (mesuré au ledger, 3 derniers cycles 26→28/09) : tous les extracteurs
+actifs `ok`.** Nuit du 28 : FazWaz 85 099 URL sitemap / 96 nouvelles,
+DDproperty 6 740 / 1 465, PropertyScout 1 240 / 45, Nestopa 553 / 21. Analyse,
+organize, social-leads (346 leads chargés le 27), report, backup, overseer : ok.
+Seul échec : `remonter-supabase`, 2 nuits (26 : 500 erreurs sur un lot ; 28 :
+abandon par le disjoncteur, `EAUTHQUERY auth_query secret check timed out`
+côté pooler Supabase — panne serveur, pas de code).
+
+**Défaut de datation (corrigé).** `study/run_study.py` nommait ses éditions en
+date **UTC** (`TODAY`). Le cycle part à 01:00 Bangkok ; quand `report` finit
+avant 07:00 locale, l'UTC est encore la veille. Mesuré sur les mtimes :
+5 éditions mal nommées (31/08→01/09, 01/09→02/09, 10/09→11/09, 21/09→22/09,
+27/09→28/09), et **celle de la nuit du 28 a écrasé la vraie édition du 27**
+(perdue, non reconstructible : l'étude lit l'état courant de la base).
+Correctif : date locale, même convention que `jour_local()` de
+l'orchestrateur. Même défaut dans `agents/bots/overseer.py` (nom de l'audit
+quotidien) — corrigé. Les 5 éditions (snapshot JSON + champ `date`, `.md`,
+`.xlsx`, `khet-*.csv`) ont été **renommées** à leur vraie date, rien supprimé ;
+copie des snapshots avant renommage dans le scratchpad de la séance. Étude
+relancée : `docs/etudes/etude-2026-09-28.md`, 35 snapshots, 109 281 actives
+dans le périmètre (49 782 ventes / 59 499 locations, 3 977 immeubles).
+
+**File de tickets T2 : plus drainée depuis le 16/09.** La routine
+`drain-agent-queue-lowi-bkk` est **désactivée depuis le 25/08** et vit dans le
+profil PC1 (`C:\Users\schoe`), alors que la file est sur PC2. 33 tickets en
+attente. Fermés (avec diagnostic, via `escalation.resolve`) : 24 alertes
+périmées — cycles manquants/longs/vides et agents muets des 15-22/09 (incident
+déjà consigné le 26/09, 3 cycles propres depuis), `parser_break` et fraîcheur
+LivingInsider (source suspendue, 066fb2a), fraîcheur effondrée des autres
+sources pendant les nuits perdues.
+
+**Non fait.**
+- **9 tickets `organize` (540 paires) laissés ouverts** : aucune statistique
+  n'en dépend, et les trancher à la main coûte cher en tokens pour un stock
+  ambigu de 604 032 paires qui croît plus vite que 60/jour. Décision à prendre :
+  réactiver un drainage sur PC2 (tâche Windows + `claude -p` Haiku, comme
+  `social-leads`), ou arrêter le dépôt de tickets.
+- **Routine de drainage non recréée** : où elle doit tourner (PC2) et avec
+  quel modèle est un arbitrage utilisateur.
+- **`watch-health` juge FazWaz en « dérive »** chaque nuit (192 nouvelles
+  contre une médiane de 2 006) : la médiane date du rattrapage sitemap
+  (~17 000 fiches en retard, repris sur ~9 nuits) et n'est plus représentative.
+  Pas d'escalade, mais constat récurrent inutile (règle 2) — seuil laissé à
+  trancher (règle 5).
+- **Quota Supabase : 436 Mo / 500 Mo (87 %)**, 114 452 actives côté serveur.
+  ≈ 2,7 Ko/ligne (436 Mo / 159 083 lignes) × ~1 600 nouvelles/jour ≈ 4-5 Mo/jour : **plein dans ~2 semaines**
+  (estimation déduite, index compris, non mesurée ligne à ligne). Aucun garde-fou ne prévient.

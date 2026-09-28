@@ -164,7 +164,9 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
 
     # Écriture de l'audit lisible
     os.makedirs(AUDITS, exist_ok=True)
-    jour = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Jour LOCAL : un cycle qui finit avant 07:00 Bangkok est encore la veille en
+    # UTC — même défaut que study/run_study.py (éditions mal datées, 2026-09-28).
+    jour = datetime.now().astimezone().strftime("%Y-%m-%d")
     path = os.path.join(AUDITS, f"{jour}.md")
     with open(path, "a", encoding="utf-8") as f:
         f.write(f"\n## Cycle « {lane} » — {datetime.now(timezone.utc):%H:%M} UTC\n\n")

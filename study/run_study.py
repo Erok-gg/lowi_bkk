@@ -36,7 +36,12 @@ sys.path.insert(0, os.path.join(ROOT, "scraper"))
 import psycopg  # noqa: E402
 import sqlite3  # noqa: E402
 
-TODAY = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+# Date LOCALE (Bangkok), pas UTC. Le cycle part à 01:00 et `report` finit vers
+# 06:00-09:00 : avant 07:00 locale on est encore la VEILLE en UTC. Mesuré le
+# 2026-09-28 : 5 éditions sur 26 portaient la date de la veille (01/09, 10/09,
+# 21/09, 27/09, 31/08), et celle de la nuit du 28 a ÉCRASÉ la vraie édition du
+# 27. Même convention que `jour_local()` dans agents/orchestrator.py.
+TODAY = datetime.now().astimezone().strftime("%Y-%m-%d")
 
 # ── OU VIT LA DONNEE ────────────────────────────────────────────────────────
 # Le stockage de reference est passe en LOCAL le 2026-08-23 : la base Supabase
