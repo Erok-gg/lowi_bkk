@@ -2844,3 +2844,40 @@ sources pendant les nuits perdues.
 **Remontée relancée à la main** (Supabase de nouveau joignable) : 113 436
 actives, 1 627 nouvelles, 117 mises à jour, 0 erreur, 2 704 fantômes
 corrigés. Serveur à jour au 28/09 ~09:50.
+
+### 2026-09-28 (suite) — drainage Haiku sur PC2 + fuite `posted_at_history`
+
+**Agent `drain-tickets` (T2, lane daily, juste après `organize`)** —
+`agents/bots/drain_tickets.py`, skill, test `test_drain_tickets.py` (modèle
+simulé). Haiku (`claude -p`, appel repris de `social-leads`) rend les 6 faits,
+`appliquer_reponses()` → `decider()` tranche : contrat inchangé. Au plus 12
+tickets par cycle. Chaque réponse est recomparée aux faits recalculés en code
+(`verite_code`) → `paires_fausses`, constat au-delà de 5 %. Les tickets
+d'alerte restent pour un humain (comptés dans `autres_par_nature`).
+Constat en l'écrivant : le texte des paires est produit par `organize.fmt()`
+depuis des champs de la base, donc les 6 faits sont **calculables en code sans
+modèle** — Haiku ne fait que relire ce que le code a écrit. Laissé à
+l'arbitrage : garder Haiku (demandé) ou passer la comparaison en T0 (gratuit,
+exact par construction).
+**⚠ Non mesuré : la session `claude` de PC2 a expiré** (« OAuth session
+expired and could not be refreshed ») — aucun appel Haiku possible, ni pour
+cet agent ni pour `social-leads`. Rien n'est perdu (tickets et collectes
+restent en attente), mais il faut se reconnecter (`claude` puis `/login`)
+avant la première mesure réelle.
+
+**Fuite `posted_at_history` côté serveur — corrigée dans le code.** Réponse à
+la question « les inactives sont-elles purgées à 90 j ? » : non — l'agent de
+purge est neutralisé depuis le 25/08 ; le serveur garde 47 274 inactives (632
+de plus de 90 j), le local les a toutes (48 404). Mais ce n'est pas là qu'est
+le poids : `posted_at_history` pèse **196 Mo** (1 699 284 lignes, dont
+**105 093 distinctes**, 94 % de doublons) contre 104 527 lignes en local.
+Cause : `SupabaseStore` comparait `str(timestamptz)` ('… 16:54:35+00:00') au
+texte ISO local ('…T16:54:35+00:00') → toujours différents → chaque remontée
+ré-historisait tout DDproperty (~400 k lignes/semaine depuis le 24/08, 79 k ce
+matin). Correctif : `_meme_instant()` compare des instants (chemin lot ET
+chemin ligne). Tests `test_remonter_bulk`, `test_remontee_isolee`,
+`test_stores_alignes` verts.
+**Non fait, à valider** : supprimer les 1,59 M doublons du serveur (garder la
+1re observation de chaque couple `listing_id, posted_at` — aucune information
+distincte perdue, l'app ne lit pas cette table). Suppression en production,
+donc soumise à l'utilisateur.

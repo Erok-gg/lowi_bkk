@@ -162,6 +162,27 @@ _COLS = COLONNES_LISTING
 _BOOLEENNES = ("is_auto_repost", "d_animaux_ok", "d_livre")
 
 
+def _meme_instant(a, b) -> bool:
+    """`posted_at` est-il inchangé ? Compare des INSTANTS, pas des chaînes.
+
+    Le serveur rend un `timestamptz` (str → '2026-08-19 16:54:35+00:00'), le
+    local stocke du texte ISO ('2026-08-19T16:54:35+00:00') : la comparaison de
+    chaînes différait TOUJOURS. Mesuré le 2026-09-28 : 1,70 M lignes dans
+    `posted_at_history` côté serveur contre 104 k en local, ~400 k ajoutées par
+    semaine depuis que la remontée tourne (24/08), 196 Mo — la moitié du quota."""
+    if a is None or b is None:
+        return a is None and b is None
+    def inst(x):
+        if isinstance(x, datetime):
+            return x if x.tzinfo else x.replace(tzinfo=timezone.utc)
+        t = datetime.fromisoformat(str(x).strip().replace("Z", "+00:00"))
+        return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+    try:
+        return inst(a) == inst(b)
+    except (TypeError, ValueError):
+        return str(a) == str(b)
+
+
 def _coerce(col: str, v):
     if v is None or col not in _BOOLEENNES:
         return v
@@ -408,7 +429,7 @@ class SupabaseStore(BaseStore):
                     if nouveau_posted:
                         posted_a_historiser.append((lid, nouveau_posted, now))
                     continue
-                if nouveau_posted and str(existant.get("posted_at")) != str(nouveau_posted):
+                if nouveau_posted and not _meme_instant(existant.get("posted_at"), nouveau_posted):
                     posted_a_historiser.append((lid, nouveau_posted, now))
                 nouveau_statut = r.get("market_status")
                 if (existant.get("market_status") or None) != (nouveau_statut or None):
@@ -489,7 +510,7 @@ class SupabaseStore(BaseStore):
             ancien = existing["posted_at"]
         except (KeyError, IndexError):
             return
-        if ancien and str(ancien) == str(nouveau):
+        if ancien and _meme_instant(ancien, nouveau):
             return
         self._add_posted_at(existing["id"], nouveau, when)
 

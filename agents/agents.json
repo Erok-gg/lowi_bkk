@@ -387,6 +387,26 @@
       "_pourquoi": "REACTIVE le 2026-08-25 apres portage. Il avait ete suspendu quelques heures le meme jour : ses requetes utilisaient `regexp_replace`, `greatest`, `interval` et `pg_get_viewdef`, du Postgres pur, absent de SQLite. L'appariement des paires ne se fait plus en SQL mais en Python : l'auto-jointure de la table sur elle-meme tournait encore apres 10 min sous SQLite (la cle de regroupement est CALCULEE, aucun index ne porte sur un calcul, soit ~4,8 milliards de comparaisons). Range par paquets en Python : 88 361 paires en 1,9 s, memes conditions mot pour mot. Une seule implementation pour les deux moteurs, plus deux versions a maintenir."
     },
     {
+      "name": "drain-tickets",
+      "famille": "Data organizing",
+      "tier": "T2",
+      "lanes": [
+        "daily"
+      ],
+      "every_days": 1,
+      "module": "agents.bots.drain_tickets",
+      "after": [
+        "organize"
+      ],
+      "_pourquoi": "Ajouté le 2026-09-28. Draine sur PC2 les tickets organize/comparaison_deleguee que la routine drain-agent-queue-lowi-bkk (profil PC1, désactivée depuis le 25/08) ne drainait plus : 33 tickets en attente au 28/09. Haiku via claude -p rend les 6 faits, decider() tranche. Placé juste après organize : le lot déposé la nuit est tranché la même nuit. Les tickets d'alerte restent pour un humain.",
+      "bandes": {
+        "paires_fausses": [
+          0,
+          3
+        ]
+      }
+    },
+    {
       "name": "social-leads",
       "famille": "Analyse",
       "tier": "T2",
