@@ -2834,6 +2834,13 @@ sources pendant les nuits perdues.
   (~17 000 fiches en retard, repris sur ~9 nuits) et n'est plus représentative.
   Pas d'escalade, mais constat récurrent inutile (règle 2) — seuil laissé à
   trancher (règle 5).
-- **Quota Supabase : 436 Mo / 500 Mo (87 %)**, 114 452 actives côté serveur.
-  ≈ 2,7 Ko/ligne (436 Mo / 159 083 lignes) × ~1 600 nouvelles/jour ≈ 4-5 Mo/jour : **plein dans ~2 semaines**
-  (estimation déduite, index compris, non mesurée ligne à ligne). Aucun garde-fou ne prévient.
+- **Quota Supabase : 446 Mo / 500 Mo (89 %)** après la remontée manuelle de ce
+  jour (mesuré : 436 → 446 Mo pour 1 627 nouvelles + 2 704 statuts corrigés,
+  soit ~10 Mo par nuit). **Plein dans ~5 nuits** au rythme actuel. Aucun
+  garde-fou ne prévient. Leviers à arbitrer : purger les inactives du serveur
+  (copie vérifiée d'abord, règle 8), alléger `raw_data`, ou plafonner la
+  remontée — non tranché.
+
+**Remontée relancée à la main** (Supabase de nouveau joignable) : 113 436
+actives, 1 627 nouvelles, 117 mises à jour, 0 erreur, 2 704 fantômes
+corrigés. Serveur à jour au 28/09 ~09:50.
