@@ -2904,3 +2904,23 @@ Test : `agents/tests/test_organize_code.py`. `deposer_en_ticket` et le chemin
 T1 (Ollama, PC1) sont conservés tels quels.
 **Non fait** : la file de revue (17 + antérieures) n'est lue par personne ;
 aucune statistique n'en dépend.
+
+### 2026-09-28/29 — doublons `posted_at_history` supprimés du serveur (décision utilisateur)
+
+- **Copie avant suppression** : export intégral du serveur →
+  `archive/posted_at_history-serveur-2026-09-28.csv.gz` (17,6 Mo, gitignoré).
+  Vérifié : 1 699 284 lignes exportées = compte serveur, 1 699 284 id
+  distincts, 105 093 couples `(listing_id, posted_at)`. Export : 2 h 03
+  (instance Supabase saturée toute la journée, pooler en `EAUTHQUERY`).
+- **Suppression** : 1 594 191 lignes, par lots de 20 000 id, en gardant pour
+  chaque couple la 1re observation (`observed_at` puis `id`). Aucune
+  information distincte perdue. Résultat mesuré : 105 093 lignes, 105 093
+  couples distincts. Ralentie par le serveur (~6 h).
+- **Rollback** : recharger le CSV (`COPY posted_at_history FROM STDIN CSV
+  HEADER` des id absents) — les id d'origine sont conservés dans l'export.
+- **Place rendue au quota : pas encore.** Le `VACUUM FULL` a perdu sa
+  connexion (SSL fermé) ; la table pèse toujours 196 Mo, base 453 Mo. Une
+  relance en arrière-plan attend que le serveur accepte les connexions et
+  qu'aucun vacuum ne tourne déjà. Sans lui, Postgres réutilisera l'espace
+  libéré pour les futures insertions (la croissance est donc absorbée), mais
+  `pg_database_size` — ce que mesure le quota — ne baisse pas.
