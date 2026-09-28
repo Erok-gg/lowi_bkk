@@ -430,6 +430,69 @@ def deposer_en_ticket(led, run_id: int, ambigues: list[dict]) -> dict:
             "paires_liberees": liberees}
 
 
+# ───────────────────── mode « code » (T1 absent) ─────────────────────
+def faits_code(p: dict) -> dict:
+    """Les six faits du contrat, lus DIRECTEMENT dans les champs de la paire.
+
+    Décidé le 2026-09-28. Le texte soumis au modèle (`fmt`) est fabriqué à
+    partir de ces mêmes champs : un modèle ne pouvait que relire ce que le code
+    avait écrit, au mieux sans erreur. Le calcul est exact par construction,
+    gratuit, et ne dépend d'aucune session `claude` (expirée le jour même sur
+    PC2). `decider()` reste seul juge — le contrat ne change pas."""
+    return {"a_active": p["sta"] == "active", "b_active": p["stb"] == "active",
+            "a_retiree": bool(p.get("da")), "b_retiree": bool(p.get("db")),
+            "b_apres_a": _apres(p.get("da"), p.get("fsb")),
+            "ecart_prix_pct": round(float(p["ecart_prix"]) * 100, 1)}
+
+
+def _apres(da, fsb) -> bool:
+    try:
+        return bool(da and fsb and datetime.fromisoformat(str(fsb)) > datetime.fromisoformat(str(da)))
+    except (TypeError, ValueError):
+        return False
+
+
+def trancher_en_code(ambigues: list[dict]) -> dict:
+    """Tranche TOUTES les paires ambiguës, chaque nuit, sans modèle ni ticket.
+
+    Pas de journal de reprise ici : recalculer 600 000 paires coûte quelques
+    secondes, alors que `Reprise.marquer` fait un fsync par clé. Seule la file
+    de revue est dédupliquée, pour qu'une paire n'y entre qu'une fois."""
+    os.makedirs(STATE, exist_ok=True)
+    deja = set()
+    if os.path.exists(REVUE):
+        with open(REVUE, encoding="utf-8") as f:
+            for l in f:
+                try:
+                    r = json.loads(l)
+                    deja.add(f"{r['ida']}|{r['idb']}")
+                except (json.JSONDecodeError, KeyError):
+                    continue
+    abstentions, revue, incoherentes = 0, 0, 0
+    with open(REVUE, "a", encoding="utf-8") as fh:
+        for p in ambigues:
+            faits = faits_code(p)
+            if not coherent(faits):
+                incoherentes += 1          # donnée contradictoire en BASE, pas un modèle
+            verdict = decider(faits, {"da": str(p.get("da") or ""), "fsb": str(p.get("fsb") or "")})
+            if verdict == "insufficient":
+                abstentions += 1
+                continue
+            cle = f"{p['ida']}|{p['idb']}"
+            if cle in deja:
+                continue
+            fh.write(json.dumps({
+                "ida": p["ida"], "idb": p["idb"], "source": p["source"],
+                "condo": p["condo_name"], "khet": p["khet"],
+                "verdict_modele": verdict, "faits": faits, "origine": "code",
+                "statut_revue": "en_attente",
+            }, ensure_ascii=False, default=str) + "\n")
+            deja.add(cle)
+            revue += 1
+    return {"mode": "code", "paires_modele": len(ambigues), "abstentions": abstentions,
+            "revue_ajoutee": revue, "incoherentes_base": incoherentes}
+
+
 def appliquer_reponses(chemin: str) -> dict:
     """Referme la boucle : réponses → `decider()` → file de revue.
 
@@ -517,17 +580,13 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
     # aléatoire ci-dessus vaut pour les deux modes — c'est lui qui garantit que
     # l'échantillon soumis représente la population, pas un coin de la base.
     if local_llm.t1_absent():
-        m = deposer_en_ticket(led, run_id, ambigues)
+        # Mode CODE depuis le 2026-09-28 (remplace le dépôt en ticket, que
+        # plus rien ne drainait depuis le 16/09) — cf. faits_code().
+        m = trancher_en_code(ambigues)
         m.update({"backfills": 0, "bornes_alignees": bornes_ok,
                   "paires_candidates": len(paires), "paires_sql": tranchees_sql,
-                  "reste_ambigues": len(ambigues) - m["paires_deposees"],
-                  # Le contrat de sortie (SKILL.md) est le même dans les deux
-                  # modes : ici rien n'est tranché localement, donc zéro — et
-                  # non absent. Absents, l'overseer comptait un `contrat_viole`
-                  # par nuit (19 en 14 j au 2026-09-13) sur un agent qui faisait
-                  # exactement ce qu'on lui demande (règle 2).
-                  "paires_modele": 0, "abstentions": 0, "revue_ajoutee": 0,
-                  "pannes_llm": 0})
+                  "reste_ambigues": 0, "pannes_llm": 0,
+                  "paires_liberees": _purger_en_ticket()})
         return m
 
     lot = ambigues[:int(os.environ.get("ORGANIZE_LOT", LOT_MAX))]

@@ -2881,3 +2881,26 @@ chemin ligne). Tests `test_remonter_bulk`, `test_remontee_isolee`,
 1re observation de chaque couple `listing_id, posted_at` — aucune information
 distincte perdue, l'app ne lit pas cette table). Suppression en production,
 donc soumise à l'utilisateur.
+
+### 2026-09-28 (suite 2) — tri des paires passé en CODE (décision utilisateur)
+
+Décision de l'utilisateur : les six faits d'`organize` sont lus dans les
+champs de la paire (`faits_code`) au lieu d'être extraits par un modèle, puis
+`decider()` tranche comme avant. Motif : le texte soumis au modèle était
+fabriqué par `fmt()` depuis ces mêmes champs. Sur un poste sans T1
+(`agents/t1-absent`), `organize` tranche désormais **tout** le stock ambigu
+chaque nuit, sans ticket. Premier run réel : **205 817 paires en 17 s**,
+205 800 abstentions, **17 en revue** (`origine: code`), 0 incohérence en base.
+Contre 60 paires/nuit en ticket auparavant, que plus rien ne drainait.
+Ce que ça révèle : avec des faits exacts, `decider()` ne rend `same_unit` que
+pour les republications à écart < 2 % survenues **plus de 90 j** après le
+retrait (les autres sont déjà tranchées par `prefiltre_sql`) ; le reste
+s'abstient par construction. Le stade « modèle » n'apportait donc que du
+bruit ou ces cas-là.
+L'agent `drain-tickets` (Haiku) écrit plus tôt dans la journée est **retiré**
+(module, skill, test, entrée `agents.json`) avant d'avoir jamais tourné. Les 9
+tickets `comparaison_deleguee` en attente sont refermés (540 paires libérées).
+Test : `agents/tests/test_organize_code.py`. `deposer_en_ticket` et le chemin
+T1 (Ollama, PC1) sont conservés tels quels.
+**Non fait** : la file de revue (17 + antérieures) n'est lue par personne ;
+aucune statistique n'en dépend.
