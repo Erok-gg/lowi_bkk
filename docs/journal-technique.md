@@ -2977,3 +2977,41 @@ depuis fin août) n'existe que sur le disque de PC2. Pas poussé par cette
 session (action visible depuis l'extérieur, laissée à l'utilisateur), mais
 c'est le risque numéro un du dépôt en l'état : une panne disque emporterait
 un mois de travail non recréable depuis GitHub.
+
+## 2026-09-29 — lowi.asia : scintillement du fond (dépôt `lowi-th`)
+
+Consigné ici faute de journal dans `lowi-th` ; seul `lowi-th` est touché.
+
+**Symptôme** (signalé par l'utilisateur, Chrome PC) : le fond de `lowi.asia`
+s'allumait et s'éteignait très vite. Le fond de `public/dossier*.html` et
+`public/agent-pipeline*.html` : trois disques de ~56vw, `filter: blur(90px)`,
+`will-change: transform`, animés en continu (`cloudDrift*`, 46–58 s), sous une
+barre du haut en `backdrop-filter: blur(14px)`.
+
+**1re tentative — fausse, et elle a aggravé le défaut** (`0b45a23`) : cause
+supposée = le filtre de flou sur des calques géants ; remplacé par des
+`radial-gradient` sans filtre ni `will-change`. Vérifié seulement par capture
+d'écran statique (rendu équivalent), pas sur le clignotement lui-même, que je
+ne pouvais pas observer. Résultat en ligne : « pire qu'avant ». Explication
+probable, non mesurée : sans `will-change`, les trois dégradés plein écran
+étaient repeints à chaque image au lieu d'être déplacés comme calques GPU.
+
+**Correctif retenu** (`a97d3a3`, option B choisie par l'utilisateur parmi :
+revenir en arrière / figer / retirer le flou de la barre / supprimer les
+nuages) : flou d'origine rétabli, **nuages figés** — lignes `animation:`
+retirées, `@keyframes cloudDrift*` conservées pour pouvoir réanimer. Confirmé
+par l'utilisateur : plus de scintillement. La cause était donc l'**animation**,
+pas le flou.
+
+**Au passage** : `lowi.asia` se déploie tout seul depuis `main` de
+`Erok-gg/lowi-th` (mise en ligne < 1 min après chaque push, vérifiée par
+`curl`) — aucun lien Vercel n'existe sur PC2 et le connecteur Vercel ne voit
+pas ce projet. Le 1er push a aussi publié deux commits pitch deck du 02/09
+restés hors ligne jusque-là (demandé par l'utilisateur). Le `main` local de
+`lowi-th` avait un historique sans lien avec `origin/main` ; identique à
+`archive/main` (dépôt `lowi-th-archive`), il a été réaligné sur `origin/main`.
+
+**Non fait** : le clignotement n'a jamais été observé ni mesuré de ce côté
+(ni trace de performance Chrome) ; le diagnostic tient à la confirmation de
+l'utilisateur. `lowiShimmer` (logo) et l'animation d'entrée des vues restent
+actifs, sans signalement.
