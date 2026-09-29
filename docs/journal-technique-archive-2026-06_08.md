@@ -1,0 +1,3380 @@
+# Journal technique — Lowi BKK
+
+> **Registre append-only des décisions techniques, des méthodes retenues et des
+> défauts découverts.** On n'y réécrit jamais le passé : une décision qui s'avère
+> fausse reste consignée, avec l'entrée ultérieure qui la corrige. Le fichier
+> complète l'historique git (qui porte le *quoi*) en portant le *pourquoi*, ce
+> qui a été mesuré, et ce qui restait faux au moment de la décision.
+>
+> **Objet secondaire : traçabilité de propriété.** Le projet peut être présenté à
+> des tiers (agences, chasseurs de biens). Ce journal documente qui a conçu quoi,
+> avec quels outils, à partir de quelles sources — de quoi établir l'antériorité
+> et l'origine des méthodes si la question se pose.
+>
+> Format d'une entrée : date · sujet · contexte · décision · mesure · limite connue.
+
+---
+
+## Provenance et outils
+
+| Élément | Détail |
+|---|---|
+| Conception et arbitrages | Anthony Schoenauer |
+| Assistance à l'implémentation | Claude (Anthropic), en pair-programming ; le code est revu et exécuté sur la machine d'Anthony |
+| Modèle d'extraction (annonces réseaux sociaux) | qwen3:8b via Ollama, **exécution 100 % locale** — aucune donnée d'annonce n'est envoyée à un service tiers |
+| Sources de données | Portails publics (FazWaz, DDproperty, PropertyScout, Nestopa) scrapés à usage personnel non commercial ; groupes Facebook publics ; OSM/Overpass pour la géographie ; REIC/BOT pour le contexte macro |
+| Base de données | **SQLite local sur PC2 (référence)** + Supabase (Postgres, fenêtre chaude servie au site) — inversé le 2026-08-25, voir l'entrée de cette date |
+
+Les méthodes statistiques décrites ci-dessous (double médiane par condo, strates
+de taille, rendement within-condo, délai de grâce au délistage) ont été conçues
+pour ce projet et sont documentées ici à leur date d'adoption.
+
+---
+
+## 2026-06 → 2026-07-09 · Construction initiale
+
+Reconstitué depuis `CLAUDE.md` et l'historique git ; voir ces sources pour le détail.
+
+- **Choix d'architecture verrouillés** : MapLibre (carte vectorielle), Next.js,
+  Supabase, scraping Python par adaptateurs. Principe directeur : tout est
+  config-driven, un site = un adaptateur + un fichier de config.
+- **Schéma normalisé unique** (`lib/types.ts` ↔ `supabase/schema.sql`) comme
+  source de vérité, pour que l'ajout d'une source ne propage pas ses conventions.
+- **Freehold uniquement, leasehold écarté à la source** ; `quota`
+  (foreigner/thai) extrait quand le site l'expose.
+- **Double médiane par condo (2026-07-04)** : prix/m² = médiane des annonces par
+  condo, puis médiane des condos — un immeuble compte pour une voix. Neutralise
+  la surreprésentation des grosses copropriétés sans disposer de l'année de
+  construction. Rendement = médiane des rendements *within-condo* (loyer et prix
+  du même immeuble), ≥5 condos appariés sinon repli marqué †.
+  **Strate 0-1BR par défaut** pour garantir un panier constant.
+- **Framework d'étude récurrente (2026-07-06)** : paramètres figés et versionnés
+  dans `study/config.json` ; changer un paramètre impose d'incrémenter
+  `config_version`, ce qui trace les ruptures de série.
+
+---
+
+## 2026-07-25 · Nouvelle source : annonces des groupes Facebook Bangkok
+
+**Contexte.** Les portails ne publient presque jamais de vente en direct
+propriétaire ni de loyer réel adossé à un prix de vente. Les groupes Facebook,
+si — mais en texte libre, bilingue thaï/anglais, tronqué et redondant.
+
+**Décisions.**
+
+1. **Collecte réutilisant l'agent de veille prospection** (`agent2_scraper`)
+   plutôt qu'un second scraper : Facebook change son DOM souvent, on ne veut
+   qu'un seul endroit à réparer. Bascule par variables d'environnement
+   (`FB_GROUPS_FILE`, `FB_SOURCE`, `FB_SKIP_ANALYSIS`, `FB_RICH_CONTENT`).
+
+2. **Contournement du brouillage anti-scraping.** Facebook mélange les
+   caractères dans le DOM et les remet en ordre par CSS. Le timestamp était
+   illisible → aucune date → tous les posts rejetés (1 seul collecté sur
+   5 groupes). *Méthode retenue :* relire le texte dans l'**ordre visuel**
+   (tri des nœuds texte par position à l'écran), ce qui fait réapparaître la
+   date en tête de chaîne. Résultat : 209 annonces.
+
+3. **Extraction par modèle local sous schéma imposé**, une annonce par appel.
+   *Types simples obligatoires* : les unions `["integer","null"]` produisent une
+   grammaire de contrainte défaillante côté llama.cpp et la génération part en
+   boucle infinie (constaté : processus `llama-server` orphelin). Convention
+   `0` / `""` pour l'absence. Mode réflexion désactivé — l'extraction est de la
+   transcription, pas du jugement.
+
+4. **Le modèle extrait les faits, le code tranche les catégories.** Sans
+   marqueur explicite, un 8B remplit une case obligatoire au hasard : il classait
+   108 annonces sur 209 en « recherche » alors que ce sont des offres, et
+   125 vendeurs en « propriétaire » alors qu'il s'agit d'agences. `seller_type`
+   et `quota` sont donc décidés par règles déterministes (nom de l'auteur,
+   marqueurs `เจ้าของ` / `no agent` / `โควตาต่างชาติ`).
+
+5. **Table `social_leads` séparée de `listings`.** Ces données sont déclaratives
+   et non vérifiées ; les injecter dans `listings` contaminerait `khet_stats`,
+   les médianes par condo et les rendements — c'est-à-dire la valeur du projet.
+   Promotion manuelle via `status` (new/reviewed/promoted/rejected/duplicate).
+
+**Mesuré.** 209 annonces → 179 pistes uniques. 167 avec nom d'immeuble, 84
+rapprochées du référentiel (50 %). 13 propriétaires directs, 69 agences.
+**Quota étranger explicite : 1 annonce sur 209.**
+
+**Limites connues.** « Voir plus » non déplié (annonces longues tronquées) ;
+2 groupes à URL nommée ne rendent rien ; l'écart au marché n'est pas encore
+calculé par strate de taille.
+
+---
+
+## 2026-07-25 · Le quota étranger est une question, pas une donnée
+
+**Constat.** Sur l'ensemble du référentiel : 114 `foreigner` et 127 `thai` pour
+24 549 non renseignés (1 %). Sur Facebook : 1 sur 209.
+
+**Décision.** Le champ vaut `unknown` par défaut et **ne se déduit jamais d'une
+absence**. C'est un champ à remplir manuellement après contact vendeur, pas une
+donnée à collecter. Traité comme tel dans `social_leads` et dans la vue
+`social_leads_opportunites`, qui priorise les rares annonces où il est explicite.
+
+**Pourquoi ça compte.** Un étranger ne peut détenir en pleine propriété que dans
+la limite de 49 % de la surface d'un immeuble. Sans quota étranger disponible, le
+bien n'est pas achetable en direct — et il ne sera pas revendable à un étranger.
+
+---
+
+## 2026-07-28 · Le « -50 % » était un artefact de taille
+
+**Contexte.** Le résolveur signalait une annonce Supalai Icon Sathorn à -57 % du
+marché de son propre immeuble.
+
+**Vérification.** La médiane d'un immeuble mélange les tailles. Comparé au bon
+lot (44 m² à 238 900 ฿/m² dans le même immeuble), l'écart réel d'un 42 m² à
+9 M฿ (214 300 ฿/m²) est de **-10 %**, pas -50 %. Deux annonces du même agent, même
+immeuble, même jour, affichaient -57 % et -13 % : l'écart entre elles ne
+reflétait que la surface.
+
+**Décision.** Aucun écart n'est présenté comme une opportunité tant qu'il n'est
+pas calculé **à strate de taille comparable**. La vue `social_leads_opportunites`
+exige `area_sqm > 0` et porte l'avertissement en commentaire ; le calcul par
+strate reste à brancher sur `lib/yields.ts`.
+
+---
+
+## 2026-07-28 · Défaut majeur : le délistage rendait la liquidité non mesurable
+
+**Symptôme.** Durée de vie des annonces de vente : médiane **4,7 jours pour
+toutes les strates** (studio comme 3BR+), p25 4,2 / p75 4,8. C'est la cadence de
+scan, pas un signal de marché.
+
+**Cause.** `mark_missing_inactive()` délistait dès la **première** absence. Or un
+scan `--full` s'arrête à `max_pages` (150) : toute la queue de liste était
+marquée disparue à tort, puis réactivée par la passe ciblée suivante. Le
+garde-fou existant (annuler si le scan voit moins de 50 % des actives) ne
+protégeait que de l'effondrement total, pas de la troncature.
+
+**Conséquence.** Tension locative et liquidité de revente — deux des trois
+leviers de la stratégie d'investissement — étaient **non mesurables**, et le
+temps n'y aurait rien changé : une donnée biaisée s'accumule, elle ne se corrige
+pas.
+
+**Correctif (`supabase/migrations/delisting_grace.sql`).** Délai de grâce : une
+annonce doit manquer à **2 scans consécutifs** avant délistage. Colonnes
+`missed_count` et `first_missed_at` ; le délistage est daté de la *première*
+absence, sinon la durée de vie serait surestimée d'un cycle complet. Compteur
+remis à zéro dès réapparition. Appliqué aux deux stores (Supabase et SQLite).
+
+**Portée.** Le correctif ne répare pas l'historique : les `delisted_at`
+antérieurs restent contaminés. **La mesure fiable de la liquidité commence à
+cette date.**
+
+---
+
+## 2026-07-28 · La réplication d'archive était en panne depuis 22 jours
+
+**Symptôme.** L'archive locale s'arrêtait au 2026-07-06 (annonces, snapshots,
+`scan_runs`), alors que le serveur contenait des données jusqu'au 24/07.
+
+**Cause.** La tâche `LowiBKK-ArchiveSync` échouait avec le code `-196608` sans
+produire de log — le dossier `ops/logs/` n'avait même pas été créé, donc le
+script n'a jamais démarré. Cause exacte du non-démarrage non identifiée à ce
+jour (piste : politique d'exécution PowerShell ou contexte de la tâche).
+
+**Correctif immédiat.** Synchronisation relancée à la main, sans `--prune` par
+prudence : 24 790 → **34 275 annonces**, snapshots 2 434 → 5 223.
+
+**Enseignement.** Un échec silencieux d'une tâche planifiée est plus dangereux
+qu'une erreur bruyante : pendant 22 jours, toutes les analyses locales portaient
+sur des données périmées sans que rien ne l'indique. **À faire : rendre l'échec
+visible** (le journal de tâche doit être écrit même quand le script ne démarre
+pas, et une alerte doit se déclencher si l'archive a plus de 10 jours de retard).
+
+**Ce que les données fraîches changent.** `price_history` contient enfin
+602 annonces avec plusieurs observations de prix — un premier signal de
+révision de prix, exploitable. Les snapshots passent à 15 journées distinctes.
+La durée de vie se différencie enfin entre strates (9,3 j en studio-1BR contre
+6,9 j en 2BR et 3BR+), mais **ces chiffres restent tirés du délistage
+contaminé** : à ne pas interpréter avant d'avoir accumulé des données post-correctif.
+
+---
+
+## 2026-07-28 · Ce que les données disent de la stratégie d'investissement
+
+Hypothèse de départ (Anthony) : *le premium 2BR+ se valorise plus vite ou plus
+régulièrement*.
+
+**Ce que mesure le référentiel :**
+
+| Strate | Dispersion prix/m² (p25-p75 / médiane) | Rendement brut médian (within-condo) |
+|---|---|---|
+| Studio–1BR | 75,7 % | 4,89 % |
+| 2BR | 82,8 % | 4,70 % |
+| 3BR+ | 103,1 % | 4,36 % |
+
+Sur les deux dimensions mesurables aujourd'hui, l'hypothèse **n'est pas
+confirmée** : la dispersion des prix croît avec la taille (prix de revente plus
+incertain) et le rendement décroît. Explication plausible, à confirmer : la
+demande locative expatriée est dominée par les 1BR, et le bassin d'acheteurs à la
+revente se rétrécit quand le ticket monte.
+
+**Réserve.** La dispersion mesurée mélange les immeubles, donc une part reflète
+la géographie ; le rendement, lui, est apparié au même immeuble et même nombre de
+chambres, ce résultat est plus robuste. L'hypothèse ne pourra être tranchée
+qu'avec l'âge du bâtiment et une série temporelle post-correctif.
+
+**Angle mort assumé.** L'âge du bâtiment est absent du schéma. Pour une stratégie
+d'achat-revente à 5-10 ans, la courbe de dépréciation est probablement le facteur
+dominant. **Prochaine priorité.**
+
+**Biais documenté.** Tous les rendements sont calculés sur des prix *affichés*,
+pas transactés. Les prix de vente se négocient davantage que les loyers : le
+rendement réel est vraisemblablement supérieur à celui affiché.
+
+---
+
+## 2026-07-28 · L'indice de tension mesurait la petitesse du marché
+
+**Symptôme signalé par Anthony.** La périphérie ressortait plus tendue que le
+centre, alors qu'elle compte très peu d'annonces.
+
+**Cause.** La composante « rareté » de `lib/tension.ts` valait littéralement
+`100 − rang(nombre d'annonces actives)` : **peu d'annonces = tendu, par
+construction**. Or 25 des 55 quartiers ont moins de 20 annonces actives et
+obtenaient donc mécaniquement le score maximal. Taling Chan affiche 2 annonces
+sur 6 immeubles : ce n'est pas de la tension, c'est l'absence de marché. Le
+compte brut confondait **taille** du marché et **tension**.
+
+**Aggravant.** L'absorption — 40 % du poids — repose sur le time-on-market,
+contaminé par le bug de délistage : 6,9 jours médians identiques à Vadhana,
+Khlong Toei et Sathon, soit la cadence de scan, pas le marché. Et Pathum Wan
+comptait 521 délistages pour 413 actives, signature des reposts. Autrement dit
+40 % de l'indice reposait sur une donnée fausse et 15 % sur une définition
+erronée.
+
+**Corrections.**
+1. « Rareté » remplacée par la **pression vendeuse** = actives / nombre
+   d'immeubles du quartier (dénominateur issu du référentiel `condos`).
+   Insensible à la taille du marché et interprétable : 9,6 annonces par immeuble
+   à Bangkok Yai, ce sont des vendeurs en concurrence, donc un marché mou.
+   Poids porté de 15 à 25.
+2. **Rétrécissement** des petits échantillons vers la médiane du marché, poids
+   `n/(n+20)` : à 5 annonces un quartier compte pour 20 % de son propre score.
+3. **Seuil de publication** à 10 annonces actives : en dessous, `tensionScore`
+   vaut `null`. Vingt-cinq quartiers passent en « données insuffisantes » — c'est
+   simplement honnête.
+4. Option `reliableDelistingSince` : ignore les disparitions antérieures au
+   correctif du délistage pour le calcul du time-on-market. À régler sur
+   `2026-07-28` une fois assez de données post-correctif accumulées.
+
+**Vérifié** (`lib/tension.test.mjs`) : un quartier à 3 annonces n'est plus publié ;
+un marché à 10 annonces par immeuble score plus bas qu'un marché à 3 ; la
+pression vendeuse est correctement calculée.
+
+**Limite assumée.** L'absorption reste dans l'indice avec 35 % du poids alors que
+son historique est contaminé. Elle se nettoiera d'elle-même à mesure que les
+délistages post-correctif s'accumulent ; d'ici là, le mécanisme de dégradation
+gracieuse redistribue son poids quand elle est indisponible. À terme, la série
+`cohort_snapshots` est le bon substitut : elle mesure l'écoulement du stock sans
+être trompée par les republications.
+
+---
+
+## Doctrine de présentation (adoptée le 2026-07-28)
+
+Le produit sert deux usages aux exigences opposées : un outil de décision
+personnel (assumé, orienté) et une veille potentiellement vendable à des tiers
+(qui doit être neutre et auditable). **Règle : séparer la couche de mesure de la
+couche de jugement.**
+
+- **Couche de mesure** — factuelle, auditable, c'est elle qui est vendable :
+  prix/m² par strate, rendement apparié, taille d'échantillon, dispersion,
+  distance au transport, fraîcheur de la donnée.
+- **Couche de jugement** — la pondération de ces mesures pour produire un
+  classement. Elle encode une stratégie et reste personnelle et paramétrable.
+
+Règles de présentation qui en découlent :
+
+1. Jamais une médiane sans son `n` ni sa dispersion (p25-p75).
+2. Toute comparaison est explicitement *à périmètre comparable* (même strate,
+   même quartier) et le périmètre est affiché.
+3. Distinguer visuellement **mesuré** de **estimé** (le repli † existant).
+4. Aucun classement sans exposer les poids qui le produisent.
+5. Une anomalie s'annonce « à vérifier », jamais « opportunité » — cf. l'entrée
+   du 2026-07-28 sur le -50 % qui n'était qu'un artefact de taille.
+6. Afficher la date de dernière mise à jour des données sur chaque vue — le
+   silence de 22 jours de juillet 2026 ne doit pas pouvoir se reproduire sans
+   être visible.
+
+---
+
+## 2026-07-28 (soir) · Revue de code : ce que les descriptifs promettaient et ce que le code faisait
+
+Revue de l'ensemble des révisions récentes, avec vérification systématique des
+affirmations contre la base réelle plutôt que contre les commentaires. Sept
+écarts trouvés, tous corrigés le jour même. Le fil commun : **plusieurs
+descriptifs décrivaient l'intention, pas le code**, et une intention consignée
+dans un commentaire finit par être lue comme un fait.
+
+### 1. Le dénominateur de la pression vendeuse mélangeait deux périmètres
+
+L'entrée de cet après-midi annonce un dénominateur « issu du référentiel
+`condos` ». Vérification faite, c'était faux à deux titres, et le second
+invalidait la mesure :
+
+- le code comptait les `condo_name` distincts des **annonces**, pas la table ;
+- il les comptait sur **toutes** les annonces du quartier, délistées comprises,
+  alors que le numérateur ne compte que les actives.
+
+Périmètres mélangés : un quartier à fort churn accumule des noms d'immeubles au
+dénominateur, sa pression s'effondre, sa tension grimpe. C'est exactement Pathum
+Wan et ses 521 délistages — le cas que la révision voulait corriger.
+
+| Quartier | Pression, périmètre actif | Périmètre historique | Écart |
+|---|---|---|---|
+| Vadhana | 6,92 | 4,61 | −33 % |
+| Khlong Toei | 5,52 | 3,32 | −40 % |
+| Ratchathewi | 8,87 | 6,72 | −24 % |
+
+Le biais n'est pas uniforme : il déforme le **classement**, pas seulement
+l'échelle. Et la table `condos` n'aurait rien réglé — elle est peuplée depuis
+toutes les annonces sans filtre de statut (754 immeubles à Vadhana contre 766 vus
+dans l'historique des annonces), elle porte donc le même biais.
+
+**Retenu :** immeubles distincts parmi les annonces **actives**, nom normalisé.
+Se lit « parmi les immeubles où quelqu'un vend, combien de vendeurs
+simultanés ? ». Même périmètre en haut et en bas de la fraction.
+
+Corollaire : la normalisation du nom d'immeuble existait en double à l'identique
+(`yields.ts`, `cross-match.ts`) et pas du tout dans `tension.ts`, qui comparait
+donc des noms bruts et comptait deux immeubles pour « X » et « X, Bangkok ». Un
+seul exemplaire désormais : `lib/condo-name.ts`. **Divergence connue et assumée**
+avec `_norm_condo` de `normalize.py`, qui retire en plus les mots vides : les
+aligner déplacerait toutes les médianes déjà publiées et mérite sa propre
+décision datée.
+
+### 2. `reliableDelistingSince` n'était branché nulle part
+
+L'option avait été ajoutée et documentée, mais aucun appelant ne la passait :
+l'absorption — 35 % du poids — tournait toujours sur l'historique contaminé que
+l'entrée de l'après-midi décrit. Elle vaut désormais `DELISTING_FIX_DATE` **par
+défaut**, l'appelant devant passer `null` pour réintégrer explicitement
+l'historique douteux.
+
+Effet immédiat, assumé : zéro disparition postérieure au correctif (le dernier
+scan date du 24/07), donc le time-on-market est nul partout et l'absorption se
+replie sur l'âge des annonces actives. C'est moins riche, mais ce n'est pas faux
+— alors qu'un TOM de 6,9 jours identique à Vadhana, Khlong Toei et Sathon était,
+lui, purement et simplement la cadence de scan. Le TOM revient tout seul dès que
+les scraps post-correctif s'accumulent.
+
+### 3. Le momentum prix suivait la moyenne alors que la médiane était à côté
+
+`khet_snapshots` porte `avg_price_per_sqm` **et** `median_price_per_sqm`. Le
+momentum régressait sur la moyenne. Mesuré sur 2 121 instantanés de vente : la
+moyenne court **16 % au-dessus** de la médiane (137 750 contre 118 826 THB/m²),
+tirée par les penthouses. Sa pente suit donc les entrées et sorties de biens
+d'exception, pas le marché. Bascule sur la médiane, repli sur la moyenne quand
+elle manque.
+
+### 4. `median_price` contenait une moyenne en local, une médiane en ligne
+
+SQLite n'a pas d'agrégat de médiane : `record_cohort_snapshots` y écrivait
+`avg(price)` dans une colonne nommée `median_price`, quand Supabase y écrit
+`percentile_cont(0.5)`. **Même colonne, deux définitions selon le backend** — le
+genre d'écart qui fait douter d'une série temporelle un an plus tard sans qu'on
+sache pourquoi. Médiane calculée en Python désormais (demi-somme des deux valeurs
+centrales pour un effectif pair, exactement `percentile_cont`), vérifiée
+identique des deux côtés.
+
+Au passage : `median_price_per_sqm` était laissé à `NULL` dans les instantanés
+locaux, alors que c'est précisément la colonne que le momentum consomme. La série
+locale était muette sur sa composante la plus utile.
+
+### 5. L'arrondi de la tranche de surface divergeait entre Python et SQL
+
+`round()` de Python applique l'arrondi bancaire (`round(8.5) == 8`) ; ceux de
+Postgres et SQLite arrondissent au plus loin de zéro (`round(8.5) == 9`). Une
+surface de 42,5 m² recevait donc la tranche 40 si l'`unit_key` venait du scrape,
+et 45 s'il venait du backfill SQL. **Deux cohortes pour un même lot, et la
+republication qu'on cherche justement à rattraper passe au travers.** Relevé sur
+l'archive : 263 annonces pile sur une frontière de tranche, dont 124 réellement
+divergentes (0,4 % du stock).
+
+Convention SQL adoptée (`floor(x + 0.5)`), parce que c'est elle qui a produit les
+34 183 `unit_key` déjà en base. Aucun re-backfill nécessaire : aucun scrape n'a
+tourné depuis la migration, tous les `unit_key` viennent donc du SQL.
+
+### 6. Les « opportunités » étaient triées par la donnée la plus fausse
+
+La vue `opportunites` n'avait aucun garde-fou de plausibilité. Ses premiers
+résultats — ce qu'on regarde en premier — étaient des défauts de source :
+
+    NOBLE STATE 39        sale   35 m²     27 000 THB    -100 %
+    Ideo Q Sukhumvit 36   sale   46 m²     40 000 THB    -100 %
+    The Tempo Ruamrudee   rent   3 757 m² pour 1 BR       -99 %
+
+Les deux premières sont des **locations mal classées en vente** ; la troisième
+porte la surface du projet dans le champ du lot. Sur le stock actif : 28 annonces
+« vente » entre 5 k et 200 k THB, 60 surfaces > 500 m², 8 < 15 m². **Un écart de
+−100 % ne désigne jamais une affaire, il désigne une donnée fausse.**
+
+Aggravant : les bornes existaient déjà, en trois exemplaires qui ne se
+connaissaient pas (`deals.ts`, `for-sale/page.tsx`, et rien en SQL). Les 114
+annonces au-dessus de 100 M et les 68 en dessous de 800 k étaient donc exclues du
+tableau de vente mais comptaient toujours dans la carte, les rendements et la
+tension.
+
+**Retenu :** `lib/market-bounds.ts` côté TypeScript, vue `listings_sane` côté
+SQL, bornes commentées des deux côtés. On aurait pu ne les tenir qu'à un seul
+endroit en filtrant côté application, mais les vues SQL sont consommées
+directement (psql, exports, étude) : *une vue qui ne se protège pas elle-même
+finit toujours par être lue sans son filtre.*
+
+Résultat : 272 aberrations écartées (16 147 → 15 875 actives), le pire écart
+passe de −100 % à −74 %, et les 1 307 opportunités restantes sont toutes
+plausibles. Les extrêmes qui subsistent sont tous de niveau `rue` et de confiance
+`faible` — SV City Rama 3 à 35 000 THB/m² contre une médiane de rue à 116 000,
+ce sont deux classes d'immeubles différentes, pas une décote. La donnée est
+désormais correctement étiquetée plutôt que fausse ; **durcir le niveau `rue`
+reste une décision ouverte.**
+
+### 7. Le test de tension ne pouvait pas tourner
+
+Il importait `tension.compiled.mjs`, un artefact à produire à la main avec
+`esbuild` — absent du dépôt et absent des dépendances. Et il imprimait
+« OK / ÉCHEC » sans jamais sortir en code ≠ 0 : même réparé, il n'aurait rien
+gardé. Passé à `node:test` exécuté par `tsx` (déjà installé), avec `npm test`.
+Six cas, dont trois de non-régression sur les défauts ci-dessus : le
+dénominateur ignore les délistées, trois écritures d'un nom d'immeuble comptent
+pour un, le momentum ne bouge pas quand seule la moyenne monte.
+
+Application de la règle 4 de la doctrine de présentation au passage : la pression
+vendeuse pèse 25 % de l'indice et n'était affichée nulle part. Elle a désormais sa
+colonne (« Sellers/bldg »), quartier et rue, et les descriptifs des deux vues
+disent ce que l'indice calcule réellement.
+
+
+### Contrôle après coup : la pression vendeuse encode ENCORE un tiers de la taille du marché
+
+Classement recalculé sur la base réelle après correction (vente, 38 quartiers
+notés, 19 en « données insuffisantes ») :
+
+    tendus  : Wang Thonglang 65 (45 actives, 1,8 vend./imm.)
+              Khan Na Yao    64 (15 actives, 1,07)
+              Bueng Kum      61 (23 actives, 1,44)
+    mous    : Sathon         26 (428 actives, 7,64)
+              Thon Buri      27 (122 actives, 4,07)
+              Bang Kho Laem  28 (156 actives, 6,00)
+
+C'est cohérent et interprétable : Sathon, Vadhana et Pathum Wan, où sept vendeurs
+se font concurrence dans le même immeuble, ressortent comme les marchés les plus
+mous. Le renversement recherché a bien eu lieu.
+
+**Mais le haut du classement reste la périphérie**, et ce n'est pas un hasard :
+avec 15 annonces dispersées sur 14 immeubles, on obtient 1,07 vendeur par
+immeuble **par construction**. Corrélation mesurée entre `log(nombre d'actives)`
+et `annonces par immeuble`, sur les 38 quartiers publiés : **r = 0,55**, soit
+30 % de variance partagée.
+
+Autrement dit : l'ancienne « rareté » valait *littéralement* la taille du marché
+(r = −1 par construction) ; la pression vendeuse en garde environ un tiers. Le
+défaut est fortement atténué, **il n'est pas éliminé**. Le rétrécissement et le
+seuil de publication limitent les dégâts, pas la cause.
+
+Ce n'est corrigeable ni par une pondération ni par un seuil : il faut une mesure
+qui ne dépende pas du comptage d'annonces. C'est exactement ce que fait la série
+`cohort_snapshots` — la variation du stock d'une cohorte entre deux relevés,
+insensible au nombre d'immeubles comme au nombre d'annonces. Un seul instantané
+existe à ce jour (8 429 cohortes, le 2026-07-28) ; il en faut un second, donc un
+scrap, pour que la série commence à parler. **Tant que ce n'est pas fait, le
+score de tension se lit comme un indice relatif grossier, pas comme une mesure.**
+
+### Reste ouvert (mesuré, non traité aujourd'hui)
+
+- **1 399 annonces actives en doublon exact** (8,7 % du stock actif), sur les
+  mêmes immeuble/type/chambres/surface/prix. **1 326 sont intra-source** — le
+  même agent republie le même lot sur le même site, jusqu'à 28 fois. Ça gonfle
+  mécaniquement la pression vendeuse qu'on vient de réparer. `unit_key` existe :
+  il peut servir à ça.
+- **L'empreinte photo est inerte** : `photo_sizes` compte 0 ligne, `est_doublon()`
+  n'a aucun appelant, `repost_of` n'est jamais écrite. Et comme l'empreinte n'est
+  relevée que pour les nouvelles annonces, les 16 147 actives n'en auront jamais :
+  la détection ne pourra apparier que des annonces nées après aujourd'hui. Son
+  test est par ailleurs laxiste — il conclut au doublon dès 2 poids concordants
+  sur 8 quand les nombres de photos diffèrent, sans exiger de proportion.
+- **Payload** : `/for-sale` sérialise vers le navigateur les 8 063 annonces de
+  vente **plus** les 16 147 actives (`allListings`), sans cache, et rend jusqu'à
+  8 000 lignes de tableau sans virtualisation. Les choix « on charge tout »
+  datent de l'époque où la base comptait ~1 000 actives. Les données ne bougeant
+  que tous les 4 jours, la mise en cache est le gain le plus élevé pour le moins
+  d'effort.
+- **`year_built` : 0 sur 4 514 condos.** `backfill_condo_years.py` écrit dans
+  SQLite, pas sur le serveur. C'est la donnée la plus structurante pour une
+  stratégie à 5-10 ans, et elle est vide.
+- **Quota étranger : 197 annonces sur 16 147** (1,2 %). Critère éliminatoire pour
+  un acheteur étranger — sans lui, aucune liste n'est actionnable.
+- **Logique métier dupliquée TS ↔ Python** : `study/run_study.py` réimplémente
+  `median`, `winsorize`, `norm_condo` et le rendement within-condo déjà présents
+  dans `lib/yields.ts`. Deux implémentations, deux vérités possibles, et rien qui
+  signale la divergence.
+
+---
+
+## 2026-07-28 (nuit) · Le doublon qui n'en était pas, et le poids des pages
+
+### Ce que j'avais annoncé comme un défaut, et qui n'en est pas un
+
+L'entrée précédente listait en tête des sujets ouverts : « 1 399 annonces actives
+en doublon exact (8,7 % du stock), 1 326 intra-source, pire groupe 28 fois le
+même lot ». Avant d'écrire la déduplication, inspection des groupes :
+
+```
+The Line Vibe, 1BR 37 m² à 22 000 THB   28 annonces, 28 identifiants DDproperty
+Hampton Residence Thonglor, 1BR 32 m²   14 annonces, identifiants FazWaz
+                                        CONSÉCUTIFS (u6548791 … u6548800)
+```
+
+Des identifiants d'unité **consécutifs** chez la source, ce sont des **lots
+distincts** versés en lot par une agence : un immeuble neuf dont tous les 32 m²
+se louent au même prix. Les fusionner aurait effacé de l'offre réelle —
+c'est-à-dire exactement ce que la pression vendeuse doit compter. **La dédup
+aurait détruit du signal.**
+
+Second point que j'avais manqué : ces annonces sont **simultanément actives**. Ce
+n'est donc pas le phénomène de republication séquentielle que les cohortes
+traitent. J'avais confondu deux choses différentes sous le mot « doublon ».
+
+**Leçon de méthode** : un compte agrégé ne dit pas ce qu'il compte. « 1 399
+doublons exacts » était une requête SQL correcte et une conclusion fausse. Ce qui
+l'a démasquée, c'est d'avoir regardé dix lignes.
+
+### Ce qui rend la question décidable : l'agent
+
+Deux annonces identiques du **même agent** sont un doublon. Les mêmes venant
+d'agences concurrentes sont deux mises en marché, voire deux lots. Ce champ était
+**déjà dans le blob `__NEXT_DATA__`** que l'adaptateur DDproperty parse — il
+était simplement ignoré. Sonde sur une page réelle : `agent_id`, `agency_id`,
+`posted_at` et `is_auto_repost` remplis **22/22**, 11 agences distinctes, et déjà
+un doublon même-agent sur la page.
+
+Vue `doublons_agent` fournie, **volontairement pas branchée** sur les
+statistiques : vide tant qu'`agent_id` n'est pas collecté. Mieux vaut ne rien
+fusionner que fusionner à tort.
+
+### Le vrai gain était ailleurs : `posted_at`
+
+DDproperty expose `postedOn.unix` — la **date de mise en ligne réelle**.
+`first_seen` ne dit que le moment où *notre* scan a croisé l'annonce : tout
+time-on-market qui en découle est borné par la cadence de scan. C'est le défaut
+de fond derrière le délai de grâce, l'option `reliableDelistingSince` et la
+contamination de l'absorption — **trois contournements d'un même problème**.
+`posted_at` attaque la cause. Et le site signale lui-même ses republications
+automatiques (`isAutoRepost`), vu à `true` dès le premier résultat testé.
+
+### Poids des pages : mesuré, puis réduit de 80 %
+
+Relevé sur le serveur de production local, authentifié :
+
+| Page | Avant | Après | 1er appel | Après cache |
+|---|---|---|---|---|
+| `/for-sale` | 19,6 Mo | **3,9 Mo** | 3,7 s | **0,51 s** |
+| `/to-rent` | 19,7 Mo | **4,0 Mo** | 0,60 s | 0,38 s |
+| `/rendements` | 13,4 Mo | **3,2 Mo** | 0,38 s | 0,55 s |
+
+Trois causes distinctes, trois correctifs :
+
+1. **Requêtes rejouées à chaque chargement.** Les pages sont en `force-dynamic`
+   — obligatoire, l'accès dépend d'un cookie — donc chaque navigation refaisait
+   la requête de 16 000 lignes vers ap-southeast-1. Mémoïsation à durée de vie
+   (`lib/cache.ts`, 1 h). **Pas `unstable_cache`** : il écrit dans le Data Cache,
+   plafonné à 2 Mo par entrée sur Vercel ; nos lectures dépassent, l'entrée
+   serait silencieusement rejetée. Un cache qui ne cache pas est pire que pas de
+   cache, parce qu'on croit le problème réglé.
+
+2. **L'appariement vente↔location tournait côté client.** Il a besoin des deux
+   catégories, ce qui obligeait la page à expédier `allListings` — les 16 000
+   actives — pour n'en tirer que deux nombres par ligne. Déporté sur le serveur
+   (`buildUnitMatchesLite`), qui n'envoie que ces deux nombres.
+
+3. **Les annonces partaient entières.** Le tableau affiche neuf colonnes ;
+   images, amenities, `rawData`, proximité et adresse brute traversaient le
+   réseau sans être lus. Projections `ListingRow` et `YieldInput` ; `applyFilters`
+   et les fonctions de `yields.ts` rendues génériques sur un sous-ensemble
+   structurel, **pour ne pas dupliquer la logique** — c'est le défaut qu'on
+   vient de corriger ailleurs.
+
+4. **8 000 lignes de tableau, soit 72 000 nœuds DOM.** Rendu par tranches de 200
+   avec un bouton « Show 200 more ». Le filtrage et le tri portent toujours sur
+   l'ensemble : seul l'affichage est borné.
+
+### Reste ouvert
+
+- **`/tension-table` : 8,6 Mo**, inchangé. Elle sérialise les 34 275 annonces
+  (actives et délistées) pour un calcul client. Même remède que ci-dessus, non
+  appliqué faute d'avoir été demandé.
+- La dédup **même-agent** deviendra applicable au prochain scrape.
+- **`posted_at` doit remplacer `first_seen`** dans le calcul du time-on-market
+  dès qu'il sera peuplé. C'est la vraie sortie du problème d'absorption.
+- Les trois autres adaptateurs n'exposent pas d'agent aussi clairement.
+  PropertyScout mérite une sonde équivalente.
+
+---
+
+## 2026-07-31 · Les agents : trois tâches mortes, et ce que la mesure a imposé au modèle local
+
+### Le défaut qui rendait tout le reste inopérant
+
+Les trois tâches Windows créées le 2026-07-11 — `LowiBKK-ScrapVente`,
+`LowiBKK-ScrapLocation`, `LowiBKK-ArchiveSync` — **n'ont jamais tourné une seule
+fois**. Leur XML enregistré contenait des guillemets échappés littéraux :
+
+```xml
+<Arguments>-NoProfile -ExecutionPolicy Bypass -File \"C:\...\scrap-vente.ps1\"</Arguments>
+```
+
+PowerShell recevait un chemin introuvable et sortait avant la première ligne.
+Preuve matérielle, décisive : **`ops/logs/` n'existe pas**, alors que chaque
+wrapper le crée en première instruction. Les trois remontaient
+`LastTaskResult = 0xFFFD0000`.
+
+Cause : l'enregistrement passait par la **chaîne** `schtasks`, dont le parsing a
+inséré les backslashes. Les cmdlets `New-ScheduledTaskAction` /
+`Register-ScheduledTask` prennent les arguments comme des données et n'ont pas ce
+défaut.
+
+Deux conséquences en cascade : tous les scraps observés (24/07, 29/07) avaient été
+lancés à la main via les `.bat` ; et `run_study.py`, appelé uniquement par
+`scrap-location.ps1`, n'a plus jamais tourné — d'où `docs/etudes/` arrêté au
+**09/07 sur des données du 29/07**.
+
+**Leçon de méthode.** Le défaut n'était pas d'avoir mal enregistré une tâche :
+c'était de ne pas avoir relu ce qui avait été enregistré. Trois semaines de
+silence ressemblaient exactement à trois semaines de bon fonctionnement.
+`ops/install-agents-task.ps1` relit désormais le XML et refuse tout `\"` ; et
+l'agent `overseer` traite un **agent muet** comme plus grave qu'un agent en erreur.
+
+### Campagne de mesure sur le modèle local — 650+ appels, données réelles
+
+Question posée : *un skillset bien écrit suffit-il à rendre qwen3:8b utilisable
+pour de l'arbitrage ?* Jeu de test : 38 338 paires candidates réelles extraites
+de la base, 120 étiquetées par règle experte (60/60), 30 ambiguës où la règle
+refuse de trancher.
+
+**1. La panne dominante est le client, pas le prompt.** Cette version d'Ollama
+renvoie le raisonnement dans un champ **`thinking` séparé** ; `message.content`
+reste **vide** si `num_predict` s'épuise avant la fin du raisonnement. Le token
+`/no_think` est **silencieusement ignoré** — seul le paramètre natif `think`
+fonctionne.
+
+| | Justesse |
+|---|---|
+| Client avec `/no_think` | **0/10 — dix sorties vides** |
+| `think:false` natif, prompt identique | **8/10** |
+
+C'est une panne **muette** : sans détection, on écrit des `null` en base sans
+aucun bruit. C'est le mode de défaillance le plus dangereux du dispositif.
+
+**2. Le raisonnement ne sert à rien ici, et nuit.** 9/10 sans (3,6 s/paire) contre
+9/10 avec (22,5 s/paire) — et la configuration raisonnante a produit une sortie
+vide malgré 2 500 tokens de budget. *(Ma conclusion initiale « le raisonnement est
+indispensable, 0/6 contre 4/6 » était un artefact du client cassé. Consignée ici
+parce qu'elle a orienté à tort le dimensionnement matériel pendant une heure.)*
+
+**3. Le prompt le plus détaillé est le pire.** Sur 100 paires, à modèle égal :
+règles courtes ordonnées **92 %**, procédure numérotée verbeuse **69 %**.
+Invisible sur 10 paires (9/10 pour les deux) — **un jeu de 10 ne départage rien**.
+
+**4. Forcer l'abstention par le prompt détruit le modèle : 12/100.** À trop lui
+demander de douter, il doute de tout.
+
+**5. L'auto-cohérence à 3 votes n'apporte rien** : même matrice, mêmes 8 erreurs,
+3× le coût. Les erreurs sont déterministes, pas bruitées.
+
+**6. Le mode EXTRACTION est la bonne architecture.** C'est le résultat central.
+
+| Approche | Justesse /100 | Abstention sur ambiguës |
+|---|---|---|
+| Verdict direct | 92 % | **0 %** |
+| Abstention forcée par prompt | 12 % | 40 % |
+| **Extraction de faits + décision par code** | **91 %** | **77 %** |
+
+Le modèle ne rend plus de verdict : il constate six faits (`a_active`,
+`b_apres_a`, `ecart_prix_pct`…) et une fonction Python de trois lignes décide.
+L'abstention vient du **code**, pas du modèle — c'est pourquoi elle est fiable.
+Bénéfice secondaire : chaque erreur devient attribuable à un fait précis au lieu
+d'être noyée dans un verdict opaque.
+
+**7. Profil d'erreur.** qwen3:8b : 92/100, et surtout **0 faux `same_unit` sur
+52** — il rate des republications, il n'en invente jamais. C'est le bon sens de
+l'erreur ici : la faute coûteuse du 28/07 est de fusionner à tort. hermes3 se
+trompe dans les deux sens (11 et 7) : plus faible **et** dangereux. qwen2.5:7b
+rendait `confidence: 0.9` sur **toutes** ses réponses, y compris les fausses — la
+confiance auto-déclarée d'un 7B ne vaut rien comme seuil.
+
+> **Réponse à la question posée : non, un skillset ne suffit pas.** Le prompt vaut
+> ~10 points, le client durci ~90, et l'architecture (extraction plutôt que
+> verdict) fait la différence entre un étage utilisable et un étage qui fabrique
+> 28 000 certitudes d'apparence propre.
+
+Seuils gelés en test de non-régression (`agents/tests/test_local_llm.py`) :
+**≥ 90/100** de justesse, **≥ 70 %** d'abstention.
+
+### Descriptifs : la matière qui manquait
+
+Sondé et confirmé : `count(*) filter (where raw_data ? 'description') = 0` sur
+les quatre sources. Aucun texte libre n'était stocké — le « motif du vendeur » des
+études de cas venait entièrement de l'audit humain. Un modèle qui ne voit que des
+nombres ne fait que refaire du SQL, en moins fiable.
+
+Colonne `description` ajoutée, capture branchée sur les 4 adaptateurs. Deux
+défauts trouvés **en testant sur de vraies pages**, qui seraient passés inaperçus
+sans ça :
+
+- **FazWaz** : le `ld+json` de la fiche décrit **l'organisation**
+  (« The most popular property website about condo… »), pas le bien. Capturer ça
+  aurait rempli 20 000 lignes d'un texte de marque identique — pire que du vide,
+  parce qu'indiscernable d'une vraie couverture. Corrigé en ignorant les
+  sous-arbres dont `@type` est `Organization`/`WebSite`/`RealEstateAgent`. Le vrai
+  texte est sous l'intertitre « About This Condo ».
+- Retirer les balises ne suffit pas : le **contenu** des blocs `<style>` restait
+  et arrivait dans le descriptif sous forme de CSS. Ces blocs se suppriment en
+  entier, et un descriptif qui ressemble à du code est rejeté.
+
+Couverture après correction : ddproperty ✓, fazwaz ✓, propertyscout ✓.
+**Nestopa n'a rien d'exploitable** — champ absent la plupart du temps, et quand il
+est là, c'est une redite des specs en thaï ; pages détail en 403. Une couverture
+proche de 0 % sur cette source est attendue, pas une panne.
+
+**Non rétroactif** : les ~35 800 annonces déjà en base resteront à NULL.
+
+### Ce qui reste ouvert
+
+- Le pré-filtre SQL tranche 10 254 des 38 338 paires gratuitement et sans erreur.
+  Les 28 084 ambiguës ne sont traitées que par lots de 300 par cycle
+  (≈ 28 h en flux unique sinon).
+- Les ~23 % de paires ambiguës recevant malgré tout un verdict vont en **file de
+  revue** et n'influencent aucune statistique tant qu'elles ne sont pas validées.
+- `Stop-ScheduledTask` n'arrête **pas** les petits-fils : un `run.py` lancé par
+  l'orchestrateur survit à l'arrêt de la tâche, orphelin et non tracé. Vérifié.
+- La divergence `lib/condo-name.ts` ↔ `_norm_condo` (Python) subsiste : signalée
+  par `organize`, non corrigée.
+
+### Le test de non-régression trouve un défaut dans son propre jeu d'étiquettes
+
+Premier passage de `agents/tests/test_local_llm.py` : les seuils du modèle sont
+tenus (**91/100**, **77 % d'abstention**, 0 panne) mais le test échoue sur un
+contrôle auquel je ne m'attendais pas — *« le pré-filtre SQL contredit 10
+étiquettes »*.
+
+Cause : le jeu d'étiquettes avait été construit en testant « republication
+séquentielle » **avant** « les deux annonces actives ». La production fait
+l'inverse. Or **une annonce peut porter une `delisted_at` passée tout en étant
+ACTIVE aujourd'hui** — c'est précisément ce que produisent les passes de
+restauration couloirs, qui repassent en `active` des annonces que la fenêtre 150
+pages du scan global avait délistées à tort.
+
+Quand les deux sont actives simultanément, ce sont deux **lots distincts** : c'est
+le constat du 28/07, et la précédence de la production est la bonne. **Mes
+étiquettes étaient fausses sur 10 paires (8 %), pas le pré-filtre.** Corrigées par
+`agents/tests/relabel.py`, qui prend `prefiltre_sql` — la fonction de production —
+comme unique arbitre.
+
+Deux enseignements. D'abord, le chiffre de 91 % annoncé plus haut était mesuré
+contre un jeu partiellement faux : une mesure n'est jamais meilleure que son
+étiquetage, et un jeu « silver » construit à la main mérite le même scepticisme
+qu'un modèle. Ensuite, le contrôle qui a levé le lièvre n'était pas celui que
+j'avais écrit pour surveiller le modèle : c'était un contrôle de cohérence
+interne, ajouté par prudence. Il a rapporté plus que le contrôle principal.
+
+**Chiffre corrigé.** Après réétiquetage : **99/100** (contre 91 annoncé plus
+haut), pré-filtre 120/120, abstention 77 %, 0 panne. Le modèle avait **raison**
+sur les 10 paires litigieuses — c'est mon étiquetage qui le pénalisait. Les
+mesures comparatives antérieures (92 % verdict direct, 91 % extraction) portaient
+elles aussi ce biais et sont donc sous-estimées ; leur écart relatif reste valide.
+
+Ce que le réétiquetage ne change PAS : l'abstention se mesure sur les 30 paires
+**ambiguës, qui n'ont pas d'étiquette**. Le résultat central — 0 % d'abstention en
+verdict direct contre 77 % en mode extraction — est indépendant de ce défaut.
+
+### Dossier de présentation externe
+
+Créé `docs/dossier-investisseur/` — quatre documents décrivant le flux, la
+méthode, la valeur et **les limites**, pour un lecteur non technique. Il ne
+duplique pas ce journal : l'historique de développement reste ici, et le dossier
+y renvoie.
+
+Trois points ont été énoncés dans le dossier parce qu'ils sortiraient de toute
+façon en due diligence, et qu'il vaut mieux les poser soi-même :
+
+- **Les annonces brutes ne sont pas revendables.** Conditions d'utilisation des
+  sources, et posture écrite du projet depuis l'origine. Ce qui est vendable est
+  l'agrégat dérivé — non substituable à la source — la méthode, et l'outil.
+  Le produit le plus propre juridiquement est la licence du pipeline à un
+  opérateur qui collecte **ses propres** sources sur un autre marché.
+- **La série n'a que six semaines.** Elle ne soutient aucune affirmation de
+  tendance. Sa valeur croît d'un jour par jour et ne se rattrape pas
+  rétroactivement — c'est la barrière à l'entrée réelle, mais elle joue contre
+  nous aujourd'hui autant qu'elle jouera pour nous plus tard.
+- **La durée moyenne de 11,0 jours entre première observation et délistage n'est
+  pas un time-on-market** et ne doit jamais être présentée comme tel : elle est
+  bornée par notre cadence de scan, pas par le marché. Consigné explicitement
+  pour éviter qu'un chiffre commode soit repris de bonne foi.
+
+Deux formulations à ne pas employer, parce qu'elles sont vérifiables en dix
+minutes sur le dépôt et que leur chute emporterait le reste : « temps réel »
+(la cadence est de 4 jours, par choix) et « piloté par l'IA » (l'IA occupe un
+périmètre étroit, mesuré, et volontairement tenu à l'écart des 8 agents T0).
+
+### Validation du nouveau code par scrap isolé (500 annonces)
+
+Avant le premier cycle complet, session de test **entièrement isolée** de la
+production : sortie redirigée par `LOWI_OUTPUT_DIR` (variable ajoutée à `run.py`
+à cette occasion), store SQLite, et **pas de `--full`** — donc aucun délistage
+possible. Rien n'a touché Supabase.
+
+500 annonces demandées sur DDproperty location, **474 collectées en 46 min**
+(24 écartées par `config/exclude.json`, 2 dédupliquées), **0 erreur, 0 traceback**.
+
+Verdict de `ops/juge-test.py`, dont les seuils ont été écrits **avant** de voir
+les résultats :
+
+| Contrôle | Résultat | Seuil |
+|---|---|---|
+| prix / chambres / quartier / coordonnées / immeuble | **100 %** | 90-99 % |
+| surface | 99,8 % | 90 % |
+| **descriptif** | **99,8 %** | 70 % |
+| provenance (`agent_id`) et date de mise en ligne | **100 %** | 70 % |
+| plausibilité marché | 99,8 % | 90 % |
+| identifiants en collision | 0 | 0 |
+
+Ce qui était réellement en jeu : **la capture des descriptifs n'avait jamais
+tourné en collecte réelle**. Résultat — 473 descriptifs, 3 102 caractères en
+moyenne (min 375, max 4 000), et **aucun texte pollué** par du CSS ou du texte de
+marque, les deux défauts trouvés en sondant des pages à la main plus tôt dans la
+journée. Le contrôle anti-pollution du juge est resté en place comme garde-fou.
+
+Second enseignement, non anticipé : `agent_id` et `posted_at` sont remplis à
+**100 %** sur ce lot, alors qu'ils ne couvrent que 7 % de la base historique. Ces
+champs n'étaient pas absents de la source — ils n'étaient pas collectés. La
+question du doublon même-agent devient donc décidable sur tout le flux à venir,
+pas seulement sur un échantillon.
+
+Deux défauts corrigés en chemin, tous deux dans l'outillage de test lui-même :
+un caractère non-ASCII dans un script PowerShell casse son **parsing** avant toute
+exécution (les fichiers `ops/*.ps1` sont désormais en ASCII strict, et validés par
+`[Parser]::ParseFile` avant usage) ; et un déballage de tuple erroné dans le juge.
+
+### Mode local pour l'orchestrateur — valider un cycle complet sans écrire en ligne
+
+Ajout de `orchestrator.py --local <dossier>`. Trois effets :
+
+1. toute commande `--store supabase` devient `--store sqlite` ;
+2. `LOWI_OUTPUT_DIR` redirige base, images et fiches vers le dossier de test ;
+3. les agents marqués `needs_supabase` dans `agents.json` sont **sautés** —
+   `analyze-sale`, `analyze-rent`, `organize`, `report`, `storage`.
+
+Le point 3 est le moins évident et le plus important. Ces agents *lisent*
+Supabase : en mode local ils tourneraient sur la production pendant qu'on teste
+autre chose, et produiraient des constats sans rapport avec le scrap en cours.
+Les laisser tourner aurait donné une illusion de cycle complet. Les sauter et
+l'afficher est la seule lecture honnête.
+
+**Remontée** (`ops/remonter-local.py`) : un cycle complet dure 6 à 10 heures ; le
+refaire en ligne après validation gaspillerait ce temps et solliciterait les
+sources une seconde fois sans raison. Le script réutilise
+`SupabaseStore.upsert_listing`, c'est-à-dire **le même chemin d'écriture** que le
+scraper — rien n'est réinventé. Il convertit ce que SQLite et Postgres ne stockent
+pas pareil (`raw_data` texte → jsonb, `is_auto_repost` entier → booléen,
+`photo_sizes` texte → tableau).
+
+Il **ne délistera jamais** : un transfert n'est pas un scan, il ne peut pas
+conclure qu'une annonce absente a disparu du marché. C'est la même prudence que
+le garde-fou des 50 % sur les scans partiels.
+
+---
+
+## 2026-07-31 (nuit) · Premier cycle local complet — comparaison à la production
+
+**Contexte.** Premier lancement de `LowiBKK-LancementComplet -Local` (portée
+« tout », store SQLite isolé `tests-scrap/2026-07-31-1900-FULL-LOCAL/`, aucune
+écriture Supabase). Démarré 19h00, arrêté manuellement ~3h16 plus tard — avant
+la fin des 6-10 h attendues, et avant que ddproperty/propertyscout/nestopa
+n'aient committé la moindre ligne (`scan_runs` vide sur ce store).
+
+**Mesure.** Seul fazwaz sale a produit des données (2 066 annonces actives).
+Comparaison à périmètre identique (`listings_sane`, fazwaz, sale, actif) entre
+ce sous-échantillon et la production Supabase (4 732 annonces) :
+
+- **Qualité brute** : khet / lat-lng / condo_name renseignés à 100 %
+  (2 066/2 066), tenure = freehold à 100 % (cohérent avec la règle
+  freehold-only). Les valeurs hors plausibilité (max observé 13,5 Md THB) sont
+  filtrées par `listings_sane` comme en prod.
+- **Couverture** : 2 066/4 732 = 43,7 % du volume prod — cohérent avec un arrêt
+  à mi-parcours, pas un signe de sous-collecte.
+- **Représentativité géographique** : proportions par khet quasi identiques
+  (Vadhana 17,9 % local vs 20,6 % prod, Khlong Toei 14,3 % vs 14,5 %, Huai
+  Khwang 7,2 % vs 7,1 %, Chatuchak 5,1 % vs 5,2 %) — pas de biais de
+  pagination vers un sous-ensemble de quartiers.
+- **Prix/m² médian par khet** (double médiane par condo, `n_condos >= 5`) :
+  classement des 6 premiers quartiers identique entre local et prod (Pathum
+  Wan > Bang Rak > Ratchathewi > Sathon > Khlong Toei > Vadhana). Écarts de
+  -11 % à +21 % sur les 31 khets qualifiés, concentrés sur les quartiers à
+  faible `n_condos` (< 15, bruit d'échantillonnage attendu) ; écart médian
+  ≈ 5 % sur l'ensemble.
+
+**Verdict.** Rien dans cet échantillon ne suggère que le pipeline agent
+(`extract-fazwaz` orchestré) dégrade la qualité ou introduit un biais par
+rapport à l'exécution directe de `scraper/run.py` qui alimente la production.
+
+**Limite connue.** Comparaison sur une seule source (fazwaz) et un seul
+`deal_type` (sale) : le cycle n'étant pas allé à son terme, aucun jugement
+possible sur ddproperty/propertyscout/nestopa ni sur la lane location — à
+refaire dès qu'un cycle local ira jusqu'au bout. Par ailleurs
+`ops/logs/lancement-complet-2026-07-31-1900.log` ne contient que la ligne
+d'en-tête : le suivi live du log ne reflète pas l'avancement réel du process,
+seule l'inspection directe du SQLite (`bangkok.db`) l'a révélé.
+
+## 2026-08-01 · Une coupure réseau ressemblait à un scan réussi
+
+Coupure internet pendant le cycle complet. Les quatre scrapers sont morts. Les
+données étaient sauves — l'écriture se fait annonce par annonce, 1 740 lignes
+conservées — mais deux défauts sont apparus.
+
+**Le premier, bénin** : personne ne les relançait.
+
+**Le second, grave** : `run.py` avait enregistré un `scan_run` marqué **`notes:'full'`**
+alors qu'il venait d'être interrompu à **928 annonces sur ~5 000**. Le parsing
+attrape l'exception réseau, sort proprement de sa boucle, et consigne un scan
+complet. Autrement dit : **une perte de réseau est indiscernable d'une fin de
+scan réussie**, et un scan partiel pris pour complet peut déclencher un
+délistage à tort. Seul le garde-fou des 50 % nous protégeait, par chance.
+
+### `ops/superviseur.py`
+
+Ne fait donc PAS confiance au code retour. « Terminé » exige **trois** conditions
+simultanées : code retour 0, **et** volume ramené ≥ un plancher déclaré par
+source, **et** absence de traces d'échec réseau dans le log (au moins trois
+occurrences de `échec GET`, `Max retries`, `getaddrinfo failed`…).
+
+Le reste des garanties :
+
+- **état sur disque écrit à chaque transition, de façon atomique** (`os.replace`
+  après `fsync`) : une coupure de courant au milieu d'une écriture ne laisse pas
+  un fichier tronqué ;
+- **vérification toutes les 30 s** : internet, processus vivants, avancement ;
+- la sonde internet vise **les sources elles-mêmes**, pas un serveur tiers — ce
+  qui compte n'est pas d'avoir une route, c'est que les sites répondent ;
+- **aucune relance tant qu'internet n'est pas revenu**, pour ne pas brûler le
+  compteur de tentatives (plafond 12, puis abandon signalé) ;
+- **détection de processus figé** : plus aucune annonce nouvelle depuis 10 min →
+  le processus est tué et repris ;
+- une seule tâche par SOURCE à la fois (même domaine = même cadence), mais les
+  quatre sources en parallèle (domaines distincts).
+
+`ops/install-superviseur.ps1` enregistre la reprise automatique : à l'ouverture
+de session (retour de courant), et une répétition de sécurité toutes les 30 min.
+`RestartCount=3` relance la tâche si elle meurt elle-même. Le script **relit le
+XML enregistré et refuse tout `\"`** — le défaut de juillet.
+
+Vérifié en conditions réelles : après le retour d'internet, le superviseur a
+relancé les quatre sources en 12 secondes, sans intervention.
+
+## 2026-08-02 · Les descriptifs contenaient un tableau de specs, pas de la prose
+
+Analyse de **500 descriptifs réels** tirés au hasard du scrap complet, pour
+décider ce que l'IA locale devait y chercher. Le constat a renversé la question.
+
+### Ce que contiennent réellement les descriptifs
+
+Chez **FazWaz (63 %)** et **PropertyScout (9 %)**, le descriptif n'est pas de la
+prose : c'est un **tableau clés/valeurs rendu en texte** — `Floor 41`,
+`CAM Fee … ฿2,160/mo`, `Thai Quota`, `Listed By Private Owner`,
+`Construction: Completed (Dec 2013)`. **DDproperty (28 %)** décrit le *projet*
+et non le lot, souvent en thaï : quasi rien d'exploitable à la maille unité.
+
+Douze champs en sortent (`scraper/pipeline/details.py`), dont trois qui comblent
+des trous nommés dans le dossier investisseur :
+
+| champ | couverture (14 204 annonces) | état de la base |
+|---|---|---|
+| `d_annee_construction` | **78 %** | était à **0 %** |
+| `d_publie_par` | 59 % | absent — propriétaire vs agence |
+| `d_quota` | 24 % | était à **1,2 %** |
+| `d_cam_fee_thb` | 24 % | absent — charges de copropriété |
+
+### IA locale contre regex, sur les mêmes 500
+
+| champ | accord |
+|---|---|
+| cam_fee, meublé, animaux, publié_par, année | **100 %** |
+| vues | 98 % |
+| étage | 97 % |
+| **quota** | **19 %** |
+
+Et surtout : sur les **288** cas où le modèle répondait là où la regex se taisait,
+**266 étaient des inventions** (92 %). Le pire : `publie_par`, 129 réponses alors
+que le libellé « Listed By » est **absent du texte** dans les 129. `Pets N/A`
+devenait « interdit », `Furniture N/A` devenait « meublé ».
+
+**Décision : extraction déterministe.** 6 s/annonce et 25 h de GPU sur le stock
+pour un résultat inférieur — l'arbitrage ne se discute pas.
+
+**Ce à quoi le modèle a servi** : de *détecteur d'angles morts*. Ses 22 gains
+réels ont révélé des formulations que la regex ratait — « Pets All Kind of Pets
+Allowed » au lieu de « Pets Allowed » (+3 points après correction). C'est un rôle
+de fuzzer, pas d'extracteur.
+
+### Trois défauts, tous dans mon propre code
+
+**Faux positif sur l'étage.** « Floor **2-Bedroom** Condo at… » : le libellé
+`Floor` était suivi d'un TITRE, et je capturais le 2 de « 2-Bedroom ». Le tiret
+discrimine — « Floor 7 Bedroom Studio » est légitime.
+
+**Des octets invisibles dans mes regex.** Un heredoc bash a converti mes `\b` en
+véritables caractères *backspace* (0x08). Symptôme incompréhensible : le motif
+identique fonctionnait en ligne de commande et jamais dans le fichier. Les tests
+sont désormais écrits en FICHIER (`scraper/tests_details.py`), plus en `-c`.
+
+**Et surtout : ma référence sur le quota était fausse.** Toutes les fiches FazWaz
+portent une phrase légale — « Units that are part of the Thai quota or are being
+leased for 30 years… ». Ma recherche insensible à la casse la confondait avec le
+libellé. Sur 315 fiches : **123 vrais libellés, 155 phrases légales**, soit ~32
+faux positifs. J'ai accusé le modèle de se tromper avant de découvrir que ma
+mesure l'était. **Troisième fois dans cette campagne** que la référence, et non
+le modèle, était en cause.
+
+### Mise en place
+
+Extraction branchée dans `normalize.py` — **un seul point** plutôt que quatre
+adaptateurs. 12 colonnes préfixées `d_` en SQLite ; migration Postgres écrite
+mais **NON appliquée** : les données restent dans la base de test le temps d'être
+éprouvées. `supabase_store._COLS` reste inchangé — les deux vont ensemble à la
+réconciliation, sinon le prochain scrap en ligne échoue sur colonne inconnue.
+
+Les deux lectures (Postgres et SQLite) **détectent la présence des colonnes**
+avant de les sélectionner : la page fonctionne avant comme après la migration.
+
+`LOWI_SQLITE_DB` force la lecture d'un fichier SQLite précis et prime sur
+Supabase (`npm run dev:test`). Sans ce drapeau explicite, prévisualiser un scrap
+isolé imposait de neutraliser `SUPABASE_DB_URL` par le shell — or sous cmd
+`set VAR=` **supprime** la variable, Next recharge alors `.env.local` et repart
+sur la production. Vérifié : l'API servait 18 989 annonces au lieu de 14 899.
+
+---
+
+## 2026-08-02 — Détails du descriptif : six champs de plus, et trois erreurs de ma part
+
+### Ce que la relecture du descriptif a rendu
+
+Six champs ajoutés aux treize existants, tous mesurés sur les 14 204 descriptifs
+de `tests-scrap/2026-08-01-COMPLET` : `d_livre` (**84 %** — meilleure couverture
+de tous les champs), `d_vues_n` (52 %), `d_tarif_regime` (11 %), `d_batiment`
+(6 %), `d_elec_kwh` et `d_eau_m3` (<1 %).
+
+**Une seule colonne de régime pour l'eau ET l'électricité.** Sur 1 451 annonces
+qui renseignent les deux, elles indiquent le même régime dans **1 445 cas**.
+Deux colonnes auraient coûté le double pour distinguer six annonces. Quand les
+deux divergent, on retient `private` : classer « government » une fiche qui
+facture ฿6,00/kWh masquerait la marge sur le poste le plus lourd.
+
+**`Unit Type` écarté après mesure** : 4 244 mentions, valeur « N/A » quasi
+partout. En revanche `Building` (« Building A », « Building 2 ») était juste à
+côté et n'avait jamais été vu — c'est un discriminant SÛR de doublon : même
+résidence, tours différentes = lots forcément distincts.
+
+### La prose ment sur la livraison, dans les deux sens
+
+`d_livre` a d'abord produit 84 lots « livrés » avec une année 2027-2029, et 233
+« non livrés » avec une année antérieure à 2024. Deux gabarits opposés :
+
+- PropertyScout écrit « Building completed in **2027** » — au passé, pour une
+  livraison à venir.
+- DDproperty laisse traîner « the project is under construction and is expected
+  to be completed in **2019** », texte rédigé en 2017 et jamais réécrit, alors
+  que l'immeuble est debout depuis des années.
+- « under construction » qualifie très souvent le **métro** voisin
+  (« Opposite MRT Orange Line (under construction) »), pas l'immeuble.
+
+Priorité inversée : champ structuré, puis **année**, la prose en dernier recours.
+Les trois compteurs d'incohérence sont tombés à zéro.
+
+### Trois erreurs de ma part, corrigées par la mesure ou par toi
+
+**1. « Un particulier ne possède pas 54 lots. »** Faux — des propriétaires thaï
+en détiennent plus de cent. J'en avais tiré que « Private Owner » *disqualifie*
+un doublon ; ce raisonnement tombe. Ce que la mesure établit vraiment est plus
+étroit : à effectif égal (200 tirages), les identifiants d'unité FazWaz forment
+une grappe dans **4,3 %** des cas pour « Private Owner » contre **18,2 %** pour
+« agent ». Le champ dit « pas un dépôt groupé d'agence » — rien de plus. Il ne
+tranche pas un doublon seul, et il n'existe que sur FazWaz.
+
+**2. « Min. Rental Duration à 12 mois sent la valeur par défaut. »** Faux aussi,
+et pour une raison métier que je n'avais pas : la location courte durée est
+interdite en copropriété en Thaïlande, donc le bail annuel EST la norme. 4 044
+cas à 12 mois ne sont pas un artefact d'affichage.
+
+**3. Le facteur 14 sur `num_ctx` est confondu.** Voir plus bas.
+
+### `posted_at` n'est pas une date de publication — substitution ANNULÉE
+
+`CLAUDE.md` annonçait de substituer `posted_at` à `first_seen` dans le
+time-on-market. Mesure sur les 1 294 annonces qui le portent :
+
+| écart `first_seen − posted_at` | p25 | médiane | p75 | p90 |
+|---|---|---|---|---|
+| | **−25 j** | **−16 j** | +1 j | +4 j |
+
+L'écart médian est **négatif** : l'annonce vue seize jours *avant* sa publication
+déclarée. Une date de mise en ligne ne peut pas être postérieure à notre
+observation — le champ avance dans le temps. La coupure par `is_auto_repost`
+le confirme : les republiées ont un `posted_at` du 02/07 au 29/07 (jamais plus
+d'un mois), les autres du 23/11/2025 au 29/07.
+
+Substituer ce champ **raccourcirait** la durée au lieu de l'allonger, et
+mesurerait l'assiduité des agents à remonter leurs annonces.
+
+**Deuxième raison, indépendante de la première** : le champ n'existe que sur
+DDproperty, dont la part du stock actif va de **3 % (Phra Khanong) à 89 %
+(Bangkok Noi)**. Une métrique mixte ferait varier l'ancienneté avec la
+composition des sources, pas avec le marché — même famille d'erreur que le
+dénominateur de tension corrigé le 2026-07-28. `first_seen` reste la base
+unique : son biais est au moins **uniforme sur les quatre sources**, et un biais
+partagé se compare.
+
+Table `posted_at_history` créée et branchée sur les deux stores (écriture sur
+changement réel uniquement, amorcée sur les 1 294 valeurs courantes). Elle
+prouvera ou démentira le mécanisme au prochain scrap : jusque-là, « date de
+remontée » reste une déduction, parce qu'on écrasait la valeur à chaque passage.
+
+### `compresser()` était du code mort
+
+La colonne `page_text` était déclarée `blob` et recevait la chaîne telle quelle :
+`SqliteStore.compresser()` existait depuis le 2026-07-31 et **n'était appelée
+nulle part**. Le gain annoncé dans sa docstring n'était pas réalisé. Branchée
+via `_valeur()`. La colonne n'existait pas encore dans la base de test — le scrap
+a précédé son ajout — donc `page_text` n'a toujours pas été éprouvé de bout en
+bout ; il le sera au prochain scrap.
+
+### `num_ctx` non fixé : dégradation silencieuse du client local
+
+Le client durci ne fixait pas `num_ctx`. Ollama dimensionne alors un grand
+contexte, le cache d'attention porte l'empreinte à **8,1 Go** — au-delà des 8 Go
+de VRAM de la 4070 Laptop — et **24 % des couches basculent sur le CPU**. Avec
+`num_ctx=2048` : **5,1 Go, 100 % sur GPU**, pour des prompts de ~250 jetons.
+
+**J'ai d'abord annoncé un « facteur 14 » (49 s contre 3,4 s). C'était faux, et
+massivement.** Un jeu tournait sur la même carte pendant la mesure, et je ne
+l'avais pas vérifié. Reprise sur GPU libre, 5 appels par configuration,
+modèle déchargé entre les deux :
+
+| | temps/appel | empreinte | sur GPU |
+|---|---|---|---|
+| `num_ctx=2048` | **3,2 s** | 5,1 Go | 100 % |
+| non fixé (défaut Ollama) | **3,9 s** | 8,1 Go | 76 % |
+
+**22 %, pas un facteur 14.** La règle reste bonne — 3 Go de VRAM libérés sans
+contrepartie, et sous pression mémoire c'est la différence entre tenir et
+déborder — mais son gain propre est modeste. Quatrième fois dans ces campagnes
+que ma mesure, et non le système mesuré, était en cause : ici je n'avais pas
+vérifié ce qui d'autre occupait la carte.
+
+**Et une cinquième dans la foulée.** J'ai cru voir « deux exemplaires du test en
+concurrence » dans la liste des processus. C'était une CHAÎNE lanceur/interpréteur :
+le shim `python.exe` du venv et le vrai interpréteur `uv` portent la même ligne de
+commande et apparaissent comme deux entrées. Vérification par `ParentProcessId` :
+l'un est le père de l'autre. **Il n'y a jamais eu de doublon.** Le ralentissement
+s'explique entièrement par le jeu et par `num_ctx`.
+
+Enseignement distinct, et celui-là tient : l'exigence opérationnelle déjà posée
+mais non honorée — **l'analyse locale doit céder le GPU** quand une autre
+application le réclame. Aujourd'hui elle le prend sans rien demander.
+
+### L'IA locale sur la prose DDproperty : elle lit bien, elle ne sait pas se taire
+
+Jeu monté pour la question : le descriptif DDproperty peut-il alimenter le
+référentiel `condos` ? 100 annonces étiquetées à la main, avec **trois**
+étiquettes — une valeur, `null` (fait absent), `ambigu` (fait présent mais texte
+contradictoire). C'est la troisième qui rend le test discriminant : cette prose
+est traduite automatiquement du thaï et souvent cassée (« The Breeze Narathiwas
+is a **374-storey** high-rise », « 36 story 1 storey building »), ou décrit deux
+tours de hauteurs différentes. Il n'existe alors **pas** de valeur juste.
+
+| sur 100 annonces | regex | IA locale |
+|---|---|---|
+| juste (fait présent) — étages / lots / promoteur | 87 / 89 / 77 % | **89 / 98 / 100 %** |
+| abstention (texte contradictoire) — étages | 93 % | **100 %** |
+| silence (fait absent) — étages / lots / promoteur | **95 / 79 / 94 %** | 50 / 47 / 54 % |
+
+313 s pour 100 annonces, 3,1 s chacune, **zéro panne**. Le mode extraction
+fonctionne comme prévu : sur « with 22 and 24 floors » le modèle rend `[22, 24]`
+et refuse de choisir — 100 % d'abstention sur les textes contradictoires, contre
+93 % pour la regex.
+
+**Mais les deux mesures qui décident vont dans l'autre sens.**
+
+*Là où la regex parle et qu'une vérité existe* : regex **100 % sur les trois
+champs**, IA 92 / 100 / 100 %. La regex ne se trompe JAMAIS quand elle parle —
+ses 87 / 89 / 77 % ne sont pas des erreurs, ce sont des silences. L'IA ne la bat
+nulle part, et fait moins bien sur les étages.
+
+*Là où la regex se tait* : l'IA ose une valeur dans ~50 % des cas et **se trompe
+dans 76 à 94 %**. Reproduction quasi exacte des 92 % du 2026-07-31, sur un jeu
+entièrement différent et sur d'autres champs. Ce n'est donc pas un accident de
+protocole : **le modèle ne supporte pas le vide.**
+
+Le détail est plus dur encore que la moyenne. Sur le promoteur, l'IA récupère
+**8 noms réels que la regex a manqués** — valeur authentique — mais produit
+**26 inventions** pour les obtenir. Un gain pour trois erreurs, et aucun signal
+pour les séparer : la `confidence` auto-déclarée est inutilisable (règle 5).
+
+**Le recoupement par accord entre annonces est impossible ici** : le descriptif
+DDproperty est du texte de PROJET, répété à l'identique. 3 625 annonces
+d'immeubles multi-annonces se réduisent à **838 textes distincts** (37 annonces
+de Belle Grand Rama 9 partagent UN texte). S'accorder avec soi-même sur le même
+texte ne prouve rien.
+
+**Verdict : l'IA locale n'est pas utilisable pour ce champ.** Non parce qu'elle
+lit mal — elle lit mieux que la regex — mais parce qu'elle ne distingue pas
+« j'ai trouvé » de « j'ai inventé ». Son seul emploi mesuré reste l'arbitrage
+des doublons ambigus en mode extraction.
+
+**Ce que l'exercice rapporte quand même**, et ce n'est pas rien : la regex écrite
+comme référence du test alimente le référentiel `condos` **gratuitement et sans
+erreur mesurée** — 1 045 immeubles vus, dont **512 avec la hauteur, 581 avec le
+nombre de lots, 514 avec le promoteur**, et **zéro désaccord** entre textes d'un
+même immeuble. À rapprocher des 3 551 immeubles du référentiel et du `year_built`
+toujours à 0 côté serveur.
+
+Corollaire de rangement : ce descriptif décrit le PROJET, pas le lot. Le stocker
+par annonce le duplique 4,3 fois. Sa place est dans `condos`.
+
+---
+
+## 2026-08-03 — Ce qu'une capture d'écran a montré que les chiffres cachaient
+
+### Le point de départ : une image, pas une requête
+
+Demande d'une série d'images datées des cartes, une par édition mensuelle, pour
+voir le **déplacement géographique** des tensions et des rendements — ce
+qu'aucune colonne ne montre.
+
+La capture sans écran fonctionne pour les **tableaux** (1920×1080, lisibles) et
+**échoue pour les cartes** : MapLibre est en WebGL, et Chrome sans interface rend
+un cadre vide — en-tête et panneau de calques dessinés, carte noire. Vérifié que
+ce n'est pas le réseau : le serveur de tuiles répond en 0,28 s.
+`--virtual-time-budget` fait avancer une horloge *virtuelle* qui dépasse les
+téléchargements réels ; un budget plus long fait sortir Chrome sans rien produire.
+La solution est Playwright, qui sait attendre l'événement `idle` de MapLibre —
+**non installé, proposé, pas décidé**.
+
+`ops/captures-carte.py` refuse et supprime toute image implausible : sans ce
+garde-fou la série se remplirait d'images blanches en silence. Il n'a d'ailleurs
+pas suffi — il a laissé passer une carte vide de 43 Ko, que seul un examen
+visuel a démasquée. **Un seuil de taille ne remplace pas un regard.**
+
+### Ce que l'image a révélé, et que j'ai d'abord mal interprété
+
+Sur la capture du tableau des rendements, **« Bang Na » figurait deux fois** :
+6,1 % sur 3 immeubles, 5,6 % sur 45. L'affichage retire le suffixe « District »,
+donc les deux lignes sont identiques à l'œil.
+
+**J'ai conclu à un doublon de nom. C'était faux.** Les coordonnées le prouvent :
+les 27 annonces « Bang Na » sont toutes à **13,6578 / 100,6029 — Sukhumvit 107,
+secteur Bearing**, en province de **Samut Prakan**, au-delà de la limite de
+Bangkok. Elles ne sont pas mal nommées : elles sont **hors périmètre**, et leurs
+sources les nomment correctement. Idem pour « Bang Phli » (14), « Pak Kret » (3),
+« Bang Sao Thong » (2) et « Bearing » (1, même immeuble que les 27).
+
+Le vrai défaut est donc autre, et plus gênant : **ni `study/run_study.py` ni
+`lib/yields.ts` ne restreignent le classement aux 50 quartiers**. Toute chaîne
+présente dans `khet` produit une ligne. Des annonces qui ne sont pas à Bangkok
+apparaissaient dans un classement des quartiers de Bangkok, sous un libellé
+visuellement confondu avec un vrai quartier.
+
+Septième fois cette semaine que ma conclusion précédait ma mesure.
+
+### Ce qui a été corrigé
+
+**À l'écriture** — `KhetMatcher.canoniser()` : quand le point-dans-polygone
+échoue, le libellé de la source est confronté aux 50 noms de référence au lieu
+de passer tel quel. C'est ce passage sans contrôle qui créait les vraies
+variantes de suffixe. Sans lui le défaut se reproduirait : une variante
+« Huai Khwang » a encore été écrite le jour même.
+
+**Sur l'existant** — `ops/corriger-khet.py`, où **les coordonnées tranchent, pas
+le texte** : on recalcule le point-dans-polygone et on ne renomme que si le point
+désigne effectivement un quartier. Résultat : **6 corrections réelles**, 48
+annonces reconnues hors Bangkok et laissées intactes, 4 sans coordonnées
+signalées sans être touchées. Une correspondance de chaînes n'est pas une preuve
+— c'est elle qui avait créé le problème.
+
+**Dans l'étude** — filtre de périmètre sur les 50 quartiers, lus **depuis le
+GeoJSON** et non recopiés.
+
+### Trois corrections de `study/run_study.py`
+
+1. **Lecture de `listings_sane`** au lieu de `listings` brut. L'étude portait une
+   TROISIÈME définition des bornes (loyer plafonné à 200 000 au lieu de 500 000,
+   aucun plancher, aucune borne de surface). ⚠ Mesuré avant de corriger : sur
+   36 quartiers, **un seul** bouge, de **+0,5 %**. La double médiane par immeuble
+   absorbe ces valeurs. C'était un piège de maintenance, **pas** une erreur de
+   publication — j'avais d'abord annoncé un biais « là où c'est le plus scruté »,
+   sans l'avoir mesuré.
+
+2. **Refus de produire une évolution vide.** Les éditions du 6 et du 9 juillet
+   portaient des instantanés **identiques au chiffre près** — mêmes totaux,
+   48 quartiers sur 48 égaux. Aucun scrap entre les deux. Le rapport affichait
+   « Δ +0.0 % » partout, ce qui se lit comme une stabilité du marché. La section
+   rend désormais un avertissement explicite.
+
+3. **Vie médiane plafonnée à la cadence.** Six quartiers sur huit affichaient
+   exactement **4 jours** — l'intervalle entre deux scraps. La mesure ne résout
+   rien sous sa propre cadence ; elle s'affiche maintenant `≤ 4` avec l'explication.
+
+`config_version` passe de 1 à **2** : c'est ce qui tracera la rupture de série.
+
+### L'incident que j'avais qualifié d'hypothétique s'est produit — et je l'ai causé
+
+Hier soir j'ai écrit un verrou d'instance unique (`agents/core/gpu.Verrou`) en le
+documentant comme **« une précaution, pas la correction d'un incident »** : j'avais
+d'abord cru observer deux exemplaires d'un test en concurrence, c'était en réalité
+la chaîne lanceur/interpréteur du venv.
+
+Le 2026-08-03, l'incident a eu lieu pour de bon. Après avoir corrigé un conflit de
+type (SQLite range 0/1 là où Postgres attend un booléen), j'ai relancé
+`ops/remonter-local.py` **sans arrêter le premier exemplaire**. Les deux ont écrit
+en concurrence sur la production :
+
+    essai 1 : 4 866 créations, 850 mises à jour, 16 990 ERREURS
+    essai 2 : reprend l'intégralité des 19 904 annonces, correctement
+
+Pas de dommage durable — les deux écrivaient par `upsert`, et le second passage
+réécrit tout avec les bonnes valeurs. Le coût est 16 990 écritures perdues et une
+charge inutile sur Supabase. Mais **rien ne l'empêchait**, et c'est le point : le
+verrou existait déjà, il n'était simplement pas branché là.
+
+Corrigé — `remonter-local.py` prend `Verrou("remonter-local")` avant la première
+écriture, après la sortie du mode à blanc (qui n'écrit rien et n'a pas à être
+bloqué). Pas de `with` : le verrou est posé par le système sur un descripteur
+ouvert, donc il se relâche seul à la mort du processus, plantage compris.
+
+Enseignement : un garde-fou écrit et non branché ne protège de rien. J'avais
+identifié le risque, construit l'outil, et omis de l'appliquer au seul endroit qui
+allait en avoir besoin dans les vingt-quatre heures.
+
+## 2026-08-05 — Cinquième source (LivingInsider), une source écartée après enquête (DotProperty), et le mécanisme T2 qui n'existait pas
+
+**Contexte.** Une discussion WhatsApp avec un agent (Earn) a fait remonter
+propertynetwork.asia comme source candidate. En creusant sa structure (aucune
+liste publique, `robots.txt` en `Disallow: /` total), le fil a mené à identifier
+que ce n'est pas un agrégateur mais un outil de partage client posé sur d'autres
+plateformes (confirmé par Earn elle-même, puis vérifié empiriquement : l'id
+`2280176` pointe vers exactement le même bien sur propertynetwork.asia et sur
+propertyscout.co.th). Aucune donnée unique à en tirer — PropertyScout est déjà
+une source active.
+
+**Décision 1 — le ticket `watch-sources` dormant sur DotProperty (créé le
+2026-08-01, jamais traité) a été rouvert, puis refusé après enquête.** Le
+sondage automatique de `watch-sources` ne teste que HTTP/blob/robots/volume, pas
+l'origine des données. Un échantillonnage manuel (90 annonces sur 3 pages
+indépendantes, vente + location) a montré que **100 % des photos** viennent de
+`cdn.fazwaz.com` / `img.fazwaz.com`. DotProperty Bangkok semble syndiquer FazWaz,
+déjà scrapé — écrire l'adaptateur aurait dupliqué la couverture existante pour un
+coût de scrape non négligeable (chaque fiche = 1 requête détail systématique).
+Adaptateur **délibérément non écrit**. `agents/state/watch-sources/registre.json`
+et le ticket lui-même portent la trace de cette correction ; la décision finale
+(creuser une fraction non-FazWaz, ou clore) reste à trancher par un humain.
+
+**Décision 2 — LivingInsider ajouté comme 5e source.** Vérifié indépendant
+(images sur `www.livinginsider.com`, `sku` préfixé `LV`, aucun CDN
+FazWaz/DDproperty/PropertyScout détecté), `robots.txt` quasi ouvert,
+`sitemap-project.xml` dédié. Deux limites structurelles, documentées dans
+`agents/skills/extract-livinginsider/SKILL.md` :
+- **Aucune dédup incrémentale possible** : la page de liste ne porte que des
+  URLs nues (pas de prix), contrairement aux 4 sources existantes — chaque scan
+  revisite donc TOUTES les fiches déjà connues, indéfiniment. `max_pages` posé
+  bas (25, contre 150 pour FazWaz/DDproperty/PropertyScout) en attendant une
+  mesure réelle de durée de run.
+- **Flux national, pas de filtre géo à la source.** Le format d'adresse n'est
+  pas homogène : certaines fiches disent proprement « … District, Bangkok »,
+  d'autres non (texte thaï/anglais mêlé, mot "District" absent). Premier essai
+  du filtre (regex stricte seule) : **1 fiche retenue sur 20**, alors que 13
+  des 19 écartées étaient de vraies fiches Bangkok mal formatées — le filtre
+  cassait plus qu'il ne triait. Corrigé par un second motif de repli sur le
+  code postal (« … Bangkok 10xxx »), qui prend les 2 derniers mots avant le
+  code postal comme meilleure estimation de district. Retest sur les mêmes 20
+  fiches : **18/20 retenues**, 0 faux positif observé sur les 17 fiches
+  vérifiées une à une (dont 3 réellement hors Bangkok, toutes correctement
+  écartées — Samut Prakan et Chon Buri ont des codes postaux hors plage
+  10xxx). Le nom de district déduit par repli n'est pas toujours canonisable
+  (ex. "Nuea Vadhana" au lieu de "Watthana District") — `--geocode` est de fait
+  indispensable ici, pas optionnel comme pour les autres sources.
+
+**Décision 3 — le mécanisme T2 n'existait pas.** `agents/README.md` décrit
+depuis le début « une session Claude planifiée [qui] draine » `agents/queue/`.
+Vérification : aucune tâche planifiée ne le fait — le rapport mensuel
+(`rapport-mensuel-lowi-bkk`) ne couvre que l'étude de marché, jamais la file de
+tickets. `agents/queue/done/` était vide depuis la création du système le
+2026-07-31. Six tickets (5 `agent_muet` sévérité haute + le `nouvelle_source`
+DotProperty) se sont accumulés sans jamais être traités. Tâche planifiée locale
+`drain-agent-queue-lowi-bkk` créée (quotidienne, ~08:38) pour combler ce vide —
+même limite que les tâches Windows de juillet, en moins grave : elle ne tourne
+que si l'app est ouverte à l'heure dite (rattrape au lancement suivant sinon),
+contrairement à la tâche Windows `LowiBKK-Agents` qui tourne app fermée. Premier
+passage prévu le 2026-08-06 matin.
+
+**Limite connue.** Aucun run de production `livinginsider` n'a encore eu lieu —
+tout ce qui précède vient de runs de test isolés (`LOWI_OUTPUT_DIR` dédié,
+`--limit`, SQLite local, jamais Supabase). Les bandes de `agents/agents.json`
+pour `extract-livinginsider` sont provisoires. Travail fait sur la branche
+`agents/new-sources-livinginsider-dotproperty`, jamais sur `main`.
+
+## 2026-08-06 (suite) — Vente/location le même jour, backup avant/après cycle, DotProperty tranché
+
+**Contexte.** Anthony a demandé trois choses dans la foulée de ce qui précède :
+(1) revenir à `agents/orchestrator.py` + `agents.json` plutôt que
+`superviseur.py`/`tests-scrap` — abandonné le même jour, voir plus haut ;
+(2) que vente ET location tournent le même jour, chaque source enchaînant
+elle-même sa passe location dès que sa passe vente finit, sans attendre les
+autres sources ; (3) un backup local avant ET après chaque cycle de 4 jours,
+pas seulement la purge hebdomadaire existante.
+
+**Décision 1 — fin de l'alternance sale/rent par jour.** L'ancien
+`current_lane()` alternait vente et location sur des jours différents (`day %
+4 < 2`) : concrètement, une catégorie restait périmée 4 jours de plus que
+nécessaire à chaque cycle, pour aucune raison technique — c'était une reprise
+telle quelle des anciennes tâches Windows (`ScrapVente`/`ScrapLocation`), pas
+un choix motivé. `current_lane()` simplifié à `daily`/`weekly`. Chaque source
+qui sépare `--deal-type` (FazWaz, DDproperty) enchaîne maintenant sale PUIS
+rent PUIS sa passe corridors via des étapes `then` successives dans
+`agents.json` — les extracteurs restant parallèles ENTRE eux (le
+`ThreadPoolExecutor` existant), la source la plus rapide démarre sa location
+sans attendre les autres, exactement le comportement demandé.
+
+**Défaut trouvé en l'implémentant, pas en le pensant.** Avec plusieurs étapes
+`then`, `run_agent()` n'écrivait qu'UNE clé `then_exit` dans les métriques —
+la deuxième étape écrasait le résultat de la première, qui disparaissait sans
+trace. Pire : le statut global de l'agent (`ok`/`failed`) ne regardait QUE le
+code retour de la commande PRINCIPALE. Une passe vente réussie suivie d'une
+passe location qui plante aurait été journalisée `ok` — la panne aurait été
+silencieuse. Corrigé : chaque étape (principal + tous les `then`) s'exécute
+indépendamment de l'échec des précédentes (une passe vente cassée ne doit pas
+empêcher la tentative de la passe location), ses métriques sont conservées
+sous une clé distincte (`metrics.etapes[]`), et le statut global agrège tout.
+Validé par un test synthétique (3 étapes, la 2e échoue exprès) avant de faire
+confiance au vrai pipeline : statut global bien `failed`, les 3 étapes
+s'exécutent quand même, rien n'est perdu dans les métriques.
+
+**Décision 2 — backup avant/après, pas seulement hebdomadaire.** Le seul
+filet de sécurité existant (`agent storage`, `ops/sync_supabase_local.py
+--prune`) tournait une fois par semaine — un retour en arrière après un cycle
+de scrap raté se serait fait sur une sauvegarde vieille de plusieurs jours.
+Deux nouveaux agents T0, cadence 4 jours (alignée sur le cycle
+d'extraction) : `backup-avant-cycle` (nouvelle famille `Prelude`, exécutée en
+premier, séquentielle, avant tout extracteur — `run_lane()` modifié pour
+supporter cette phase) et `backup-apres-cycle` (dernier avant `overseer`).
+Les deux appellent `ops/sync_supabase_local.py` SANS `--prune` — réplique
+seule, jamais destructif, et **sans** le garde-fou `requires_healthy` de
+`storage` : une sauvegarde de ce qui a réussi vaut mieux qu'aucune sauvegarde,
+même si une extraction a échoué en amont. Testé réellement (pas en dry-run) :
+`archive/lowi-archive.db` passe de 45 159 lignes périmées (2026-08-03) à
+555 691 lignes fraîches sur 7 tables, en un seul run.
+
+**Décision 3 — DotProperty tranché, pas juste suspecté.** Le ticket ouvert le
+2026-08-01 restait sur une investigation manuelle ponctuelle (90 annonces,
+un seul passage). Écrit `ops/verif-dotproperty.py` : 3 sondages de la page de
+LISTE uniquement (pas de fiche détail, pas d'écriture DB — juste le
+hébergeur des images), enregistrés dans un état persistant, avec conclusion
+automatique au 3e run. Plutôt que d'attendre 3 cycles réels (~12 jours), les
+3 runs ont été déclenchés à la main ce soir pour valider le mécanisme
+complet : **180 annonces échantillonnées sur 3 runs indépendants, 100% des
+images chez `cdn.fazwaz.com`/`img.fazwaz.com`** — verdict
+`resyndication_confirmee`. Le ticket est fermé et déplacé dans
+`agents/queue/done/`, le registre `watch-sources` mis à jour, un mail de
+conclusion déposé dans `agents/queue/mail/` (à drainer par
+`drain-agent-queue-lowi-bkk`, mis à jour le même jour pour créer des
+brouillons Gmail plutôt que d'envoyer directement — plus sûr pour une
+dispatch nocturne sans supervision).
+
+**Limite connue.** `verif-dotproperty` reste dans `agents.json` (cadence 4 j)
+mais ne fait plus rien après ces 3 runs (`etat.json` déjà à 3/3) — laissé en
+place comme trace, pas retiré, aucune action requise. Travail fait
+directement sur `main` (contrairement au reste de la nuit) : cette
+infrastructure doit être active pour le cycle planifié de demain 01:00, la
+laisser sur une branche l'aurait rendue invisible à la tâche Windows.
+
+## 2026-08-06 (suite 2) — Correction : "backup avant/après" voulait dire vérifier, pas resynchroniser
+
+Anthony a repris ma lecture du mot "backup" ci-dessus : `backup-avant-cycle`
+(v1) resynchronisait `archive/lowi-archive.db` à l'aveugle à chaque cycle,
+sans jamais se demander si le backup précédent avait déjà fait le travail. Ce
+n'était pas ce qui était demandé — la demande portait sur une VÉRIFICATION du
+backup précédent, avec rattrapage seulement "à défaut" (si la vérification
+échoue), et un agent dédié à la LECTURE du backup pour en juger l'intégrité,
+pas juste relancer la sync et espérer.
+
+`ops/verifie-backup.py` remplace `backup-avant-cycle` : quatre vérifications
+(`PRAGMA integrity_check` sur le SQLite local, tables attendues présentes,
+volume archivé >= 90 % du volume Supabase, dernier `backup-apres-cycle` 'ok'
+dans le ledger et pas plus vieux que cadence+1 jour) — et ne relance
+`ops/sync_supabase_local.py` QUE si l'une d'elles échoue. `backup-apres-cycle`
+(fin de cycle, inconditionnel) est inchangé.
+
+**Testé réellement**, pas en dry-run : `backup-apres-cycle` n'ayant encore
+jamais tourné via l'orchestrateur (créé ce soir), le check #4 a correctement
+détecté "aucun backup-apres-cycle 'ok' trouvé" et déclenché un rattrapage —
+qui a réussi (archive passée à 555 814 lignes). Revalidé une seconde fois en
+appelant `agents/orchestrator.py run verifie-backup` directement (pas juste le
+script), pour prouver l'intégration réelle, pas seulement la logique isolée.
+
+## 2026-08-11 — Revue algo deals/yields/tension : 3 propositions sur 4 écartées
+
+Un retour externe (analyse mathématique du code de `lib/deals.ts`,
+`lib/yields.ts`, `lib/tension.ts`) proposait 4 changements. Vérification
+contre le code et les données réelles avant d'implémenter quoi que ce soit —
+trois écartés, un retenu.
+
+**Écarté 1 — prime d'étage dans `deals.ts`.** Le taux proposé (+0,5 %/étage
+au-dessus du 5e) est une hypothèse non mesurée sur les données du projet, pas
+un chiffre calibré. `d_etage` (comme les autres champs descriptifs) n'est
+renseigné que sur une fraction des annonces et n'est pas rétroactif (cf.
+2026-08-02 ci-dessus, couverture 24-78 % selon le champ). Ajouter un
+ajustement de prix basé sur un taux deviné aurait introduit de la fausse
+précision dans le classement des décotes — exactement ce que le projet évite
+depuis le revirement sur `posted_at` (2026-08-02 également, plus haut).
+Alternative retenue : aucune, reporté à plus tard si besoin de mesurer
+d'abord la relation réelle prix/étage sur l'échantillon disponible.
+
+**Écarté 2 — rendement net via forfait CAM fee dans `yields.ts`.**
+`d_cam_fee_thb` n'est connu que sur 24 % des annonces. Appliquer un forfait
+(50 THB/m²/mois) aux 76 % restantes aurait fabriqué une donnée plutôt que de
+la mesurer, sur une métrique (Gross Yield) déjà fiable et largement utilisée
+en aval (`/rendements`, `study/run_study.py`). Non implémenté.
+
+**Écarté 3 — momentum en EMA dans `tension.ts`.** L'idée ("donner plus de
+poids aux instantanés récents") est légitime, mais l'extrait fourni calcule
+une moyenne mobile exponentielle sur les NIVEAUX (`activeCount`/prix), pas
+une pente. Or `stockTrend` et `priceMomentum` sont utilisés dans tout le
+reste du calcul comme une pente SIGNÉE (régression `slope()`, rang centile,
+sens tendu/mou) — remplacer `slope()` par cet EMA aurait changé la sémantique
+des deux composantes sans que rien d'autre dans `tension.ts` ne le sache.
+Par ailleurs l'historique de `khet_snapshots` par quartier reste court
+(démarré le 2026-07-04), donc peu de points pour qu'un rétrécissement
+exponentiel change grand-chose pour l'instant. Une alternative correcte
+existe (régression pondérée / WLS, qui reste une vraie pente) mais n'a pas
+été demandée — non implémentée non plus.
+
+**Retenu — score de confiance sur les décotes de `deals.ts`.** Seul
+changement fait : exposer une info que le code connaissait déjà en interne
+(le nombre `n` de comparables derrière `marketDiscountPct`/`compareBasis`)
+sans introduire de nouvelle donnée ni de seuil deviné. `baselineForGroup` et
+`baselineFor` renvoient désormais `n` en plus de la valeur ; `confidenceOf(n)`
+classe en low/medium/high en réutilisant les constantes déjà en place
+(`MIN_COMPARABLES = 3` comme plancher, `BASELINE_N = 10` comme palier
+"high"), pas de nouveau nombre inventé. Côté UI (`DealsView.tsx`), un point
+coloré accolé à la cellule St./Condo (pas de nouvelle colonne, cohérent avec
+les commits récents de compaction du tableau).
+
+**Défaut trouvé en vérifiant, pas en l'écrivant.** Première version : le
+point de confiance était toujours accolé à la cellule "Condo", même quand le
+classement (`marketDiscountPct`) provenait en réalité du repli RUE
+(`compareBasis === "street"`) — visuellement il apparaissait à côté d'un
+"—" dans la colonne Condo, ce qui aurait fait croire à une confiance sur une
+valeur non affichée. Corrigé en conditionnant l'affichage du point à
+`r.compareBasis` (point sur "St." si le calcul vient de la rue, sur "Condo"
+sinon) ; revérifié en relisant le texte de la page rendue (`/deals`, mode
+Best discounts) plutôt qu'en supposant que le premier jet suffisait.
+`npm run typecheck` et `npm test` passent, aucun test dédié à `deals.ts`
+n'existait avant (aucun ajouté ici, changement d'affichage pur).
+
+---
+
+## 2026-08-11 — Trois garde-fous qui ne gardaient rien, et une optimisation que j'ai inventée
+
+### Le fil de la journée
+
+Point de départ : « j'ai vu des remontées d'erreurs d'agents ». Elles étaient
+fausses. En cherchant pourquoi, trois autres garde-fous se sont révélés inertes,
+et une proposition d'optimisation que j'avais construite s'est effondrée à la
+mesure.
+
+### 1. L'overseer criait au loup trois jours sur quatre
+
+```python
+dus = [a["name"] for a in REGISTRY["agents"] if lane in a.get("lanes", [])]
+```
+
+Il tenait pour « dû » **tout agent de sa file**, sans jamais lire sa cadence.
+L'overseer tourne chaque jour, les extracteurs tous les quatre : il signalait donc
+en sévérité HAUTE des agents qui se comportaient exactement comme prévu.
+
+**36 constats hauts sur 92, tous faux. Et 8 des 9 escalades jamais remontées
+venaient de là** — le canal d'alerte n'a donc jamais transporté que son propre
+défaut.
+
+Corrigé en lui faisant réutiliser `orchestrator.is_due`, la fonction qui décide
+de lancer l'agent. Deux définitions de « dû » finissent toujours par diverger.
+
+### 2. « Source saine » voulait dire « le scraping va bien »
+
+Les métriques annonçaient `traces_erreur: 0` et `erreurs_http: 0` pendant que les
+journaux contenaient des `RemoteDisconnected` sur le stockage et des 502/503 du
+CDN PropertyScout. `watch-health` déclarait la source saine **pendant que des
+photos se perdaient**.
+
+Le défaut n'était pas le comptage mais le **périmètre** : on ne mesurait que la
+collecte, jamais ce qu'on en faisait ensuite. Métrique `erreurs_images` séparée,
+verdict `images_perdues` au-delà de 10. Vérifié sur le cycle du jour : 1 par
+source, 3 pour PropertyScout — exactement ce que les métriques annonçaient à zéro.
+
+### 3. `respect_robots=True` autorisait tout
+
+**Le plus sérieux de la journée.** Deux défauts de `urllib.robotparser`, mesurés
+sur nestopa.com :
+
+- **un seul bloc `User-agent: *` est retenu** — `if self.default_entry is None`.
+  Les robots.txt gérés par Cloudflare en ajoutent un en tête (`Content-Signal`,
+  `Allow: /`) AVANT celui du site. On ne voyait que le `Allow: /`, et les
+  interdictions réelles étaient jetées en silence ;
+- **la première règle qui correspond gagne**, pas la plus spécifique, et les
+  jokers ne sont pas gérés : `/*?page=` devenait `/%2A%3Fpage%3D`.
+
+Résultat : nous demandions `?page=N` — **explicitement interdit** — environ 300
+fois par cycle, depuis le début. La posture documentée du projet est « robots.txt
+respecté » ; elle ne l'était pas.
+
+Remplacé par une classe `Robots` conforme au RFC 9309 : règle au chemin le plus
+long gagnante, jokers `*` et `$`, groupes nommés prioritaires sur `*`. Testé 7/7,
+sans régression sur FazWaz ni PropertyScout (un seul bloc `*` chacun).
+
+### 4. Deux prompts français demandaient du JSON
+
+`overseer` et `watch_health` exigeaient une sortie contrainte avec des consignes
+françaises — 12,2 % d'incohérence mesurés le 1er août contre 0 % en anglais.
+Consignes traduites, contenu toujours demandé en français. Vérifié : les deux
+rendent bien du français.
+
+### Nestopa : gelé, après avoir cartographié tous les accès
+
+| chemin | résultat |
+|---|---|
+| liste globale | 200 |
+| pagination `?page=` | **interdite par robots.txt** |
+| navigation par quartier (leur propre sitemap) | 403 |
+| fiches de détail | 403 |
+| sitemap des propriétés | 502 chez eux |
+
+Le 403 résiste à la session réchauffée, aux cookies et à des en-têtes de
+navigateur complets — c'est un blocage par empreinte de connexion. Une seule page
+par type reste accessible à un client non-navigateur.
+
+**J'ai eu tort deux fois sur ce dossier** : j'ai d'abord affirmé que le « 403 »
+venait d'une note ancienne et non d'une observation — la note avait raison ;
+puis j'ai proposé le sitemap comme voie de remplacement avant de constater qu'il
+répond 502.
+
+Gelé à une page, avec sa bande de santé abaissée à `[0, 60]` — sans quoi
+`watch-health` l'aurait déclaré cassé à chaque cycle, exactement le défaut qu'on
+venait de corriger ailleurs. Nestopa pesait 91 nouvelles sur 3 441 (2,6 %) et
+n'apporte aucun champ enrichi.
+
+### DDproperty : j'ai construit une optimisation sur une supposition
+
+**Ce que j'avais annoncé** : la liste contient `floorArea` et `tenure`, donc on
+ouvre 2 900 fiches pour rien ; un mode « liste d'abord » ferait passer le poste
+de 6 h à 1 h.
+
+**Ce que la mesure dit** : l'adaptateur ouvre déjà **uniquement les nouvelles** —
+1 488 ce cycle, **0 modifiée**, 1 167 correctement sautées par la dédup. Le mode
+proposé n'aurait rien économisé. Les deux gains secondaires tombent aussi : le
+`tenure` en liste éviterait d'ouvrir les leasehold, il y en a eu **zéro** ; les
+images sont déjà plafonnées à une par annonce.
+
+Ce que la recherche laisse quand même :
+
+- le tableau d'annonces est à `props.pageProps.pageData.data.listingsData`, et
+  il faut l'identifier **par son contenu** (`floorArea`, `tenure`, `listingId`,
+  `postedOn`) — le blob a exposé `listings` puis `listingsData.items` entre deux
+  requêtes le même jour ;
+- **les coordonnées ne sont PAS dans la liste** : c'était le point bloquant, la
+  réponse est non, et elle condamne l'idée d'éviter la fiche pour une annonce
+  nouvelle.
+
+### Ce qui reste inexpliqué, et l'instrumentation
+
+Le cycle : 150 pages + 1 488 fiches à 4,5 s font **2 h**. Le run a duré **6,2 h**.
+En ajoutant empreintes photo et images, on atteint ~3 h 30. **Deux heures et demie
+ne se rattachent à rien.**
+
+D'où `scraper/pipeline/chrono.py` : onze points de mesure (attente et réseau
+séparés pour liste, fiche, image, empreinte ; traitement d'images, transfert
+Storage, géocodage, écriture base), un rapport en fin de run, et les durées
+versées au ledger — donc une série, pas une observation. Le poste **NON MESURÉ**
+y figure explicitement : c'est lui qu'on cherche.
+
+Le géocodage est chronométré **sans être touché**, à la demande.
+
+### Le garde-fou du modèle échoue, et je ne sais pas pourquoi
+
+`test_local_llm.py` : **87 puis 88/100** contre un seuil de 90, alors qu'il
+donnait 91-92 du 1er au 3 août. `git` est formel — `local_llm.py`, `organize.py`
+et le jeu de test sont **inchangés**. L'abstention est montée de 77 % à 80 %.
+
+Un échantillon frais tiré de la production donne **84/100 mais 97 % d'abstention**.
+Il est biaisé et je le signale : je l'ai équilibré 60/60 alors que la production
+compte 25 658 `distinct_units` pour 1 650 `same_unit` — le cas rare est
+sur-représenté d'un facteur dix. Les 84 ne sont pas comparables aux 91.
+
+**Mais ce détour a trouvé un vrai défaut** : `organize` prenait `ambigues[:300]`,
+les 300 premières d'une requête **sans `order by`** — une tranche groupée par
+immeuble, donc homogène. Elle rendait **9 % d'abstention** quand un tirage
+aléatoire sur la même population en donne **97 %**. On ne mesurait pas le modèle,
+on mesurait un coin de la base. Pire : sans mémoire des paires vues, le même lot
+repassait à chaque cycle et les **25 848 autres n'auraient jamais été traitées**.
+Corrigé par un tirage aléatoire et un journal de reprise.
+
+La dérive du garde-fou, elle, reste **ouverte**. Ce n'est ni le code ni
+l'échantillon seul.
+
+### Ce qui n'a PAS été fait
+
+- **Le mode « liste d'abord » DDproperty** — abandonné, la mesure l'a vidé de son
+  intérêt. À reconsidérer seulement si les annonces *modifiées* deviennent
+  nombreuses (0 ce cycle).
+- **Le parallélisme** — il achète du temps de mur, pas de la discrétion : 2 900
+  fiches restent 2 900 requêtes, groupées autrement. Non tenté.
+- **Le jitter à 0,3** (−18 % sur tout le cycle) — c'est un choix de posture, pas
+  une optimisation neutre. Laissé à l'arbitrage.
+- **Playwright sur Nestopa** — techniquement fondé (robots.txt autorise les
+  fiches), mais ~164 pages de navigation à piloter pour 2,6 % du volume et aucun
+  champ enrichi. Écarté par arithmétique, pas par principe.
+- **L'unification des deux mécanismes de scrap** — `LowiBKK-Agents` (quotidien,
+  vers Supabase) et `LowiBKK-ScrapNocturne` (4 jours, vers SQLite, désactivé) se
+  recouvrent, et **la résilience est du mauvais côté** : le superviseur sait
+  reprendre après coupure, il est éteint. Décision d'architecture, pas bricolage.
+- **La correction de l'overseer n'est pas vérifiée** sur un cycle réel : ni lui
+  ni `watch-health` n'ont tourné dans le cycle du jour.
+- **Le réveil est en retard de ~2 h** — les deux tâches démarrent vers 03:10 pour
+  01:00 et 02:00 prévus. Cause non élucidée.
+
+---
+
+## 2026-08-13 — Widget de bureau : deux compteurs qui auraient menti, et un arrondi qui volait un jour
+
+Panneau posé sur le bureau (`ops/widget/`), livré le 10/08 puis ramené ce jour à
+trois lignes : `Scrap Lowi`, `Veille Equance`, `Agents`. Ce qui suit ne concerne
+pas la fenêtre — elle est accessoire — mais ce qu'elle prétend mesurer.
+
+### « Prochain scrap » n'est pas « prochain déclenchement de la tâche »
+
+Premier réflexe : faire pointer le compteur sur `LowiBKK-Agents`, la tâche
+Windows qui lance l'orchestrateur. Elle part **tous les jours à 01:00**. Or les
+extracteurs ont une cadence de **4 jours** (`every_days: 4`) : l'orchestrateur
+les saute trois nuits sur quatre. Le compteur aurait donc annoncé « scrap dans
+7 h » chaque soir, **faux 75 % du temps** — et faux dans le sens le plus
+trompeur, celui qui rassure.
+
+Vérifié en le construisant : au 13/08 17:26, la tâche annonce le 14/08 01:00,
+les extracteurs le **16/08 01:00**. Deux jours d'écart. Le compteur vise donc la
+famille `Extraction` et reprend le calcul de créneau réel déjà écrit pour les
+agents (premier déclenchement où `is_due` sera vrai, lane du jour comprise, lane
+`weekly` calculée sur l'ordinal **UTC** — à 01:00 à Bangkok on est encore la
+veille en UTC).
+
+### 29 constats, 4 problèmes
+
+La ligne Agents devait porter « le nombre d'escalades et de problèmes à régler ».
+Le chiffre disponible était `findings` de sévérité haute sur 7 jours : **29**.
+Décomposé, il ne recouvre que **4 sujets** :
+
+| agent | nature | occurrences |
+|---|---|---|
+| overseer | agent_muet | 22 |
+| watch-health | llm_panne | 5 |
+| organize | modele_derive | 1 |
+| overseer | llm_panne | 1 |
+
+Les 22 sont le **même** constat, réémis à chaque cycle depuis le 31/07. Un
+compteur à 29 qui ne bouge que d'une unité par jour n'informe de rien et
+s'apprend à ignorer — exactement la règle 2 du CLAUDE.md. Le compteur regroupe
+donc par (agent, nature), et se borne aux agents encore au registre : le ledger
+gardait des traces de `_test_multi_then`, qui n'est plus un problème à régler
+puisqu'il n'existe plus.
+
+À noter, ce compteur n'est pas anodin en soi : **8 escalades ouvertes**, dont six
+`agent_muet` remontant au 31/07, et un `modele_derive` du 11/08. La file
+`agents/queue/` n'est pas drainée aussi bien que la routine quotidienne le
+laisse croire. **Non traité ici** — hors du périmètre demandé.
+
+### Un arrondi qui ajoutait un jour
+
+`[int]` sur un double **arrondit** en PowerShell (à l'entier pair, en prime), il
+ne tronque pas. `[int]3.61` vaut 4 : un délai de 3 j 14 h s'affichait
+**« 4 j 14 h »**. Le compteur était en avance d'un jour, dans le sens qui
+rassure là encore. Repéré en comparant la capture d'écran à l'échéance calculée,
+pas en relisant le code. `[Math]::Floor` partout.
+
+Même famille de piège, découvert le 10/08 : **PowerShell ignore la casse des
+noms de variables**. `$C` (palette) et un `$c` de boucle sont la même variable ;
+`$CFG` (chemin) et `$cfg` (objet de configuration) aussi. Trois pannes muettes
+venaient de là, dont une erreur « paramètre -Raw introuvable » qui n'avait rien
+à voir avec `Get-Content` : le chemin était devenu un objet, donc sans
+fournisseur, donc sans paramètre dynamique.
+
+### Ce qui n'a PAS été fait
+
+- **Les 8 escalades et les 4 problèmes ne sont pas traités.** Le widget les
+  compte, il ne les règle pas. `overseer/agent_muet` traîne depuis le 31/07 et
+  mérite une séance à lui seul.
+- **La détection de réveil n'a jamais été provoquée en test** — impossible à
+  forcer proprement. Elle est en revanche **observée en production** : sept
+  lignes « reveil / deverrouillage -> collecte » dans `widget.log` entre le
+  10/08 et le 13/08.
+- **L'ancrage `bureau`** (fenêtre-fille du WorkerW) reste écrit mais non retenu
+  par défaut : la couche des icônes d'Explorer intercepte la souris, le widget y
+  devient non cliquable. Découvert après avoir proposé ce mode à l'arbitrage —
+  la contrepartie n'avait pas été annoncée, elle l'est maintenant.
+- **Les autres routines Claude ne sont plus affichées** (drain quotidien,
+  rapport mensuel). Elles restent collectées et diagnosticables via
+  `collecte.ps1 -Ecran` ; les remettre = une ligne dans `compteurs`.
+- **Rien ne vérifie que `config.json` suit les routines Claude.** Elles vivent
+  côté serveur, aucune API locale ne les expose ; le cron est recopié à la main.
+  Recontrôlé le 13/08 : toujours exact. Un contrôle automatique demanderait un
+  accès qui n'existe pas sur cette machine.
+
+---
+
+## 2026-08-16 — `garde-veille` : un 14e agent, parce que le portable dort pendant qu'il scrape
+
+### Le constat, mesuré
+
+Le cycle du jour (`LowiBKK-Agents`, parti à 01:00) a tué `extract-ddproperty`
+en pleine extraction, page 95/?, sans erreur ni trace de sortie — le log
+s'arrête net à 07:29. Le journal Système (`Microsoft-Windows-Kernel-Power`)
+donne la cause exacte :
+
+| heure (BKK) | événement | motif |
+|---|---|---|
+| 07:25:11 | réveil | Input Mouse |
+| 07:36:06 | **veille** | Idle Timeout |
+| 07:55:52 | réveil | Input Mouse |
+| 08:02:13 | **veille** | Idle Timeout |
+
+`powercfg /a` : ce portable ne supporte QUE l'état S0 (Veille moderne
+connectée), pas de S1/S2/S3. `powercfg /requests` : **vide** au moment du
+constat — aucun process ne tenait de demande d'éveil, scrap en cours ou pas.
+Plan d'alimentation actif : « Silent » (custom), écran off à 5 min
+d'inactivité sur secteur. Résultat : dès que la souris s'arrête, Windows
+suspend le réseau des process d'arrière-plan, qu'un scrap de 6 h soit en
+cours ou non. Le code retour du process orchestrateur (`0xC000013A`,
+`STATUS_CONTROL_C_EXIT`) confirme une coupure externe, pas une exception.
+
+Ce trou était déjà noté le 11/08 : `ops/superviseur.py` sait reprendre après
+coupure, il est désactivé ; `LowiBKK-Agents` n'a aucune résilience de ce
+genre. Décision prise ce jour, à la demande explicite : pas de réactiver
+l'ancien superviseur (conçu pour l'ancienne architecture SQLite/tests-scrap),
+mais un nouvel agent dans le système à 12 (13 avec `verifie-backup`+
+`backup-apres-cycle`) bots.
+
+### Ce qui a été construit
+
+**`garde-veille`** (T0, famille `Supervision`, `agents/bots/garde_veille.py` +
+`agents/core/wake_lock.py`) — [SKILL.md](../agents/skills/garde-veille/SKILL.md) :
+
+1. Pose `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` — une
+   demande système, pas liée à un process précis : tant qu'UN thread la
+   maintient, la machine ne part pas en veille idle. Pas de `release()`
+   explicite en usage normal : Windows la relâche à la sortie du process, et
+   l'orchestrateur vit du premier au dernier agent de la lane.
+2. Tourne en tout premier, **avant même le Prelude** — un rattrapage de
+   backup qui traîne est tout aussi exposé qu'un extracteur.
+3. Marqué `always_run: true` dans `agents.json`, et l'orchestrateur
+   (`run_lane`) l'exempte du filtre `is_due()` : le verrou est propre au
+   *process*, un succès d'hier ne protège en rien le process du jour. Sans
+   cette exemption, `garde-veille` aurait pu être sauté « à jour » un soir
+   sur deux et laisser le trou revenir sans bruit.
+4. Corrèle les runs `interrompu` récents (fenêtre 30 h) avec le journal
+   `Kernel-Power` (Id 506/507) et pose un `finding` `coupure_veille`
+   (sévérité basse) quand une veille tombe dans la fenêtre du run — pour que
+   watch-health/overseer ne confondent pas une coupure de veille (rien à
+   corriger, la cadence relance déjà l'agent au cycle suivant, cf.
+   `is_due()`) avec une vraie panne de code.
+
+**Il ne relance rien lui-même.** Vérifié en le lisant deux fois avant
+d'écrire : `is_due()` se fonde sur le dernier *succès*, jamais sur le
+dernier run tout court — un `interrompu` n'est jamais un succès, donc
+`extract-ddproperty` était déjà DÛ et reparti de lui-même dans la lane du
+jour, juste après `garde-veille`. Ajouter une relance manuelle aurait été de
+la logique dupliquée, pas un vrai gain.
+
+### Un bug trouvé en testant, avant de le croire fini
+
+Premier passage : sur 2 runs `interrompu` dans la fenêtre, un seul détecté
+comme `coupure_veille` — celui de la veille, pas celui de ce matin (le vrai
+sujet). En inspectant les événements bruts renvoyés par `Get-WinEvent`, la
+fenêtre s'arrêtait ~13 h avant l'heure réelle. Cause : **`Get-WinEvent
+-FilterHashtable` interprète `StartTime`/`EndTime` en heure LOCALE, jamais en
+UTC** — le ledger stocke tout en UTC, je passais du UTC brut, la fenêtre se
+décalait de l'écart local (+7 h à Bangkok) et ratait précisément les
+événements les plus récents, ceux qu'on cherchait. Corrigé
+(`.astimezone()` avant formatage) et revérifié : les deux runs `interrompu`
+(hier et ce matin) sont désormais correctement étiquetés `coupure_veille`.
+
+### Vérifié, et ce qui ne l'est pas
+
+- `wake_lock.acquire()` retourne `True` (succès documenté de l'API) sur ce
+  poste, testé en direct.
+- **Non vérifié en conditions réelles** : confirmer via `powercfg /requests`
+  qu'une demande est bien active PENDANT un cycle complet — la commande
+  exige des privilèges administrateur, indisponibles dans cette session. Le
+  retour de l'API est un indicateur de succès documenté, pas une preuve
+  observée sur le système. À contrôler manuellement à l'occasion (ouvrir un
+  terminal admin pendant le prochain cycle de nuit).
+- **Le cycle du jour reste incomplet** (`extract-ddproperty` interrompu deux
+  fois, `analyze-sale/rent`, `report`, `backup-apres-cycle` jamais partis) —
+  laissé tel quel : la cadence le reprend automatiquement au prochain passage
+  de `LowiBKK-Agents` (01:00), désormais protégé par le verrou. Pas relancé à
+  la main dans cette séance — pas demandé.
+- **Le plan d'alimentation « Silent »** (écran off 5 min sur secteur) n'a pas
+  été changé — hors périmètre : c'est un choix de confort utilisateur, sans
+  rapport avec le fait que le scrap ne doive plus en dépendre.
+
+---
+
+## 2026-08-17 — Sonde de structure avant scan : échouer en 1 requête plutôt qu'en 8 jours
+
+À la demande explicite (suite à une question sur l'agent qui détecte un DOM
+cassé) : `watch-health` existait déjà, mais n'escalade qu'après **2 runs
+consécutifs à zéro** — pour ne pas crier au loup sur un aléa isolé (règle 2
+du CLAUDE.md). Conséquence non mesurée jusqu'ici : un vrai changement de
+structure peut tourner dans le vide pendant **2 cycles complets (~8 jours)**
+avant qu'un ticket parte à Claude.
+
+### Ce qui a été construit
+
+`BaseAdapter.sonder(fetcher)` (`scraper/adapters/base.py`) : test d'UNE seule
+page, avant le scan complet. Implémentation par défaut : rappelle
+`list_urls(limit=1)` — le VRAI parseur, pas une copie qui pourrait diverger.
+**Chaque adaptateur surcharge** avec un test de SON marqueur de structure
+propre, à la demande explicite (« que les tests soient différents pour que ça
+puisse remonter à Claude ») :
+
+| adaptateur | marqueur vérifié |
+|---|---|
+| fazwaz | présence de JSON-LD sur la page de liste |
+| ddproperty | `__NEXT_DATA__` + un nœud avec `fullAddress` (identification par CONTENU, pas par chemin — le chemin a déjà bougé une fois, cf. 2026-08-11) |
+| propertyscout | `__NEXT_DATA__` → `props.pageProps.rentals.data` |
+| nestopa | ld+json, item `@type: Product` |
+| livinginsider | ld+json `ItemList` avec `itemListElement` |
+
+`scraper/run.py` appelle `adapter.sonder()` juste après construction de
+l'adaptateur ; en échec, imprime `[SONDE-ECHEC] <source> : <diagnostic>` et
+sort (`exit 2`) **avant** de lancer 150 pages pour rien.
+`agents/orchestrator.py` (`run_agent`) repère ce marqueur dans la sortie de
+CHAQUE étape (principal + tous les `then`) et dépose directement un ticket
+d'escalade (`agents.core.escalation.create`, kind `parser_break`, sévérité
+`high`) — sans attendre les 2 runs de `watch-health`. **`watch-health` reste
+à sa place normale, en fin de cycle** — précisé explicitement par
+l'utilisateur : ce n'est pas un remplacement, c'est une détection plus
+précoce en amont, `watch-health` restant le filet qui couvre tout le reste
+(dérive de volume, images perdues…).
+
+### Un vrai bug de production trouvé en vérifiant, PAS corrigé
+
+En testant la sonde sur les 5 sources réelles (une requête par source),
+**nestopa a d'abord échoué** — pas pour un DOM cassé, mais parce que
+`list_urls()` construit TOUJOURS l'URL avec `?page=1` (la boucle
+`range(1, max_pages+1)` avec `page_param="page"`), et leur robots.txt
+interdit **toute** requête `?page=`, y compris page 1 (`Disallow: /*?page=`,
+cf. note `_gel` du 2026-08-11 dans `scraper/config/nestopa.json`). Le test
+direct de `run.py --source nestopa --limit 3` en conditions réelles confirme
+: `scannées : 0` — **nestopa ne ramène actuellement RIEN en production**,
+alors que le gel du 11/08 visait à garder la page 1 (bare, sans `?page=`)
+qui, elle, répond.
+
+Corrigé dans la sonde (le test de nestopa vérifie la page bare directement,
+sans rappeler `list_urls()`, pour ne pas se faire bloquer par le même
+robots.txt et crier au loup sur un problème déjà connu). **Le bug réel dans
+`list_urls()` n'est PAS corrigé** — hors périmètre de cette séance (le sujet
+demandé était la sonde, pas cet adaptateur), à trancher : soit un correctif
+d'une ligne (n'ajouter `?page=` que si `page > 1`), soit laisser tel quel vu
+le rapport effort/valeur déjà négatif noté le 11/08 (2,6 % du volume, aucun
+champ enrichi). Signalé, pas décidé à la place de l'utilisateur.
+
+### Vérifié
+Sonde testée en direct sur les 5 sources réelles (requête page 1 chacune) :
+fazwaz, ddproperty, propertyscout, livinginsider → `OK`. nestopa → `OK` après
+correction (page bare). Détection du marqueur `[SONDE-ECHEC]` par
+`orchestrator.py` testée par regex isolée. `escalation.create()` testé en
+direct (ticket créé puis supprimé, mécanisme déjà éprouvé par
+`watch-health`). **Non testé** : le chemin d'échec de bout en bout sur un
+vrai site cassé (aucune des 5 sources n'était cassée au moment du test) —
+la logique est vérifiée par construction (mêmes fonctions que le chemin
+`watch-health`, déjà en production), pas observée sur un vrai cas.
+
+### Complément same-day — `--skip-extraction` / `--boot`, et Ollama trouvé éteint
+
+À la demande explicite (clôturer le cycle du jour à la main, agent par agent,
+dans l'ordre lu dans `orchestrator.py`, a mené à la question : pourquoi pas
+un mode qui fait ça tout seul). Ajout de `run_lane(..., skip_extraction=bool)` :
+rejoue Supervision → (Prelude et Extraction sautés) → suite (`watch-health`,
+`analyze-sale/rent`, `organize`, `report`, `backup-apres-cycle`, `overseer`)
+sans retoucher au scrap. `verifie-backup` est sauté aussi — son seul rôle est
+de préparer une extraction qui n'aura pas lieu, et il peut déclencher un
+rattrapage (`sync_supabase_local.py`) pour rien.
+
+Deux points d'entrée : `run-lane <lane> --skip-extraction` (manuel) et
+`--boot` (mode automatique, même logique que `--due` mais avec
+`skip_extraction=True` forcé). **Tâche Windows `LowiBKK-RattrapageBoot`**
+créée (`ops/install-boot-task.ps1`, même méthode par cmdlets que
+`install-agents-task.ps1` — évite le bug des guillemets échappés de juillet),
+déclenchée à l'ouverture de session : si `LowiBKK-Agents` a manqué son
+créneau de 01:00 (machine éteinte/en veille), la suite du cycle repart au
+logon SANS déclencher un scrap complet à une heure imprévisible.
+Enregistrement testé par l'utilisateur en admin (hors de portée de cette
+session) — XML vérifié conforme (pas de `\"`, exécutable présent).
+
+**Panne réelle trouvée en route, pas cherchée** : en relançant `organize`
+pour finir la séquence manuelle, **270 pannes sur 275 paires** — Ollama
+n'était simplement pas lancé (`localhost:11434` refusait la connexion,
+confirmé par `Get-Process ollama` vide). Le process tournait donc depuis
+plusieurs minutes en accumulant des échecs sans rien produire d'utile.
+Repéré aux métriques de progression (`0 abstentions, 270 pannes` — le
+garde-fou d'abstention n'aurait de toute façon pas laissé passer un taux
+aussi anormal en `modele_derive`, mais le repérage manuel a été plus rapide
+que d'attendre la fin du lot). Ollama relancé (`ollama serve`), le run
+`interrompu` manuellement (process tué) marqué à la main dans le ledger pour
+débloquer le garde-fou anti-double-run (`led.last_run(...).status=='running'`
+ne se referme qu'au prochain `Ledger.reap_stale()`, pas à un `kill`
+externe). Relancé proprement : 0 panne, ~8,6 s/paire, taux d'abstention
+cohérent avec la bande (≥70 %).
+
+**Effet de bord non corrigé, à garder en tête** : `reprise.marquer(cle)`
+dans `organize.py` s'exécute APRÈS le traitement, qu'il ait réussi ou non —
+les 270 paires « pannes » de la tentative ratée sont donc marquées comme
+déjà traitées dans `state/organize/paires-faites.txt`, alors qu'elles n'ont
+jamais reçu de vrai verdict. Elles ne seront plus retirées du tirage
+aléatoire des cycles futurs. Pas corrigé cette fois (hors périmètre de la
+question posée) — si le volume de paires jamais résolues devient un
+problème, c'est le premier endroit à regarder.
+
+### `LowiBKK-RattrapageBoot` : elle marche, et ça s'est vu tout de suite
+
+Enregistrée par l'utilisateur (droits admin nécessaires, hors de portée de
+cette session). Preuve qu'elle fonctionne, trouvée sans la chercher :
+`schtasks /Query` montre un déclenchement à 17:15:33 (heure locale), exécution
+d'`organize` confirmée dans le ledger au même horodatage en UTC. **Mais tuée
+en cours de route** — même signature qu'un incident précédent
+(`STATUS_CONTROL_C_EXIT`, code retour `-1073741510`). Cause probable : la
+tâche est `LogonType Interactive`, liée à la session ; la session
+PowerShell admin ouverte pour l'enregistrer s'est refermée pendant que la
+tâche tournait encore, et a emporté son process avec elle.
+
+**Pas corrigé** — la tâche reste `LogonType Interactive` (nécessaire pour
+qu'elle ait accès au réseau/à Ollama comme documenté dans le script). Le
+risque ne concerne que la fenêtre étroite où quelqu'un ferme la session qui a
+servi à l'enregistrer ; les ouvertures de session normales (démarrage du
+matin) ne sont pas concernées. À surveiller si ça se reproduit hors de ce
+contexte particulier.
+
+Deux runs `interrompu` d'`organize` de suite (celui tué manuellement en
+pause, celui tué par la fermeture de session) ont chacun nécessité une
+correction manuelle du ledger (`status='running'` ne se referme qu'au
+prochain `Ledger.reap_stale()`, jusqu'à 12 h plus tard) avant de pouvoir
+relancer — `run_agent()` refuse à raison de relancer un agent qu'il croit
+encore actif. Troisième tentative : **300/300 paires, 0 panne, 98,3 %
+d'abstention** — le cycle du jour est complet (`report` et
+`backup-apres-cycle` déjà à jour des lancements manuels précédents,
+`overseer` pas encore dû).
+
+### Complément same-day — réglages d'alimentation et reprise du cycle coupé
+
+À la demande explicite : un second agent, **`regle-alimentation`**
+(`ops/regle-alimentation.py`, T0, `lanes: []` — invocation manuelle
+seulement, ne s'ajoute pas à la cadence automatique). Trois réglages sur le
+plan actif (`powercfg /setacvalueindex SCHEME_CURRENT ...`, fonctionne SANS
+élévation, vérifié) : écran off 5 min (déjà la valeur du plan « Silent »),
+veille après 5 h (**filet de sécurité**, pas la protection principale — c'est
+`garde-veille` qui empêche la veille pendant un cycle actif), processeur
+plafonné à 60 % / plancher 5 % pour limiter bruit et chaleur.
+
+**Un écart mesure/hypothèse trouvé en vérifiant** : le levier « attendu »
+pour un ventilateur silencieux est la politique de refroidissement
+(`SYSCOOLPOL`). `powercfg /setacvalueindex ... SYSCOOLPOL 1` rend le code 0
+(aucune erreur), mais `powercfg /query` sur ce réglage renvoie une liste
+**vide** juste après — le réglage n'existe pas sur ce matériel (probablement
+piloté par un utilitaire OEM hors de portée de `powercfg`). Un code retour 0
+n'est PAS une preuve que le réglage a pris ; revérifié avec `/query`, pas
+supposé. Le plafond de fréquence (`PROCTHROTTLEMAX`) est le seul levier
+confirmé présent et modifiable ici — c'est lui qui est utilisé, documenté
+comme tel dans le SKILL.md plutôt que de prétendre que SYSCOOLPOL marche.
+
+Appliqué et vérifié par relecture `powercfg /query` : veille AC = 0x4650
+(18000 s = 5 h), écran = 0x12c (300 s = 5 min), CPU AC min/max = 5 %/60 %.
+
+**Cycle coupé relancé** : `extract-ddproperty` repart (sale, page 2 au
+moment d'écrire, dédup active — les annonces déjà vues ce cycle sont
+sautées). Lancé avec le verrou d'éveil posé dans le MÊME process Python que
+l'orchestrateur (le verrou est par process, pas par lane — un `orchestrator.py
+run <agent>` isolé ne passe pas par `garde-veille`, donc pas de verrou sans
+ce wrapper explicite). **Non couvert par cette relance manuelle** : les
+`then` de `extract-ddproperty` (location, puis passe ciblée corridors)
+s'enchaînent normalement dans la même invocation `run`, mais `analyze-sale`,
+`analyze-rent`, `report`, `backup-apres-cycle` ne partiront QUE si le cycle
+automatique de 01:00 les retrouve dus demain — cette relance manuelle ne
+couvre que l'extracteur, pas toute la lane.
+
+## 2026-08-20 — Une porte dérobée par-dessus le RLS : les vues étaient SECURITY DEFINER
+
+Les alertes de sécurité Supabase remontaient 30 lignes. Une seule était une
+vraie faille — et elle était exploitable. Le reste était soit le comportement
+voulu, soit de l'hygiène.
+
+### Le mécanisme, mesuré et non déduit du linter
+
+Les 15 vues de `public` avaient `pg_class.reloptions = NULL` : `security_invoker`
+n'avait jamais été posé, donc comportement **SECURITY DEFINER** par défaut. Elles
+appartiennent toutes à `postgres`, et `pg_roles` donne `postgres.rolbypassrls =
+true`. Conséquence : une requête `anon` sur une vue s'exécutait avec les droits
+de `postgres` et **ignorait entièrement le RLS deny-all** des tables. Les tables
+faisaient leur travail ; les vues ouvraient une porte au-dessus.
+
+Trois de ces vues sont en plus *auto-updatable* (simple `SELECT` sur une table
+unique, `information_schema.views.is_updatable = YES`) et `anon` détenait
+`INSERT/UPDATE/DELETE` dessus : `listings_sane`→`listings`,
+`condos_age`→`condos`, `social_leads_opportunites`→`social_leads`.
+
+**Preuve d'abord, correctif ensuite.** Via l'API REST avec la clé anon :
+`GET /rest/v1/listings` renvoyait `[]` (RLS actif) pendant que
+`GET /rest/v1/listings_sane` renvoyait les annonces. Puis, en SQL, dans une
+transaction annulée et avec une écriture **no-op** (`title = title`, pour
+qu'un rollback raté ne change rien) :
+
+```
+set local role anon;
+update listings_sane set title=title where id='fazwaz:sale:5995772';  -- 1 ligne
+update listings      set title=title where id='fazwaz:sale:5995772';  -- 0 ligne
+```
+
+Même rôle, même ligne, même transaction : la vue laissait passer l'écriture, la
+table la bloquait. Après correctif, la même requête échoue en
+`42501 permission denied for view listings_sane`.
+
+**Un test que j'avais mal conçu, corrigé en le relisant** : la première version
+prenait l'id via `(select id from listings limit 1)` — sous-requête exécutée en
+`anon`, donc bloquée par le RLS, donc `id = NULL`, donc 0 ligne partout et
+« faille absente ». Le garde-fou testait le garde-fou. Refait avec un id
+littéral. Deuxième sonde trompeuse : un `PATCH` REST sur un id inexistant
+renvoie `204` aussi bien quand l'écriture est autorisée que quand le RLS filtre
+à 0 ligne — il ne distingue rien, c'est la transaction SQL qui tranche.
+
+### Ce qui a été fait
+
+`supabase/migrations/2026-08-20_rls_hardening.sql` : `security_invoker = true`
+sur les 15 vues (le correctif de fond — sans lui, révoquer les grants laisserait
+la lecture ouverte) ; `revoke all` pour `anon`/`authenticated` sur tout `public` ;
+**et** `alter default privileges ... revoke all` — sans ce dernier point le trou
+se rouvrait en silence, puisque `pg_default_acl` accordait `anon=arwdDxtm` sur
+toute table créée par `postgres` (c'est ce défaut qui avait posé les grants sur
+les 26 relations existantes). Plus le `revoke execute` sur `rls_auto_enable()` et
+un `search_path` fixe sur `lowi_norm_condo(text)`.
+
+Les 14 `create or replace view` du dépôt reçoivent `with (security_invoker =
+true)` : **`CREATE OR REPLACE VIEW` remet `reloptions` à zéro**, donc rejouer un
+seul de ces fichiers aurait rouvert la faille sans rien signaler.
+
+Fail-safe : `2026-08-20_rollback_rls_hardening.sql`, **généré depuis le
+catalogue live avant d'appliquer** (reloptions, `role_table_grants`,
+`pg_default_acl`, `proacl`), pas reconstruit de mémoire.
+
+### Ce qui n'a PAS été fait, et pourquoi
+
+- **Aucune policy RLS créée.** Les 11 alertes `rls_enabled_no_policy` (INFO)
+  subsistent après coup et c'est voulu : le deny-all est la protection, l'app et
+  le pipeline passent par la connexion Postgres directe en `postgres`
+  (BYPASSRLS), jamais par PostgREST. Ajouter une policy rouvrirait l'accès.
+- **Bucket Storage `listings` laissé public** (38 446 objets, 0 policy) : lecture
+  publique des photos assumée, les envois passent par `SUPABASE_SERVICE_KEY`.
+- **Dérive fichiers ↔ serveur constatée, non résolue** : 4 vues vivent sur le
+  serveur sans aucun fichier de migration (`rent_stats`, `yield_by_khet`,
+  `sold_and_rented`, `listing_matches`) et `details_couverture` est définie dans
+  `details_descriptif.sql` mais **absente du serveur**. La migration les traite
+  quand même (elle vise les vues par leur nom réel), mais leur définition n'est
+  reproductible depuis aucun fichier. Laissé à l'arbitrage.
+- **Portée réelle de l'exposition, non tranchée** : la faille exigeait de
+  connaître la clé anon, qui n'est utilisée nulle part dans le code (0 occurrence
+  de `supabase-js` ou `/rest/v1` hors Storage), n'est pas déployée sur Vercel et
+  n'a jamais été commitée (seul `.env.example` vide est dans l'historique git).
+  Probabilité d'exploitation donc faible — mais faire reposer la protection des
+  données sur le secret d'une clé *publishable* n'est pas une protection.
+- **`opportunites` dépasse le statement timeout** en lecture directe (erreur
+  `57014` rencontrée pendant les tests). Constaté en passant, pas creusé.
+
+### L'archive locale n'était pas complète — le fail-safe supposé ne l'était pas
+
+Vérification demandée avant d'agir, et elle a payé. `SYNC_TABLES`
+(`ops/sync_supabase_local.py`) était une **liste figée de 7 tables** : l'«
+introspection qui résiste aux évolutions de schéma » annoncée dans CLAUDE.md
+n'existait qu'au niveau des **colonnes**. Trois tables n'avaient donc **jamais**
+été archivées — `condos` (4 514), `cohort_snapshots` (578 683),
+`posted_at_history` (23 604) — soit ~607 000 lignes hors de l'archive censée
+autoriser la purge du serveur.
+
+Corrigé : les tables, les colonnes **et les clés primaires** sont désormais lues
+au catalogue à chaque run. Deuxième défaut trouvé au passage : le code supposait
+`id` comme clé. `condos` a pour PK `name` — elle aurait reçu un `UNIQUE INDEX`
+sur ses **19 colonnes** avec `INSERT OR IGNORE`, donc une ligne de plus à chaque
+changement d'agrégat (`n_listings`, `n_sale`… bougent à chaque scan) au lieu d'un
+upsert. Troisième : le garde-fou anti-purge ne contrôlait que `listings` ; il
+porte maintenant sur toutes les tables.
+
+Sync relancée **sans `--prune`** : 11/11 tables, chacune ≥ serveur, archive
+588 → 742 Mo.
+
+### Vérifications
+
+`npm run typecheck` propre, `npm test` 6/6. Les 3 pages chargent en HTTP 200
+avec leurs données (`/for-sale` 11,2 Mo, `/to-rent` 9,8 Mo, `/rendements`
+8,8 Mo), 0 `permission denied`, 0 erreur serveur. En `postgres`, les vues se
+lisent toujours (`listings_sane` 62 363, `cohort_tension` 17 959). Le linter ne
+renvoie plus que les 11 INFO attendues : les 15 ERROR `security_definer_view`,
+les 2 WARN `rls_auto_enable` et le WARN `search_path` ont disparu.
+
+**Non vérifié** : le comportement en production sur Vercel (les tests portent sur
+le serveur de dev local, qui attaque la même base Supabase — le chemin de données
+est identique, l'hébergement non).
+
+## 2026-08-20 (suite) — Sync local↔serveur vérifiée, et le free tier est dépassé
+
+Vérification demandée après le correctif RLS. Le bon test n'est pas « même
+nombre de lignes » : le local a **légitimement plus** (archive historique
+complète) tandis que le serveur n'est qu'une fenêtre chaude. Le seul test qui
+compte est : *aucune ligne du serveur ne manque en local*. Fait clé par clé, sur
+les 11 tables et ~1,3 M de lignes.
+
+### Résultat : 7 584 lignes « manquantes » — et ce n'est pas un trou
+
+| table | serveur | local | écart | manquantes |
+|---|---|---|---|---|
+| cohort_snapshots | 578 683 | 578 683 | 0 | 0 |
+| condos | 4 514 | 4 514 | 0 | 0 |
+| listing_amenities | 613 962 | 608 027 | −5 935 | 5 943 |
+| listing_images | 44 118 | 70 946 | **+26 828** | 518 |
+| listings | 64 080 | 63 632 | −448 | 450 |
+| posted_at_history | 23 826 | 23 604 | −222 | 222 |
+| price_history | 65 333 | 64 882 | −451 | 451 |
+| social_leads | 0 | 179 | **+179** | 0 |
+
+**Cause mesurée, pas supposée** : un scrap tournait *pendant* la vérification.
+`extract-fazwaz` et `extract-ddproperty` étaient `running` depuis 01:57 UTC, la
+dernière annonce datait de 5 secondes avant la requête, et le total est passé de
+64 080 à 64 087 **entre deux requêtes consécutives**. 471 annonces ont été créées
+après l'heure de la sync (04:07 UTC) — soit exactement les ~450 « manquantes ».
+L'archive est un instantané, le serveur continue d'écrire. Rien à corriger : la
+sync doit simplement se relancer *après* la fin du cycle, et le garde-fou élargi
+ce matin refuse déjà la purge tant qu'une table est en retard.
+
+Les écarts positifs sont l'archive faisant son travail : `listing_images`
++26 828 et `social_leads` +179 sont des lignes purgées ou vidées côté serveur et
+conservées en local.
+
+**Deuxième angle mort du même genre, corrigé** : `ops/verifie-backup.py` avait
+lui aussi une liste figée (`TABLES_ATTENDUES`, les mêmes 7 tables). Il annonçait
+donc « aucune table manquante » pendant que 3 tables n'étaient pas archivées du
+tout — un garde-fou qui ne gardait rien, encore. Il lit désormais la liste au
+serveur (11 tables vérifiées en exécution), la liste figée ne servant plus que
+de repli si Supabase est injoignable.
+
+### Le free tier est à 143 %
+
+Plan **free** (vérifié : `get_organization` → `"plan": "free"`), base à
+**681 Mo pour une limite nominale de 500 Mo**. Répartition :
+
+| poste | taille disque |
+|---|---|
+| `listings` | 380 Mo (dont 55 Mo d'index) |
+| `cohort_snapshots` | 149 Mo (dont 60 Mo d'index) |
+| `listing_amenities` | 63 Mo |
+| `storage.objects` (métadonnées des 38 446 images) | 49 Mo |
+
+Dans `listings`, la matière : `page_text` 173 Mo, `description` 73 Mo,
+`raw_data` seulement 11 Mo. Les lignes mortes ne pèsent que 8 % — l'autovacuum
+fait son travail, ce n'est pas du ballonnement.
+
+**Trois choses mesurées qui contredisent l'intuition :**
+
+1. **La purge ne libérerait rien.** 19 951 annonces inactives, mais la plus
+   ancienne `delisted_at` remonte au 2026-06-24, soit 57 jours : avec
+   `RETENTION_DAYS = 90`, **0 candidate**. Le mécanisme de soulagement
+   automatique n'entrera en action que vers le 2026-09-22. À 45 j il y aurait
+   3 725 candidates, à 30 j 10 491 — mais c'est un arbitrage de rétention, pas
+   une décision technique.
+2. **Purger ne viserait pas le bon poids de toute façon.** `page_text` pèse
+   144 Mo sur les annonces **actives** et seulement 29 Mo sur les inactives : la
+   matière est dans la fenêtre chaude, pas dans ce qu'on peut purger.
+3. **Compresser n'est pas le levier.** `supabase_store.py` déclare `page_text`
+   « compressé » en commentaire mais **n'appelle jamais `compresser()`** — seul
+   `SqliteStore._valeur` le fait. Même famille de défaut que `SYNC_TABLES` : la
+   doc affirme ce que le code ne fait pas. MAIS mesuré avant de conclure :
+   PostgreSQL compresse déjà ce champ tout seul (TOAST), 376 Mo de texte réel
+   n'occupant que 173 Mo sur disque. Un zlib préalable donne **66 % de gain
+   mesuré sur 400 pages réelles** (et non les « ~78 % » annoncés dans
+   `page_text.sql`), soit ~129 Mo — donc **~44 Mo gagnés, pas 90**. Le détour
+   rendrait en plus la colonne illisible sans `decompresser()`. Rapport
+   bénéfice/risque défavorable ; non fait.
+
+**Frayeur écartée en la vérifiant** : le `page_text` de l'archive ne se
+décompresse pas en zlib. J'ai d'abord conclu « archive corrompue » — c'était
+faux. Le contenu est du **texte clair parfaitement lisible** (l'échantillon
+commence par `Supalai Place Sukhumvit 39, Bangkok, 175`), simplement non
+compressé, ce qui est cohérent avec le point 3 : rien ne l'a jamais compressé
+sur le chemin Supabase. 376 Mo dans l'archive contre 173 Mo sur le serveur =
+exactement le ratio TOAST. La matière première est donc bien récupérable.
+
+### Non fait, laissé à l'arbitrage
+
+Le dépassement du free tier appelle une décision de posture, pas un correctif :
+baisser `RETENTION_DAYS`, déporter `page_text`/`description` en archive seule
+(l'archive les détient et ils sont lisibles — vérifié ci-dessus), ou passer au
+plan Pro. Aucune de ces options n'a été appliquée. **Non vérifié non plus** : ce
+que Supabase applique réellement au-dessus du quota — le projet est
+`ACTIVE_HEALTHY` malgré les 143 %, je n'ai pas cherché à savoir si un passage en
+lecture seule est imminent ou si la limite est simplement indicative.
+
+
+## 2026-08-21 — Transfert vers un 2e poste : ce qui ne se copie pas, et T1 délégué à Claude
+
+Un 2e PC destiné à tourner 24/7 arrive. Trois questions : que faut-il transporter,
+que croit-on à tort devoir transporter, et que devient le modèle local sur une
+machine trop faible pour Ollama.
+
+### La question de départ n'était pas la bonne
+
+« Récupérer tous les connecteurs et MCP » : **il n'y a rien à récupérer.** Vérifié
+dans `~/.claude.json` — `mcpServers` est **vide**, au niveau global comme au niveau du
+projet. Les six connecteurs utilisés ici (Supabase, Gmail, Drive, Vercel, Agenda,
+visualize) sont des connecteurs **de compte claude.ai**, hébergés côté serveur ; ils
+suivent le login, pas la machine. Le seul MCP réellement local est
+`sui-knowledge-docs`, sans rapport avec Lowi. Même chose pour les routines
+planifiées : `~/.claude/scheduled-tasks/` n'en contient que les `SKILL.md`, les
+routines tournent côté serveur et **ne doivent pas être recréées** sous peine de
+doublon.
+
+Ce qui se transporte vraiment est ailleurs, et c'est moins visible : mémoire de
+Claude, permissions du projet, état d'exécution des agents, secrets, cache de
+géocodage. `ops/migration/exporte-poste.ps1` et `importe-poste.ps1` s'en chargent
+(2,8 Mo sans les secrets, mesuré). Détail et tableau des conséquences dans
+[ops/migration/README.md](../ops/migration/README.md).
+
+Trois piqûres de rappel encodées dans les scripts :
+
+1. **`agents/ledger.db` est en WAL.** Une copie brute du seul `.db` perdrait les
+   dernières transactions. L'export passe par l'API `backup` de sqlite. Vérifié :
+   121 runs relus dans la copie, dernier run identique à la source.
+2. **Le dossier de mémoire porte le chemin du projet dans son nom**
+   (`C--Users-schoe---FILES---Lowi-bkk` — tout caractère non alphanumérique devient
+   un tiret). L'import le **recalcule** pour la machine cible ; réutiliser le nom
+   d'origine déposerait la mémoire dans un dossier que Claude n'ouvrirait jamais.
+   Panne muette.
+3. **Les tâches Windows sont exportées en XML pour référence seulement.** La
+   réinstallation passe par `ops/install-agents-task.ps1`, qui dérive ses chemins de
+   son propre emplacement. Réimporter le XML figerait les chemins de l'ancienne
+   machine — exactement le défaut du 2026-07-11, trois tâches mortes vingt jours.
+
+Sans `agents/ledger.db`, `is_due()` croit que rien n'a jamais tourné et relance les
+cinq extracteurs en `--full` dès le premier cycle : **6 h 30**, mesuré le 2026-08-20.
+
+### Le coût réel de perdre Ollama n'est pas celui qu'on croit
+
+Trois modules appellent le modèle local. Deux ne l'utilisent que pour **rédiger**
+(`overseer`, `watch_health`) et ont déjà leur repli sur le texte brut. Le troisième,
+`organize`, est le seul usage décisionnel. Rendement relevé au ledger sur les cinq
+runs aboutis du 31/07 au 17/08 :
+
+| Run | Soumises | Abstentions | Taux | **Ajoutées à la revue** | Reste ambigu |
+|---|---|---|---|---|---|
+| 31/07 | 40 | 34 | 0,85 | 6 | 22 071 |
+| 06/08 | 300 | 300 | 1,00 | 0 | 23 566 |
+| 11/08 | 300 | 27 | 0,09 | 1 | 25 848 |
+| 12/08 | 40 | 40 | 1,00 | 0 | 26 108 |
+| 17/08 | 300 | 295 | 0,983 | 0 | 28 306 |
+
+**980 paires soumises, SEPT entrées de revue en trois semaines**, pendant que le stock
+ambigu montait de 22 071 à 28 306. Le tri SQL, lui, tranche 39 852 paires sur 68 458
+(58 %) sans aucun modèle. Le goulot n'est pas le volume soumis — c'est pourquoi le lot
+en mode ticket est posé à **60** et non 300.
+
+**Le vrai coût de l'absence était ailleurs, et c'était un garde-fou qui crie au
+loup.** `ask_safe` journalise chaque échec en constat de **sévérité HAUTE**. Sans
+déclaration d'absence, un poste sans Ollama produirait **jusqu'à 6 constats hauts par
+cycle, tous les jours, indéfiniment** (1 overseer + 5 watch-health) — et le compteur
+du widget resterait rouge en permanence sans jamais rien signaler de vrai. Règle 2
+appliquée : l'absence délibérée est un **état**, pas une panne.
+
+### Ce qui a été câblé
+
+Marqueur **par machine** `agents/t1-absent` (gitignoré : le dépôt est le même des deux
+côtés, le poste principal garde son modèle). `importe-poste.ps1` **sonde** Ollama et
+ne pose le marqueur que s'il ne répond pas. Avec marqueur : `ask_safe` rend `None`
+sans journaliser, `health()` rend un état sain explicite, et `organize` dépose un lot
+de 60 paires en ticket, drainé par `drain-agent-queue-lowi-bkk`.
+
+**Le contrat de décision ne change pas** : le ticket demande les **six mêmes faits**,
+et `decider()` tranche au retour. Déléguer la comparaison ne doit pas devenir déléguer
+la décision — le verdict direct atteint 92 % de justesse mais **0 % d'abstention**
+(0/30 sur les cas indécidables), l'extraction 91 % et **77 %**. L'abstention vient du
+code ; c'est pour ça qu'elle est fiable.
+
+**Deux journaux distincts, et c'est le point délicat** : `paires-faites.txt`
+(TRANCHÉE) et `paires-en-ticket.txt` (SOUMISE, en attente). Une paire omise de la
+réponse n'entre pas dans le premier ; une paire d'un ticket drainé sans réponse est
+libérée au dépôt suivant. Les confondre reproduirait le défaut du 2026-08-17.
+
+`agents/tests/test_tickets.py` verrouille les six propriétés, en dossier temporaire.
+
+### Défaut trouvé en testant, corrigé
+
+`escalation.create()` horodate à la **seconde**. Deux escalades du même agent et du
+même motif dans la même seconde portaient le même nom, et **la seconde écrasait la
+première sans bruit** — une escalade perdue, donc invisible. Suffixe numérique ajouté.
+Le défaut existait depuis le 2026-07-31 ; aucun cas de production identifié (les
+agents n'escaladent qu'une fois par cycle), c'est le test qui l'a fait sortir.
+
+### Non fait, non vérifié
+
+- **Rien n'a tourné en production dans le mode ticket.** Il est vérifié de bout en
+  bout sur des paires **synthétiques**, en dossier temporaire. Le premier vrai ticket
+  naîtra du premier cycle sur le 2e poste.
+- **Le débit de la boucle de retour n'est pas mesuré.** 60 paires par ticket est une
+  estimation de ce qu'une session traite sans se dégrader, pas une mesure. À
+  recalibrer après trois ou quatre tickets réels.
+- **`agents/tests/test_local_llm.py` ne tournera pas sur le 2e poste** (pas d'Ollama).
+  Il doit être **sauté explicitement, jamais assoupli** : ses seuils (≥ 90/100,
+  ≥ 70 % d'abstention) resserviront tels quels si un modèle local revient. Aucun
+  mécanisme de saut n'a été écrit — laissé en l'état.
+- **Le run `organize` du 11/08 reste inexpliqué** (taux d'abstention 0,09 contre ~1,0
+  ailleurs). Déjà repéré par `agents/tests/echantillon_neuf.py`, non élucidé.
+- **Aucun colis n'a été produit avec les secrets.** L'export a été essayé sans
+  `-AvecSecrets`, dans un dossier temporaire.
+- **La bascule des tâches d'un poste à l'autre n'est pas automatisée.** Si les
+  `LowiBKK-*` de l'ancien poste ne sont pas éteintes à la main, **les deux machines
+  scrapent la même chose en parallèle** — requêtes doublées vers les cinq sources.
+  L'import le rappelle en fin de rapport, il ne le fait pas.
+- **La question du créneau de 01:00 n'est pas tranchée.** Sur le poste actuel, le
+  déclencheur est raté deux nuits sur deux (machine en veille) et tout glisse vers
+  ~09:00 par rattrapage. Un poste 24/7 règle le symptôme sans qu'on ait décidé de la
+  posture (avancer l'heure, autoriser `WakeToRun`, ou assumer).
+
+## 2026-08-22 — Le ménage de PC1 rejoué sur PC2 : presque aucun de ses chiffres ne tenait
+
+Une note de passation écrite depuis **PC1 (`BB-12`)** listait le ménage à refaire ici.
+Elle prévenait elle-même qu'il fallait re-mesurer. Bien lui en a pris : **sur les six
+suppressions annoncées, deux seulement avaient un objet sur PC2 (`REMIZDABOSS`)**, et
+l'ordre proposé était faux.
+
+### Ce que la mesure a corrigé
+
+| Cible | PC1 | PC2, mesuré le 2026-08-22 |
+|---|---|---|
+| `scraper/output/fiches` | 55 649 fichiers, 117,2 Mo | **4 247 fichiers, 8,6 Mo** |
+| `tests-scrap` | 1,25 Go | **absent** (clone récent, dossier gitignoré) |
+| `.next/cache` | 185 Mo | **absent** (l'app n'est pas buildée ici) |
+| `*.log` dans `scraper/output` | à purger | **aucun** |
+| `LowiBKK-ArchiveSync` | supprimée | **n'a jamais existé ici** |
+| `scraper/output/images` | 3,87 Go | 158,9 Mo — **à ne pas toucher**, seule copie |
+
+**Gain réel du ménage disque : 8,6 Mo.** Pas 1,4 Go. Le ménage n'avait ici aucune
+valeur d'espace ; ce qu'il a acheté est ailleurs (voir les lanceurs, plus bas).
+
+### L'ordre était faux, parce que la route A n'existait pas
+
+La note proposait « fusionner la branche de PC1, *puis* supprimer les fiches ».
+`git fetch` : **la branche `menage/grappe-supervision-pre-agents` n'est pas sur
+`origin`**, et `main` est aligné. Route B, donc — et route B change l'ordre : le
+drapeau `--fiches` n'existait pas ici, si bien que supprimer d'abord aurait laissé le
+cycle suivant réécrire les 4 000 fiches. Le drapeau a été ajouté avant la suppression.
+
+Un second préalable, absent de la note : **six fichiers modifiés non commités**, dont
+trois correctifs de fond du jour qui n'existent nulle part ailleurs (forçage UTF-8 des
+sous-processus, déblocage nestopa, en-tête d'upload menteur). La note supposait un
+dépôt propre.
+
+### Ce qui rend les fiches supprimables — vérifié ici, pas repris de PC1
+
+1. Les **4 247** fiches avaient **toutes** leur ligne dans `archive/lowi-archive.db`
+   (0 absente). Aucune n'était le dernier témoin de quoi que ce soit.
+2. **Aucun lecteur** : croisement sur `.py`/`.ts`/`.tsx`/`.ps1`/`.json` — les seules
+   occurrences sont l'écrivain lui-même et des commentaires.
+3. **Rien d'embarqué** : HTML + CSS, image référencée par chemin relatif, **0 base64**.
+4. Côté serveur, les **48 907 `listing_images` sont à 100 % des `.webp`, 0 HTML** — le
+   bucket n'en contient pas non plus.
+
+### La seule suppression qui achetait quelque chose
+
+`scraper/_run-scrape.ps1` et les deux `.bat` du double-clic bouclaient sur **quatre
+sources** (`fazwaz`, `ddproperty`, `propertyscout`, `nestopa`) en `--full` :
+LivingInsider, ajoutée le 2026-08-05, n'y figurait pas. Un double-clic lançait donc un
+**scan partiel avec délistage**, ce que le projet interdit. Sur PC1 ils étaient
+inertes ; **ici c'est la machine qui scrape**. Aucune tâche Windows ni aucun script ne
+les appelait — vérifié avant suppression.
+
+### Deux constats de surveillance, non traités
+
+- **`LowiBKK-Agents` est `Disabled` sur PC2**, alors que c'est elle qui fait tourner le
+  cycle. Le cycle du jour n'a tourné que par `LowiBKK-RattrapageBoot` au logon. En
+  l'état, **plus aucun cycle ne part sans ouverture de session**. Cause non établie —
+  ménage joué en croyant être sur PC1, ou désactivation volontaire. Laissé à
+  l'arbitrage (règle 5).
+- **`ops/verifie-synchro.py` signale 1 écriture en base sans run local** (`nestopa`,
+  03:27 UTC). Le ledger montre le run nestopa du cycle terminé à 03:17 UTC : l'écriture
+  est **dix minutes plus tard**, ce qui pointe le test manuel de la nouvelle config
+  nestopa du jour, pas un double coureur. **Non vérifié formellement** — ça se
+  confirmerait en constatant que les `LowiBKK-*` de `BB-12` sont bien `Disabled`.
+
+### Défaut trouvé en route, non corrigé
+
+Le forçage UTF-8 commité aujourd'hui ne couvre que les **sous-processus lancés par
+`agents/core/shell.py`**. Lancé à la main depuis un terminal, `ops/verifie-synchro.py`
+meurt toujours sur le premier caractère de son premier titre (`UnicodeEncodeError`
+cp1252) ; il faut `$env:PYTHONUTF8="1"` devant. Le défaut vaut pour **tout script
+`ops/` lancé à la main sur ce poste**, pas seulement celui-là. Correctif possible :
+`sys.stdout.reconfigure(encoding="utf-8")` en tête des scripts `ops/`, ou une variable
+d'environnement posée une fois pour la machine. Non tranché.
+
+### Non fait
+
+- **Rien n'a été poussé sur `origin`** : les cinq commits du jour sont locaux.
+- **Le marqueur `agents/coureur`** (qui empêcherait durablement PC1 de relancer une
+  lane) reste non écrit — c'était déjà un point en suspens de la note de PC1.
+- **Les 11 autres fichiers morts** listés par la note (grappe de supervision d'avant
+  les agents : `ops/superviseur.py`, `install-superviseur.ps1`,
+  `install-scrap-nocturne.ps1`, `lancement-complet.ps1`, `test-session.ps1`,
+  `juge-test.py`, `comparer-local-prod.py`, `backfill-details.py`, `scrap-vente.ps1`,
+  `scrap-location.ps1`, `sync-archive.ps1`) **sont toujours présents ici**. Ils sont
+  inertes — aucune tâche `LowiBKK-*` ne les appelle — et n'ont donc pas la même
+  urgence que les lanceurs. Suppression laissée à l'arbitrage.
+- **Le corpus d'images reste coupé en deux** (PC1 détient ce que Storage a purgé, PC2
+  ce qui est arrivé depuis la bascule, le téléversement est suspendu) et **l'archive de
+  référence n'est pas désignée**. Constats de la note de PC1, non traités ici.
+- **`khet` : 91 valeurs distinctes pour 50 quartiers officiels** — non revérifié, non
+  corrigé, `ops/corriger-khet.py` non relancé.
+
+### Suite, même séance — les 11 fichiers ont finalement été supprimés
+
+Le « Non fait » ci-dessus est resté vrai une demi-heure. Sur arbitrage, les onze
+fichiers de la grappe de supervision d'avant les agents ont été retirés, après
+re-vérification sur PC2 :
+
+- **Aucune tâche Windows ne les appelle** — les seules qui pointent vers `C:\Lowi_bkk`
+  sont `LowiBKK-Agents` (`--due`) et `LowiBKK-RattrapageBoot` (`--boot`), toutes deux
+  sur `orchestrator.py`.
+- **Toutes leurs références croisées sont internes au groupe** : ils s'appellent entre
+  eux (`superviseur.py` → `juge-test.py`, `lancement-complet.ps1` → `juge-test.py`,
+  `install-*.ps1` → `superviseur.py`) et rien d'autre ne les cite.
+
+Deux renvois pendants ont été corrigés dans la foulée, parce qu'ils auraient survécu
+aux fichiers : la docstring de `ops/sync_supabase_local.py` annonçait
+« Planifié : ops/sync-archive.ps1 (tâche Windows hebdo) » — ni le wrapper ni la tâche
+n'existent plus, c'est l'agent `backup-apres-cycle` qui l'appelle
+(`agents/agents.json`, vérifié) ; et deux lignes de CLAUDE.md renvoyaient aux wrappers
+`scrap-vente.ps1` / `scrap-location.ps1` et à `LowiBKK-ArchiveSync`, barrées et datées
+plutôt que réécrites.
+
+`.claude/settings.local.json` ajouté au `.gitignore` : réglages par machine, comme
+`agents/t1-absent`. Il faisait crier `verifie-synchro` à chaque passage — un garde-fou
+qui signale un faux positif récurrent apprend à être ignoré (règle 2).
+
+**`LowiBKK-Agents` est repassée `Ready`** entre-temps. Le cycle repart donc de
+lui-même ; le constat de désactivation ci-dessus est levé.
+
+### Suite (2) — le créneau de 01:00 tranché, avec sa contrepartie
+
+Le « non tranché » du 2026-08-21 (« avancer l'heure, autoriser `WakeToRun`, ou
+assumer ») est décidé : **01:00, quotidienne, réveil à l'aller et rendormissement au
+retour**.
+
+**L'heure.** La tâche vivante était à **06:00** alors que `ops/install-agents-task.ps1`
+a `01:00` en défaut depuis sa création — elle a dérivé, probablement re-enregistrée à
+la main lors du transfert. Réinstallée par le script, jamais par réimport de XML
+(chemins figés, défaut du 2026-07-11). Relu après coup : `Ready`, déclencheur
+`01:00`, `DaysInterval 1`, `WakeToRun`, prochain passage le 23/08 à 01:00.
+
+**Le rendormissement, et pourquoi il ne pouvait pas être inconditionnel.** Réveiller
+sans rendormir laisse le poste allumé jusqu'au matin : `garde-veille` tient un verrou
+`SetThreadExecutionState` pendant tout le cycle, et la veille par inactivité du plan
+est à 5 h. Mais le même orchestrateur tourne en `--boot` (rattrapage au logon) et à la
+main : endormir la machine sous les doigts de quelqu'un serait pire que le défaut
+corrigé. D'où **deux verrous** dans `agents/core/veille.py` :
+
+1. l'appelant doit poser `--veille-a-la-fin` — la seule tâche planifiée le fait,
+   `--boot` jamais ;
+2. le module **refuse** si clavier ou souris ont bougé dans les 15 min
+   (`GetLastInputInfo`). C'est la garantie qui ne dépend pas de la bonne foi de
+   l'appelant, et la seule des deux qui soit vérifiable sans attendre 01:00 : appelé
+   pendant cette séance, il rend « veille sautée : quelqu'un utilise la machine ».
+
+Le verrou d'éveil est relâché avant la suspension, et `led.close()` la précède — un
+SQLite laissé ouvert au moment d'une coupure ne survivrait pas, et le ledger est la
+seule mémoire de ce qui est dû.
+
+### Un contrôle qui ne regardait qu'une valeur sur deux
+
+`powercfg /query SCHEME_CURRENT SUB_SLEEP RTCWAKE` rend **deux** index : secteur et
+batterie. Sur `REMIZDABOSS` : **AC = 0x1 (autorisé), DC = 0x0 (interdit)**. Le contrôle
+de fin d'installeur ne lisait que `$valeurs[0]` — la valeur secteur — et affichait donc
+« Minuteurs de reveil autorises » sur un poste qui ne se réveille pas sur batterie. Un
+réveil qui ne survient qu'une fois sur deux selon que le câble est branché est
+exactement le genre de panne qu'on ne remarque pas (règle 2). L'installeur lit les deux
+et le dit. **Non modifié** : la valeur batterie elle-même — c'est une préférence
+d'alimentation, elle relève de l'arbitrage (`powercfg /setdcvalueindex SCHEME_CURRENT
+SUB_SLEEP RTCWAKE 1`). En l'état, endormie sur batterie, la machine repart au logon par
+`LowiBKK-RattrapageBoot`.
+
+### Non vérifié
+
+**La suspension elle-même n'a pas été testée.** On ne déclenche pas une mise en veille
+depuis une session de travail. Deux inconnues restent, mesurées mais pas levées :
+`powercfg /a` ne donne que l'état **S0** sur ce poste (ni S1, ni S2, ni S3) et
+**l'hibernation est active** — or `SetSuspendState(bHibernate=FALSE, …)` est documenté
+comme pouvant mettre en veille prolongée quand même dans ce cas. Si la machine hiberne
+au lieu de dormir, ce n'est pas une panne du cycle : le réveil RTC fonctionne aussi
+depuis l'hibernation, le retour est seulement plus lent. La vérification viendra du
+premier cycle réel — `LastRunTime` à 01:00 le 23/08 dira si le réveil a eu lieu, et
+l'état de la machine au matin si le rendormissement a eu lieu.
+
+`powercfg /waketimers`, qui listerait les minuteurs réellement armés, **exige une
+console administrateur** et n'a pas pu être lu.
+
+---
+
+## 2026-08-25 — Deux skills pour la procédure, et une règle qui n'était appliquée par rien
+
+**Question posée** : est-ce que ça vaut le coup d'écrire des skills pour tenir la
+boucle d'agents et l'architecture de la base hors-ligne sur PC2 ?
+
+### Ce que la mesure a montré avant de répondre
+
+Trois constats relevés avant d'écrire quoi que ce soit :
+
+1. **Les 16 `agents/skills/*/SKILL.md` ne sont pas atteignables par Claude.**
+   `.claude/skills/` n'existait pas dans le dépôt, et aucun des 16 n'apparaissait
+   dans la liste de skills chargée en séance. Ils servaient de doc aux bots et aux
+   tickets T2 — jamais de compétence chargeable. Le besoin n'était donc pas
+   d'écrire des skills, c'était d'en **brancher**.
+2. **`CLAUDE.md` fait 46 Ko**, chargé intégralement à chaque séance (~12k tokens),
+   avant même de savoir de quoi on parle.
+3. **La règle 6 du CLAUDE.md n'était appliquée par aucun contrôle.** « Une
+   migration s'applique avec sa contrepartie côté code (`_COLS`, stores, types) »
+   était une phrase. Dans les faits, **deux** listes de colonnes vivaient à la
+   main en parallèle : `_COLS` au niveau module dans `supabase_store.py`, et un
+   tuple local à `upsert_listing` dans `sqlite_store.py`.
+
+### Ce qui a été tranché, et pourquoi pas l'inverse
+
+**Un skill par procédure récurrente, pas par architecture cible.** La distinction
+a compté dans la discussion : un skill qui décrirait la base hors-ligne *avant*
+qu'elle existe décrirait un système imaginaire, et finirait par mentir — le défaut
+du widget qui recopie les crons Claude à la main. Ce qui est durable, c'est la
+**discipline de construction** : elle est vraie aujourd'hui, testable aujourd'hui,
+et ne périme pas quand l'architecture change.
+
+Deux skills, courts à dessein (mesure du 2026-07-31 : prompt bref **92 %** contre
+procédure verbeuse **69 %**) :
+
+- **`.claude/skills/lowi-cycle/`** — opérer et diagnostiquer la boucle : `status`
+  avant tout, nommer le poste, les commandes et ce qu'elles engagent, et surtout
+  l'**ordre de diagnostic** de « il n'a pas tourné » (tâche → lane → ledger →
+  veille → sonde), chaque étage ayant déjà été la cause au moins une fois.
+- **`.claude/skills/lowi-couche-donnees/`** — l'ordre canonique d'un changement de
+  couche données (schéma → migration → `COLONNES_LISTING` → `_migrate()` → types
+  TS + lecture → test), plus les pièges déjà payés sur cette pile (WAL, booléens
+  0/1, arrondi bancaire vs half-up, `security_invoker`, `[int]` en PowerShell).
+
+### La liste de colonnes fusionnée — mesure d'abord
+
+**Avant de fusionner, les deux listes ont été comparées : identiques, 49 colonnes
+de part et d'autre.** Aucune dérive en cours. La fusion en un exemplaire unique
+(`store.base.COLONNES_LISTING`, importé par les deux stores) est donc un **no-op
+sémantique** — vérifié après coup : 49 colonnes, `_COLS is COLONNES_LISTING`,
+`run.py` et les deux stores s'importent.
+
+Ce n'est pas un correctif, c'est la suppression d'un piège de maintenance. Le
+défaut qui coûte n'est pas que les deux listes diffèrent entre elles, c'est
+qu'une colonne soit dans le **code** et pas dans la **base** : SQLite se rattrape
+seul par `_migrate()`, Postgres non — le scrap meurt à l'écriture sur
+`column ... does not exist`, **côté online seulement**.
+
+### Le test, et la preuve qu'il a des dents
+
+`agents/tests/test_stores_alignes.py` confronte `COLONNES_LISTING` aux colonnes
+**réelles** des deux bases (SQLite créée neuve pour tester le schéma et non une
+base rattrapée à la main ; Postgres via `information_schema`).
+
+Conformément à la règle 2, il a été vérifié dans les deux sens :
+
+- état sain → 4 contrôles passent, sortie 0 (SQLite et Postgres portent chacune
+  les 49 colonnes, sur 60 au total) ;
+- **colonne fantôme ajoutée exprès à la liste** → les deux volets rougissent en
+  la nommant, sortie 1.
+
+Le volet Postgres exige `SUPABASE_DB_URL` (lu dans l'environnement, à défaut dans
+`scraper/.env`). **Sans lui il se déclare NON VÉRIFIÉ à voix haute** plutôt que de
+passer en silence : c'est le seul des deux qui prouve qu'une migration a été
+appliquée en ligne.
+
+### Non fait, laissé à l'arbitrage
+
+- **`CLAUDE.md` n'a pas été dégraissé.** Les points « nommer le poste », « mesurer
+  avant » et « journal en fin de séance » existent maintenant en **deux
+  exemplaires** : principes dans `CLAUDE.md`, procédure dans les skills. C'est la
+  famille de défaut corrigée sur `condo-name.ts` le 2026-07-28. Le déplacement de
+  la moitié procédurale hors de `CLAUDE.md` (qui libérerait aussi du contexte à
+  chaque séance) reste à trancher.
+- **L'architecture de la base hors-ligne sur PC2 n'a pas été décidée ni chiffrée.**
+  Deux options restent ouvertes et n'ont pas été départagées : (a) PC2 lit et écrit
+  local, Supabase ne garde qu'une fenêtre chaude servie à Vercel ; (b) tout tourne
+  en local, Vercel meurt ou sert une exportation figée. Le skill décrit *comment*
+  construire, pas *quoi* construire.
+- **Non vérifié** : que le schéma de `archive/lowi-archive.db` (905 Mo) réponde aux
+  requêtes de l'app. C'est un miroir d'introspection, pas une base applicative.
+- **Constat non traité** : `scraper/output/` est **vide** sur `REMIZDABOSS` alors
+  que `lib/listings-db.ts` y pointe par défaut pour son repli SQLite. Le chemin de
+  lecture hors-ligne est donc mort par défaut sur ce poste. Noté dans le skill,
+  pas corrigé — la correction dépend de l'arbitrage ci-dessus.
+- **Défaut d'environnement, non corrigé** : `agents/tests/test_lanes.py` plante sur
+  `UnicodeEncodeError` (console cp1252, caractère `⊇`) — il passe avec
+  `PYTHONIOENCODING=utf-8`. Le test est bon, c'est sa sortie console qui casse.
+  `test_stores_alignes.py` a été écrit en ASCII pour ne pas hériter du problème.
+
+---
+
+## 2026-08-25 (suite) — La base hors ligne était déjà là, et le serveur a maigri de 83 %
+
+### Trois erreurs de ma part, à consigner avant le reste
+
+**1. « `scraper/output/` est vide » était faux.** J'avais vérifié `output/` à la
+racine, pas `scraper/output/`. La base locale était vivante depuis le début :
+1,04 Go, et **en avance sur Supabase**. Toute la section « arbitrage à trancher »
+de l'entrée précédente reposait sur ce constat inexistant.
+
+**2. « Node n'est pas installé sur PC2 » était faux.** Il était à
+`%LOCALAPPDATA%\nodejs` — emplacement non couvert par mon balayage, qui ne
+regardait que `%LOCALAPPDATA%\Programs\nodejs`. J'ai installé une copie
+redondante (même version, v24.19.0) avant de m'en apercevoir ; supprimée, PATH
+utilisateur remis en état.
+
+**3. Le premier garde-fou de vérification s'est trompé lui-même.** Il annonçait
+842 738 lignes de `cohort_snapshots` « absentes en local ». Artefact de mesure :
+`str(datetime)` rend `2026-07-28 03:58:19.556794+00` côté Postgres quand SQLite
+stocke `2026-07-28T03:58:19.556794+00:00`. Le local en détient en fait
+**1 182 220** — un surensemble. Septième occurrence du même motif : c'était la
+mesure, pas le système mesuré.
+
+### Ce qui était déjà vrai sans qu'on le sache
+
+Le cycle tourne en `--store sqlite` depuis un moment. Au moment du constat :
+
+| | annonces | actives |
+|---|---|---|
+| Local `scraper/output/bangkok.db` | 72 230 | 49 554 |
+| Supabase | 69 175 | 46 867 |
+
+`agents/core/db.py` fait par ailleurs défaut à `LOWI_STORE=sqlite` : les agents,
+l'étude et les scripts `ops/` lisent **déjà** le local. La « bascule hors ligne »
+était faite aux trois quarts ; il manquait la lecture côté app.
+
+### L'app tourne en local
+
+`LOWI_SQLITE_DB` posé dans `.env.local` (il **prime** sur `SUPABASE_DB_URL`, cf.
+`lib/listings-db.ts:75`), `npm install`, serveur sur **le port 3100** — 3000 est
+pris par `C:\blog`, un autre projet Next lancé le même jour.
+
+Preuve que la lecture est locale : la page `/for-sale` affiche **25 794** ventes
+dans les bornes, le local en compte **25 851** (le scrap écrit pendant la
+mesure), le serveur **24 584**.
+
+**Non vérifié** : le rendu de la carte. MapLibre reste à `styleLoaded: false`
+tant que le panneau navigateur est masqué — un panneau qui ne compose pas
+d'images n'a pas de boucle de rendu WebGL. Les tableaux, rendus côté serveur,
+s'affichent sans ça. À reconfirmer dans un vrai navigateur.
+
+### Le dégraissage du serveur (option retenue par l'utilisateur)
+
+**Mesure qui a décidé** : l'app lit **~22 Mo** sur 1,04 Go — `listings` colonnes
+utiles 18,6 Mo, images 1,8, prix 0,6, `khet_snapshots` 1,0. Elle ne référence
+jamais `page_text` (453,6 Mo en local), `description` (137,7 Mo),
+`cohort_snapshots` ni `listing_amenities` — vérifié fichier par fichier, le seul
+résultat étant la balise meta de `app/layout.tsx`. `lib/listings-db.ts:95`
+renvoie même `amenities: []` en dur.
+
+**Le garde-fou a refusé deux fois, et il avait raison les deux fois.** Le second
+refus était l'artefact d'horodatage ci-dessus. Le premier était réel : **3
+`page_text` et 4 `description` existaient sur le serveur et pas en local**.
+Cause mesurée — la **dédup incrémentale** : prix inchangé dans la liste, fiche
+détail non revisitée, texte jamais capturé côté local, alors que le serveur
+l'avait capturé avant la bascule. Rapatriés par `ops/rapatrie-textes.py` (piège
+trouvé en le faisant : `page_text` est un `bytea` côté Postgres et un blob zlib
+côté SQLite — il faut décoder puis recompresser), puis relus pour vérifier.
+
+**Ordre d'application — l'inverse d'un ajout.** Pour une colonne ajoutée :
+schéma → migration → code. Pour une colonne **retirée** : le code cesse
+d'écrire d'abord, la suppression vient ensuite, sinon le scrap meurt sur
+`column ... does not exist`. `.claude/skills/lowi-couche-donnees/SKILL.md` ne le
+disait pas — à corriger.
+
+**Résultat mesuré** : **810 Mo → 139 Mo**, soit **28 % du quota gratuit** au lieu
+de 162 %. Meilleur que les ~230 Mo estimés : `listings` passe de 440 à 57 Mo. Le
+`drop column` seul ne rend rien — c'est le `vacuum full listings` qui réécrit la
+table. Requête exacte de l'app rejouée après coup : 46 867 lignes servies, rien
+de cassé.
+
+`COLONNES_LISTING` devient le **socle commun** et `COLONNES_LOCALES`
+(`description`, `page_text`) l'ajout côté SQLite seul. Le test
+`test_stores_alignes.py` vérifie désormais aussi l'**ABSENCE** de ces colonnes
+côté serveur : leur réapparition signalerait un rollback subi.
+
+### Le pousseur : mesuré, et trop lent
+
+`ops/remonter-local.py` faisait `select * from listings` — donc chargeait les
+600 Mo de texte pour les jeter aussitôt. Restreint au socle commun : **72 695
+annonces lues en 5,8 s**.
+
+Mais la poussée elle-même, **mesurée sur 200 annonces : ~3,9 annonces/s**, soit
+**~5 h pour les 72 695**. Un aller-retour par annonce vers le pooler
+`ap-southeast-1`. **Inutilisable tel quel à chaque cycle.** Il faudrait pousser
+le delta (nouvelles + prix changés depuis la dernière poussée, quelques milliers)
+ou grouper les écritures. Non fait.
+
+### Non fait, non vérifié, laissé à l'arbitrage
+
+- **Le pousseur n'est PAS branché sur le cycle.** Tant qu'il ne l'est pas,
+  **Vercel se fige** au dernier état poussé — l'écart local/serveur était déjà de
+  1 267 ventes actives avant l'opération. Les 200 annonces de la mesure sont les
+  seules remontées.
+- **`agents/agents.json` est édité par une autre session** en parallèle : je n'y
+  ai pas touché pour ne pas écraser son travail.
+- **Deux fichiers d'archive ont disparu aujourd'hui** : `lowi-archive.db`
+  (905 Mo) et `bangkok-backup.db` (985 Mo), tous deux du 23/08. Introuvables sur
+  C: et D:, **absents de la corbeille** → suppression dure ou déplacement vers un
+  volume non monté. Les deux scripts suspects sont **disculpés par lecture du
+  code** : `sauvegarde-cle.py` ne supprime que dans le dossier de destination et
+  seulement après vérification ; `miroir-coureur.ps1` ne fait que lire l'archive.
+  Une autre session éditait le dépôt aux mêmes heures (`analyze_rent.py`,
+  `orchestrator.py`, `sauvegarde-cle.py` à 09:58-10:01, puis `agents/core/db.py`
+  et `organize.py` à 13:39-13:52). `ops/sauvegarde-locale.py` a disparu de la
+  même façon. **Cause non établie.**
+  Copies plus anciennes retrouvées : `C:\Lowi_bkk_ancien\archive\` (708 Mo,
+  20/08) et `D:\Lowi_bkk\archive\` (34 Mo, 09/07).
+- **Le serveur n'est plus le second détenteur de `page_text`/`description`.** PC2
+  l'est seul, avec la copie de `D:\++SCRAP DB++`. La discipline de sauvegarde
+  compte davantage qu'hier — et on vient de perdre deux archives sans
+  explication.
+- **Non vérifié** : `npm approve-scripts` reste à faire pour `esbuild` et
+  `sharp` (bloqués à l'installation) — `npm test` et les scripts `geo:*`
+  échoueront tant que ce n'est pas fait.
+
+## 2026-08-25 (suite 2) — La cadence perdait une nuit sur deux, le dashboard regardait la mauvaise base
+
+### « Tous les jours à 01:00 » ne voulait pas dire tous les jours
+
+`is_due()` comparait des HEURES ÉCOULÉES depuis le départ du dernier succès à
+`every_days`. Tant que le cycle partait à l'heure, la différence ne se voyait
+pas. Dès qu'il glissait dans la journée — rattrapage au logon, coupure réseau,
+lancement à la main — le créneau de 01:00 suivant tombait sous les 24 h et TOUT
+se déclarait « à jour ».
+
+**Mesuré ce soir avant de toucher au code** : cycle du jour parti à 08:24 faute
+de réveil, extracteurs à 10:00 ; à 01:00 la nuit suivante, 0,6 j écoulé, **12
+agents sur 12 « à jour », aucun scrap**. Et rien n'alertait — le cycle se
+terminait normalement, simplement vide. C'est le mode de panne de la règle 2,
+appliqué à la cadence elle-même.
+
+Corrigé en **jours calendaires locaux** (`jour_local()` : le ledger horodate en
+UTC, le créneau est à 01:00 à Bangkok — compter en UTC aurait redonné le décalage
+d'un jour déjà corrigé le matin même sur `current_lane()`). Un succès daté d'hier
+rend l'agent dû aujourd'hui, quelle que soit l'heure.
+
+### La contrepartie : ne jamais couper un scrap en vol
+
+Le pendant du changement ci-dessus, demandé explicitement : « tous les jours à
+1h du matin **sauf si ça coupe le scrap en cours** ». Un extracteur tué en vol
+est pire qu'un cycle manqué — la passe `--full` n'a vu qu'une partie du site, et
+le diff compte comme délisté ce qu'elle n'a pas revu.
+
+`scrap_en_cours()` sonde deux fois : le **ledger** (run d'Extraction `running`
+dont le PID vit — les orphelins sont déjà refermés en `interrompu` par le
+nettoyage d'ouverture, donc pas de faux positif) puis les **lignes de commande
+du poste** (`scraper/run.py` ou `recense.py` lancé hors cycle, que le ledger
+ignore). En cas d'échec de la seconde sonde **on laisse passer en le disant** :
+bloquer un cycle entier sur un hoquet de PowerShell serait un garde-fou pire que
+le défaut. Le cycle ENTIER est reporté, pas seulement l'extraction — `report` et
+surtout `backup-apres-cycle` (copie de 1 Go du SQLite) liraient sinon une base en
+cours d'écriture.
+
+**Vérifié sur du réel, pas en simulation** : la sonde a détecté le
+`recense.py --source ddproperty` lancé à la main à 20:25 (PID 18700), qui tournait
+encore à 22:00. Conséquence à assumer : **s'il tourne encore à 01:00, le cycle de
+cette nuit sera reporté**. C'est le comportement demandé, pas un défaut.
+
+`agents/tests/test_cadence.py` fige les deux règles. Le cas de test choisit une
+date qui **discrimine** — hier au calendrier ET moins de 24 h : « hier 10:00 »
+lancé le soir aurait passé sous l'ancienne règle aussi, et n'aurait rien prouvé.
+
+### Le dashboard montrait un instantané mort
+
+`ops/dashboard.py` ouvrait par défaut « SUPABASE (production) », premier d'une
+liste de sources qu'on faisait tourner à la touche [S]. Or depuis le 2026-08-23
+la base de référence est LOCALE : les cinq extracteurs tournent en
+`--store sqlite` et le serveur est figé. Le dashboard affichait donc une base
+morte pendant qu'un scrap écrivait à côté — et personne ne pouvait le voir, il
+n'y avait pas d'écart visible entre « base figée » et « scrap qui n'avance pas ».
+
+Réécrit sur **une seule base** (`scraper/output/bangkok.db`, chemin en dur à
+dessein — un dashboard qui « cherche une base » finit par en trouver une périmée)
+et **sans rotation**. Il montre le scrap EN COURS et rien d'autre : qui tourne,
+depuis quand, à quelle passe (`log.then_N`), si le journal bouge encore, ce qui a
+été écrit **depuis le départ du run** (`last_seen >= started_at` — un total de
+72 695 ne bouge pas à l'œil), et la queue du journal. Quand plus rien ne tourne :
+le RÉSULTAT du dernier cycle, qui reste affiché — c'est ce qu'on vient lire le
+matin. L'orchestrateur l'ouvre au départ de l'extraction et **ne le referme
+pas** ; un témoin `agents/state/dashboard.pid` évite d'empiler une fenêtre par
+nuit. Les deux vues ont été rejouées à blanc sur les données réelles du jour
+avant d'ouvrir la fenêtre.
+
+### Audit du réveil — et une affirmation de ma part à corriger
+
+**J'ai écrit en début de séance que le créneau de 01:00 n'avait jamais déclenché
+depuis son installation. C'est faux** : en regroupant les runs par jour UTC au
+lieu du jour local, le cycle du 24/08 tombait dans la veille. Il a bien
+déclenché, à 01:00 pile, machine réveillée (events Kernel-Power 42 puis 107 à
+01:00:02 et 01:00:04). Il était vide à cause du bug de lane, pas du réveil.
+Bilan réel : **1 nuit sur 3**.
+
+`ops/audit-reveil.ps1` (nouveau, lecture seule) affiche d'un coup les six
+conditions dont dépend le réveil. Ce qu'il montre sur `REMIZDABOSS` :
+
+| | secteur | batterie |
+|---|---|---|
+| Minuteurs de réveil (RTCWAKE) | **1 — autorisé** | **0 — INTERDIT** |
+| Veille par inactivité | **0 s — jamais** | 180 s |
+
+Deux conséquences que la lecture d'une seule valeur cachait. **Sur secteur, la
+machine ne s'endort jamais d'elle-même** : branchée, il n'y a même pas de réveil
+à faire, et un échec à 01:00 vient forcément d'ailleurs. **Sur batterie**, elle
+dort au bout de 3 min et le réveil est interdit — explication la plus simple des
+deux nuits ratées, et cohérente avec le test du 25/08 à 09:13 qui a réussi
+(`powercfg /lastwake` nomme `LowiBKK-TestReveil`), sur secteur.
+
+### Non fait, non vérifié, laissé à l'arbitrage
+
+- **Le réveil sur batterie reste interdit.** C'est un arbitrage, pas un défaut :
+  l'autoriser, c'est vider la batterie en scrapant 6 h sans câble. Commande dans
+  l'audit, non exécutée.
+- **Deux vérifications exigent une console admin** et n'ont pas pu être faites :
+  `powercfg /waketimers` (le minuteur est-il réellement ARMÉ ?) et l'activation
+  du journal `TaskScheduler/Operational` — refusée en « Accès refusé ». Sans ce
+  journal, **une nuit ratée ne laisse aucune trace exploitable** ; c'est ce qui a
+  rendu les nuits d'août inexplicables.
+- **`--veille-a-la-fin` a de nouveau disparu de la tâche** : elle porte
+  `orchestrator.py --due` tout court. La machine restera allumée après le cycle,
+  contrairement à la décision du 22/08. Non réinstallé — l'installeur touche à
+  une tâche planifiée, ça se fait en conscience.
+- **Le réglage « fermeture du capot » est illisible** sur ce plan (ASUS
+  Recommended) : `powercfg /q SUB_BUTTONS` ne rend pas ce paramètre. Non tranché.
+- **Aucun cycle complet n'a tourné avec ce code.** La cadence, le garde-fou et
+  l'ouverture du dashboard sont vérifiés unitairement et sur l'état réel du
+  poste, pas de bout en bout. La première preuve viendra du cycle de 01:00.
+
+---
+
+## 2026-08-26 — Réparation autonome : la preuve du cycle de 01:00 est arrivée, et un travail entier dormait non commité
+
+Session `lowi-reparation-autonome`, sans utilisateur présent. Rapport complet :
+[agents/audits/reparations-2026-08-26.md](../agents/audits/reparations-2026-08-26.md).
+
+### La preuve attendue hier soir
+
+La dernière ligne de la session du 2026-08-25 disait : « la première preuve
+viendra du cycle de 01:00 ». Elle est arrivée : le cycle du 2026-08-26T00:56 UTC
+a tourné sans accroc, 5 extracteurs, 7921 annonces écrites. Cadence
+calendaire, garde-fou anti-délistage et distinction panne-réseau/structure
+cassée fonctionnent en conditions réelles, pas seulement en test.
+
+### 1846 lignes jamais commitées
+
+Avant de toucher aux tickets : `git status` montrait le travail complet de la
+session du 25/08 (30 fichiers modifiés, 29 nouveaux) sur `main`, jamais
+versionné — c'est ce code non commité, dans le répertoire de travail, qui a
+fait tourner le cycle de cette nuit, pas l'historique git. Vérifié avant de
+committer (5 suites de tests, lecture des diffs, recherche de secrets) puis
+commité sur `fix/cadence-dashboard-degraissage-2026-08-25`. Tentative de
+fusion vers `main` bloquée par la politique de sécurité de l'agent (comportement
+voulu) — reste à fusionner par l'utilisateur.
+
+### Coupure DNS du 25/08, et ce qu'elle a vraiment coûté
+
+Root cause de 8 alertes + 4 tickets ce cycle : `NameResolutionError` sur
+`www.ddproperty.com` et `www.fazwaz.com`, 02:35-02:47 UTC — pas un changement
+de structure. Déjà corrigé dans le commit ci-dessus (distinction réseau vs
+structure avant d'escalader). Deuxième cause trouvée en creusant les mêmes
+alertes : le passage à `--store sqlite` avait fait écrire 5 extracteurs en
+parallèle sur le même fichier SANS WAL ni délai d'attente sur les verrous —
+« database is locked », jusqu'à 4428 lignes d'erreur dans un seul log. Déjà
+corrigé dans le même commit (`journal_mode=WAL`, `busy_timeout=60s`), vérifié
+par l'absence de récurrence sur les 3 cycles suivants.
+
+### Un bug trouvé cette nuit, dans du code qui n'avait encore jamais tourné en entier
+
+`then_2` (recensement) de `extract-ddproperty` a planté cette nuit après ~2724
+pages lues : `NameError: name 'atteinte' is not defined` — la variable
+s'appelle `derniere`. Aucune donnée touchée (le recensement ne délist ni
+n'insère), mais le run entier sortait en erreur sur la toute dernière ligne
+après ~3h de scan. Corrigé, testé sans réseau (`agents/tests/test_recense.py`),
+commité sur `fix/recense-nameerror-atteinte`.
+
+### 300 paires ambiguës, extraction mécanique plutôt que lecture à l'œil
+
+Les 5 tickets `organize/comparaison_deleguee` en attente (60 paires chacun)
+fournissent un texte entièrement gabarit. Plutôt que de lire 300 paires à
+l'œil, un script d'extraction par regex, strictement fidèle à la consigne du
+ticket (6 faits, pas de verdict — c'est `decider()`, le code, qui tranche).
+Résultat : 300/300 abstentions, contre-vérifié indépendamment sur les vraies
+dates du lot (celles que `decider()` utilise réellement) — l'abstention à
+100% n'est pas un défaut d'extraction, aucune des 300 paires ne remplissait
+la condition `same_unit`.
+
+### Rendement suspect Lat Krabang (11,2%) : pas une affaire, un défaut de méthode
+
+Vérifié annonce par annonce : 3 des 5 condos appariés comparent un prix de
+vente médian de 1BR à un loyer d'un 2BR du même immeuble (n=1 côté location).
+Cause : `analyze_rent.py` groupe par `condo_name` brut (non normalisé) et ne
+stratifie pas par nombre de chambres, contrairement à `lib/yields.ts`.
+**Non corrigé** — décision de méthode, chiffrage donné, laissé à l'arbitrage
+(règle 5).
+
+### Non fait, non vérifié, laissé à l'arbitrage
+
+- **Les deux branches ne sont pas fusionnées sur `main`.** Bloqué par la
+  politique de l'agent, pas un oubli — le cycle tourne déjà avec ce code
+  (c'est le répertoire de travail qui compte pour la tâche planifiée), mais
+  `git log main` reste en retard tant que la fusion n'est pas faite à la main.
+- **Le défaut de méthode d'`analyze_rent.py`** (condo_name non normalisé,
+  pas de stratification par chambres) n'a pas été corrigé.
+- **10 escalades restent ouvertes dans le ledger**, toutes antérieures au
+  17/08, sans ticket de file correspondant — hors périmètre de cette session.
+- **Le correctif WAL n'a pas de test de charge construit** — seulement
+  l'observation qu'il n'a pas récidivé sur 3 cycles réels.
+
+## 2026-08-26 (suite) — PC2 devient hôte SSH : le piège du compte administrateur, et un garde-fou que `PasswordAuthentication no` ne ferme pas
+
+Demande : transformer PC2 (`REMIZDABOSS`, le coureur) en hôte SSH joignable
+depuis PC1. Trois choix de posture arbitrés par l'utilisateur (règle 5) :
+**LAN uniquement**, **clé publique seule**, **veille inchangée**.
+
+### État de départ, mesuré
+
+Client SSH présent (`C:\Windows\System32\OpenSSH\ssh.exe`), **serveur absent** —
+`sshd.exe` inexistant, service `sshd` non enregistré, seul `ssh-agent` existait
+(désactivé). Rien n'écoutait sur le port 22. Wi-Fi, profil réseau **Privé**,
+`192.168.1.175/24` en **bail DHCP**, passerelle `192.168.1.1`.
+
+### Le piège qui aurait fait échouer l'auth en silence
+
+`Remidaboss` est **administrateur local**. Sous Windows, `sshd` route les
+comptes du groupe administrateurs vers
+`C:\ProgramData\ssh\administrators_authorized_keys` (bloc
+`Match Group administrators` du modèle) et **ignore `~/.ssh/authorized_keys`**
+pour eux. Une clé posée au bon endroit selon l'habitude Linux aurait donné un
+`Permission denied (publickey)` sans rien indiquer de la cause. Traité d'emblée :
+clé écrite dans le bon fichier, **sans BOM** (`UTF8Encoding($false)` — un BOM en
+tête de fichier fait rejeter la clé silencieusement), ACL réduites par SID
+(`*S-1-5-18`, `*S-1-5-32-544`) et non par nom, le Windows étant en français
+(`SYSTEM` s'y nomme `Système`).
+
+### Ce que `PasswordAuthentication no` ne suffit pas à fermer
+
+Après le premier durcissement, le serveur annonçait encore
+`Permission denied (publickey,keyboard-interactive)`. La voie
+**keyboard-interactive** restait ouverte et retombe sur le mot de passe.
+Le premier test ne l'avait pas prouvée fermée : `BatchMode=yes` empêche le
+client de *tenter* cette méthode, si bien que l'échec observé venait du client,
+pas du serveur — un test qui semblait vert sans rien démontrer (règle 2).
+Re-testé sans `BatchMode` après ajout de `KbdInteractiveAuthentication no` :
+le serveur n'annonce plus que `Permission denied (publickey)`.
+
+### Pare-feu : la règle de Microsoft accepte toute source
+
+La capability installe `OpenSSH-Server-In-TCP`, **sans restriction de source**.
+Désactivée, remplacée par `Lowi-SSH-LAN` — profil **Privé** seul, source
+`192.168.1.0/24`. Vérifié après coup : une seule règle active sur le port 22.
+
+### Vérifications réellement faites
+
+| Test | Résultat |
+|---|---|
+| `sshd` service | `Running` / `Automatic` |
+| Écoute | `0.0.0.0:22` et `[::]:22` |
+| Connexion par clé autorisée | **OK**, shell PowerShell 5.1, code 0 |
+| Connexion par mot de passe | refusée |
+| Connexion par clé non autorisée (paire jetable générée pour le test) | refusée |
+| Méthodes annoncées après correctif | `publickey` seule |
+
+Empreintes d'hôte (relevées par `ssh-keyscan`, `C:\ProgramData\ssh` étant
+illisible hors élévation) :
+`ED25519 SHA256:BrGg+C4HZzv+mQoBLKm+1KQv8VvmpiWGPg3CFPWD6Lo` ·
+`ECDSA SHA256:YBS8MrlRThPRySJO5DrdjMPPNrZGZ3BPMq7QjA702Gw` ·
+`RSA SHA256:Ti8NCgsa8n5AcN5VL9znVtdkqdAQ/+4ilA1LFxJmfj8`.
+
+### Mesure contre-intuitive
+
+`Add-WindowsCapability` a mis **33 minutes** (11:10 → 11:43), pas les « 1-2 min »
+qu'annonçait mon propre commentaire. Le composant se télécharge depuis Windows
+Update. À ne pas confondre avec un blocage lors d'une réinstallation.
+
+### Non fait, non vérifié, laissé à l'arbitrage
+
+- **La clé générée sur PC2 est sans passphrase** — `ssh-keygen` ne peut pas en
+  demander une en session non interactive. Recommandation faite : que PC1
+  génère la sienne (avec passphrase) et n'exporte que la publique ; la paire
+  de PC2 serait alors supprimée. **Non tranché, non appliqué.**
+- **Rien n'a été fait sur PC1** — aucun accès à `BB-12` depuis cette session.
+  `~/.ssh/config`, la clé et le `known_hosts` y restent à poser à la main.
+- **Le bail DHCP n'est pas réservé.** `192.168.1.175` peut changer et rendre
+  faux le `HostName` de PC1. Réservation à poser sur la box pour la MAC Wi-Fi
+  `84-FD-D1-10-39-E3` — non faite, hors de portée depuis la machine.
+- **Aucune connexion depuis PC1 n'a été testée** : les essais sont partis de
+  PC2 vers sa propre adresse. La traversée réelle du LAN et de la règle
+  pare-feu depuis une autre machine reste **non vérifiée**.
+- **Conséquence de la posture veille (choix assumé)** : PC2 se rendort après le
+  cycle de 01:00 et n'est pas réveillable à distance en Wi-Fi. L'hôte n'est
+  joignable que machine éveillée — le lien ne peut donc pas servir à piloter
+  le cycle nocturne depuis PC1.
+
+## 2026-08-26 (suite 2) — Rotation de la clé SSH, et l'hôte Windows que Claude Desktop ne sait pas prendre
+
+Suite de l'entrée précédente, qui reste telle quelle (registre en ajout seul) :
+les faits ci-dessous en corrigent deux points.
+
+### La clé décrite plus haut est révoquée
+
+L'entrée précédente décrivait une paire générée **sur PC2**, sans passphrase.
+Elle a fini écrite en clair dans la conversation en tentant de la transporter
+vers PC1 — donc compromise. La méthode recommandée dès le départ a fini par
+s'imposer : **PC1 génère sa propre paire (avec passphrase) et n'exporte que la
+publique**. Aucune clé privée ne voyage.
+
+Au passage, un garde-fou de l'outillage a bloqué le ré-encodage base64 de la
+clé privée destiné à contourner un collage multi-ligne défaillant. Le blocage
+était juste : c'est l'export d'une clé privée qui était en cause, pas le
+format. Signalé à l'utilisateur plutôt que contourné.
+
+État final vérifié : `administrators_authorized_keys` ne contient plus que
+`…ICo6a70olYBX5QuzAy/6LE4Ixc9HN8liUoSM5ddUQTOL bb12-vers-pc2`, et l'ancienne
+clé est **refusée** (`Permission denied (publickey)`, testé). Les empreintes
+d'hôte de l'entrée précédente restent valides — seule la clé *client* a tourné.
+
+Détail à ne pas relire de travers : le lanceur a rapporté la tâche en `failed`
+avec un code 255. Ce code vient du **test de révocation, qui devait échouer**.
+Un statut d'échec ne vaut donc pas constat d'échec quand la dernière commande
+d'un lot est un test négatif.
+
+### Claude Desktop ne peut pas prendre PC2 comme hôte SSH
+
+Demande faite en séance : ajouter PC2 comme connexion SSH dans l'app Desktop
+(`+ Add SSH connection` dans le menu d'environnement). **Impossible** — la
+documentation pose que « the remote machine must run Linux or macOS », parce
+que Desktop installe lui-même Claude Code sur la machine distante. PC2 est
+sous Windows 11 : la fonction est hors de portée, quel que soit le réglage.
+
+Substituts existants, aucun engagé : `/remote-control` sur une session lancée
+sur PC2 (la seule voie qui garde la main sur une session tournant réellement
+sur la machine du cycle) ; ou SSH puis `claude` en ligne de commande dans le
+shell PowerShell obtenu. Une troisième voie — un `sshd` WSL sur un autre port —
+n'a pas été chiffrée : elle exposerait un second serveur à durcir et Claude y
+verrait le système de fichiers Linux, pas `C:\Lowi_bkk`.
+
+### Toujours non vérifié
+
+La connexion **depuis BB-12 n'a toujours pas été observée aboutir**. Tous les
+tests de cette séance sont partis de PC2 vers sa propre adresse ; la traversée
+réelle du LAN et de la règle pare-feu depuis l'autre poste reste à confirmer.
+
+### Addendum — la connexion depuis BB-12 est vérifiée
+
+Le point resté ouvert dans les deux entrées précédentes est levé : une
+connexion SSH partie de **BB-12** vers PC2 a abouti (essai utilisateur). La
+traversée réelle du LAN et de la règle `Lowi-SSH-LAN` est donc constatée, et
+non plus seulement inférée d'essais faits par PC2 sur sa propre adresse.
+
+Relevé au passage, et non traité : **le CLI Claude Code n'est pas installé sur
+PC2.** Le seul binaire présent est `AppData\Local\AnthropicClaude\claude.exe`,
+c'est-à-dire l'application Desktop (Electron/Squirrel), sans mode terminal —
+inutilisable dans une session SSH. `node`/`npm` sont également absents, ce qui
+écarte la voie npm. Un shell SSH sur PC2 n'offre donc aujourd'hui **aucune
+commande `claude`**. Les identifiants existent déjà
+(`~/.claude/.credentials.json`, 11 Ko, posés par l'app Desktop) : un CLI
+installé les reprendrait *vraisemblablement* sans nouvelle authentification —
+supposition, non vérifiée.
+
+### Addendum 2 — le CLI installé sur PC2, et deux suppositions démenties par la mesure
+
+Objectif de la demande : lancer des sessions Claude Code **sur PC2 depuis
+PC1**, par SSH. Le CLI a été installé par l'utilisateur (installateur natif) —
+`C:\Users\Remidaboss\.local\bin\claude.exe`, version 2.1.246, 251 Mo. Deux
+choses qui semblaient acquises ne l'étaient pas.
+
+**1. L'installateur n'écrit pas le PATH dans le registre.** `.local\bin` était
+présent dans la session courante mais **absent du PATH utilisateur
+persistant**. Or une connexion SSH construit son environnement depuis le
+registre : `claude` y aurait été introuvable, sans que rien n'indique que
+l'installation était pourtant complète. Ajouté en portée utilisateur, puis
+`sshd` redémarré — le service tournait depuis avant la modification et
+transmettait un environnement périmé à ses sessions filles.
+
+**2. Le CLI ne reprend PAS les identifiants de l'app Desktop.** L'addendum
+précédent supposait le contraire, en le marquant comme supposition : c'est
+faux. `~/.claude/.credentials.json` (11 Ko, posé par l'app Desktop) existe bel
+et bien, et `claude -p` répond malgré tout `Not logged in · Please run /login`.
+Une authentification propre au CLI (`claude auth login`) est donc nécessaire —
+étape non prévue, laissée à l'utilisateur (flux OAuth).
+
+**Rappel de terrain** : deux commandes ont été lancées sur le mauvais poste
+(`ssh -i "$env:USERPROFILE\...id_bb12_lowi"` exécuté depuis PC2, où cette clé
+n'existe pas). La consigne du CLAUDE.md — nommer le poste avant d'agir — vaut
+aussi pour les instructions qu'on rédige : une commande utilisant
+`$env:USERPROFILE` change de sens selon la machine qui la lit, et doit être
+donnée sous un intertitre nommant explicitement le poste.
+
+### Reste non vérifié
+
+Le **rendu de l'interface plein écran de Claude Code à travers une session SSH
+Windows** (ConPTY) n'est pas mesuré, et ne peut plus l'être depuis PC2 : la
+seule clé autorisée est celle de BB-12, à passphrase, détenue par
+l'utilisateur. Replis connus si le rendu est inutilisable : `claude -p` en
+non-interactif, ou `/remote-control` sur une session lancée localement.
+
+---
+
+## 2026-08-26 (suite 3) — L'architecture remise d'aplomb : la doc décrivait un système qui n'existe plus
+
+**Contexte.** Demande de confirmation d'une architecture : « l'utilisateur
+accède à la carte via Vercel, la DB reste sur PC2, le site charge ses requêtes
+depuis la DB de PC2 ». J'ai répondu par la négative en m'appuyant sur
+`CLAUDE.md`. **C'était faux, et pour la pire des raisons** : la doc de
+référence décrivait un système qui avait cessé d'exister la veille. La bascule
+SQLite du 2026-08-25 (commit `cea4938`) a changé la source de vérité sans que
+`CLAUDE.md` en dise un mot. Première leçon de l'épisode, et elle vise le
+processus, pas le code : **une bascule d'architecture qui ne met pas à jour le
+document de référence produit une doc qui ment avec autorité.**
+
+### Ce que la mesure établit
+
+| | SQLite local (PC2) | Supabase |
+|---|---|---|
+| Annonces | **76 942** | 69 175 |
+| Actives | **53 258** | 46 881 |
+| Dernier `first_seen` | **2026-08-25 23:46** | 2026-08-22 08:27 |
+| Dernier `scan_run` | **2026-08-25 23:48** (ddproperty) | **2026-08-22 08:27** |
+| Taille | 1,19 Go | 139 Mo |
+| Tables | 11 | 9 (+ 13 vues) |
+
+**7 767 annonces, dont 6 377 actives, existent sur PC2 et pas sur le serveur.**
+Le `max(last_seen)` du serveur au 2026-08-25 13:57 est un leurre : il ne
+correspond à aucun `scan_run` et provient de la migration de dégraissage du
+même jour. Le dernier scrap réellement écrit en ligne date du **22/08**.
+
+Les 2 tables d'écart sont exactement `cohort_snapshots` et `listing_amenities`,
+retirées du serveur par le dégraissage (810 → 139 Mo) avec `page_text` et
+`description`. Le serveur n'est donc plus une réplique amaigrie : c'est une
+**fenêtre chaude** au sens des colonnes *et* figée au sens des lignes.
+
+### Trois affirmations, trois verdicts distincts
+
+1. **« Supabase est dépassée » — CONFIRMÉ.** Chiffres ci-dessus.
+2. **« À chaque scrap, les infos vitales remontent vers Vercel » — L'INTENTION
+   EST ÉCRITE, LE MÉCANISME NE TOURNE PAS.** L'outil existe
+   (`ops/remonter-local.py`, qui rejoue un scrap local vers Supabase par le
+   même chemin d'écriture que le scraper, sans délistage ni écrasement). Mais
+   il n'est appelé par **aucun** des 17 agents de `agents/agents.json` :
+   absent de toute `cmd`, de toute lane. Il est manuel, et n'a pas été lancé
+   depuis le 22/08.
+3. **« Une requête non supportée sur Vercel interroge PC2 » — CE CHEMIN
+   N'EXISTE PAS.** Aucun tunnel dans le code applicatif (`grep` sur
+   `tunnel|ngrok|cloudflared|tailscale|REMOTE_DB` hors dépendances : zéro).
+   `lib/listings-db.ts:74` n'offre que deux branches exclusives —
+   `LOWI_SQLITE_DB` (un **fichier** local, donc inatteignable depuis Vercel)
+   ou `SUPABASE_DB_URL` (pool `pg`). PC2 n'expose ni port, ni IP fixe, ni
+   service.
+
+**Le dépôt s'était déjà signalé à lui-même.** `agents/agents.json:446` porte
+depuis le 23/08 : *« RESTE À TRANCHER : le site Vercel lit toujours Supabase,
+qui ne reçoit plus rien ; et les 3 agents de sauvegarde répliquent encore
+Supabase VERS l'archive, soit l'inverse du sens utile maintenant. »* La note
+était juste, datée, et personne — moi compris — n'est allé la lire avant
+d'affirmer le contraire. Un avertissement rangé dans un fichier de config n'est
+pas un garde-fou : rien ne le fait remonter (règle 2).
+
+### Conséquence pour l'utilisateur du site, à ce jour
+
+`lowi-bkk.vercel.app` sert un marché **vieux de quatre jours et amputé de
+6 377 annonces actives**, sans que rien ne le signale — ni bandeau, ni alerte,
+ni écart mesuré par un agent. C'est la panne silencieuse type : tout est vert
+partout, et la donnée servie est fausse.
+
+### Décision
+
+Remettre la **documentation** d'aplomb d'abord, le flux ensuite. `CLAUDE.md`
+refait sur trois points : une section « Architecture des données — où vit la
+vérité » qui nomme les trois étages et l'état de la liaison ; le tableau de
+stack corrigé (`Backend/stockage` annonçait Supabase comme base d'écriture) ;
+la volumétrie réactualisée au 2026-08-26.
+
+Quatre principes permanents y sont inscrits comme règles, à la demande de
+l'utilisateur — ils n'étaient jusqu'ici qu'implicites, donc inapplicables :
+
+- **Règle 7 — tout est réversible.** Toute migration livre son rollback,
+  vérifié depuis l'état live, avant d'être appliquée.
+- **Règle 8 — la donnée est protégée avant d'être optimisée.** Aucune purge,
+  aucun dégraissage, aucune suppression sans copie vérifiée ligne à ligne
+  ailleurs.
+- **Règle 9 — Vercel reste sous son free tier**, et la consommation se mesure,
+  ne se suppose pas.
+- **Règle 10 — chaque milestone est audité après coup** sur la structure, la
+  sécurité des postes et celle de Vercel.
+
+Création d'un **masterlog** (`docs/masterlog.md`) : registre horodaté des
+demandes, append-only, **consulté sur demande seule**. Il ne double ni le
+journal (le *pourquoi*) ni git (le *quoi* livré) : il garde trace de ce qui a
+été **voulu**, y compris les demandes sans suite. Le registre démarre au
+2026-08-26 ; les demandes antérieures ne sont pas reconstituées, les inventer
+après coup contredirait la règle 1.
+
+### Ce qui n'a PAS été fait
+
+- **Le flux de données n'est pas rétabli.** Vercel sert toujours un instantané
+  du 22/08. C'est une décision de posture (règle 5), pas un correctif : elle
+  engage le volume remonté et donc le quota Supabase. Trois options chiffrées
+  ont été présentées, aucune appliquée — voir « À trancher » ci-dessous.
+- **Les 3 agents de sauvegarde n'ont pas été inversés.** Ils répliquent encore
+  Supabase → archive, sens devenu inutile depuis que la référence est locale.
+- **Aucun garde-fou de fraîcheur n'a été posé.** `ops/verifie-synchro.py` fait
+  déjà le croisement qui détecterait le décrochage, mais n'appartient à aucune
+  lane (`lanes: []`). Le brancher supposerait de fixer un seuil — arbitrage.
+- **La consommation Vercel n'est pas mesurée.** La règle 9 est donc inscrite
+  sans chiffre de départ. Ce qu'on sait : toutes les pages sont en
+  `force-dynamic` (obligatoire, l'accès dépend d'un cookie), donc une visite =
+  une invocation ; `memoTTL` (TTL 1 h, mémoire de processus, non partagé)
+  amortit les requêtes DB mais pas les invocations ; les poids de page datent
+  du 2026-07-28 (3,9 à 4,0 Mo, sauf `/tension-table` à 8,6 Mo) et n'ont pas été
+  remesurés depuis que le stock actif est passé à 53 258.
+- **Le premier audit de milestone (règle 10) n'a pas été conduit.** La règle
+  est écrite, la procédure reste à définir.
+
+### À trancher
+
+1. **Brancher `remonter-local.py` en fin de lane `daily`**, après les
+   extracteurs. Question ouverte, et elle n'est pas cosmétique : le serveur est
+   à 139 Mo sur 500, et le local pèse 1,19 Go. Remonter tout le socle
+   ramènerait le problème de quota qui a motivé la bascule (le free tier était
+   à **143 %** le 20/08). Il faut décider *quelles colonnes et quelles lignes*
+   constituent la « fenêtre chaude » servie au public.
+2. **Inverser le sens des agents de sauvegarde.**
+3. **Seuil du garde-fou de fraîcheur** : un écart `max(first_seen)` local vs
+   serveur supérieur à N heures. N reste à fixer, sachant que la cadence de
+   scrap est quotidienne depuis le 2026-08-23.
