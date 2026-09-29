@@ -76,3 +76,18 @@ ops/miroir/
 
 # reglages Claude Code PAR MACHINE (permissions, chemins du poste)
 .claude/settings.local.json
+
+
+# Le deck a demenage dans docs/club-deal/ le 2026-08-27 : les regles ci-dessus
+# (lowi_pitch_deck*.html, pitch-assets/) ne le couvraient plus, et `git status`
+# le montrait « untracked, non ignore » sur un depot PUBLIC — un seul `git add -A`
+# aurait publie le deck investisseur, la grille de frais et les 4 cas d etude.
+# Constate a l audit du 2026-08-28. La protection etait decidee, c est le chemin
+# qui avait bouge.
+docs/club-deal/
+
+# collecteur Facebook (scraper/social) : dependances npm et sonde de run
+scraper/social/node_modules/
+scraper/social/logs/
+scraper/social/diag/*.json
+scraper/social/diag/*.png

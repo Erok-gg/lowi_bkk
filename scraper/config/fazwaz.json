@@ -7,8 +7,13 @@
   "image_rate_limit_seconds": 0.4,
   "timeout_seconds": 30,
   "max_pages": 150,
-  "order_by": "user_updated_at|desc",
-  "_order_by_comment": "Tri par fraîcheur (annonces les + récemment mises à jour d'abord). Sans ça, le tri 'ranking' par défaut de FazWaz favorise les annonces sponsorisées et le catalogue (34k+ annonces vente) dépasse largement les 150 pages couvertes → la majorité du stock (dont les annonces récentes mal classées) n'est jamais vue. Testé : répartition par quartier quasi identique au tri par défaut (pas de biais géo supplémentaire), et les 150 pages couvrent ~2 mois de fraîcheur.",
+  "discovery": "sitemap",
+  "sitemap_index": "https://www.fazwaz.com/sitemap-listings.xml",
+  "sitemap_filter": "condo-for-(?:sale|rent)-.*-bangkok-u\\d+$",
+  "sitemap_max_age_days": 60,
+  "max_detail_visits": 1000,
+  "sitemap_cache_minutes": 180,
+  "_discovery_comment": "Depuis le 2026-09-13. Le 2026-09-12, robots.txt a interdit '/*?*order_by=' : le tri par fraîcheur (order_by=user_updated_at|desc) qui faisait tenir le catalogue dans 150 pages est devenu interdit, et sans lui 150 pages = 2,7 % du catalogue (mesure 2026-08-23). Le même robots.txt déclare sitemap-listings.xml (27 fichiers, un <lastmod> par annonce) : c'est le canal que le site publie pour les robots — on ne contourne rien. Mesuré le 2026-09-13 : 84 534 condos Bangkok (49 019 loc / 35 515 vente) contre 10 915 actives en base ; 17/17 URL testées vivantes avec prix, dont 7 que la base croyait délistées. sitemap_max_age_days = la définition de série des 150 pages (« ~2 mois ») conservée : borne l'ingestion des inconnues et la réactivation des délistées, PAS la confirmation des actives (présente dans le sitemap = vivante). max_detail_visits = fiches ouvertes par run (fraîcheur d'abord) : à ~4 s la fiche, 1 000 ≈ 1 h 10 par deal_type ; le retard initial (11 135 inconnues + 5 825 à réactiver dans la fenêtre) s'étale sur ~9 nuits. Le mode 'list' (pages paginées, JSON-LD, dédup sur le prix) reste dans le code : discovery='list' le rallume, mais sans order_by il ne voit que la tête du classement par défaut (sponsorisé).",
   "respect_robots": true,
   "searches": [
     {

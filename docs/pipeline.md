@@ -80,11 +80,20 @@ Brotli est volontairement absent des en-têtes : `requests` ne le décode pas.
 
 ```mermaid
 flowchart TD
-  F[FazWaz] -->|JSON-LD des pages de LISTE| F1[nom, chambres, surface,<br/>géo, district — 1 requête = N annonces]
+  F[FazWaz] -->|sitemap-listings.xml : 27 fichiers,<br/>un lastmod par annonce — depuis le 2026-09-13| F1[fiche : prix, nom, chambres, surface,<br/>SDB, coords — meta title/description + :lat/:lng]
   D[DDproperty] -->|__NEXT_DATA__ Next.js| D1[liste : id, prix, adresse complète<br/>fiche : coords précises, galerie]
   P[PropertyScout] -->|__NEXT_DATA__ SERP| P1[~20 annonces complètes/page<br/>+ gpsLat/Long, saleQuota]
   N[Nestopa] -->|ld+json Product du flux| N1[pas de coords serveur<br/>khet déduit du slug d'URL]
 ```
+
+**FazWaz ne lit plus de page de liste** (2026-09-13) : robots.txt y interdit
+`order_by=` depuis la veille, et sans tri par fraîcheur 150 pages = 2,7 % du
+catalogue. Le sitemap que ce même robots.txt déclare énumère les 84 534 condos
+Bangkok avec leur `lastmod` ; `pipeline/sitemap.py` en tire la règle :
+présente = vivante (confirmée sans rouvrir la fiche), `lastmod` > `last_seen`
+= à rouvrir, fenêtre de 60 j seulement pour ce qu'on ne suit pas encore,
+budget de fiches par run (`max_detail_visits`). Le JSON-LD des pages de liste
+reste dans le code en repli (`discovery: "list"`).
 
 Aucun sélecteur en dur dans le code : URLs, pagination, rate-limit et options
 vivent dans `scraper/config/<site>.json`. Un scrap ciblé se lance avec

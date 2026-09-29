@@ -1,24 +1,43 @@
 """load_social_leads.py — charge les annonces réseaux sociaux dans social_leads.
 
-Lit le JSON produit par agent2_scraper (collecte Facebook → extraction par le
-modèle local → rapprochement avec les condos Lowi) et l'insère dans la table
+Lit le JSON produit par scraper/social (collecte Facebook, rapatriée de
+C:\agentic\agents\agent2_scraper le 2026-09-13 → extraction par une
+routine Claude planifiée, modèle Haiku — pas d'Ollama, PC1 n'est pas engagé
+dans ce pipeline, décision du 2026-09-12 → rapprochement avec les condos Lowi)
+et l'insère dans la table
 `social_leads`, VOLONTAIREMENT SÉPARÉE de `listings` : ces données sont
 déclaratives et non vérifiées, elles ne doivent pas contaminer les statistiques
 de marché.
 
 Usage :
   python load_social_leads.py <fichier_resolu.json> [--sqlite]
-    --sqlite : charge dans archive/lowi-archive.db au lieu de Supabase
-               (utile pour tester sans toucher au serveur)
+    --sqlite : charge dans scraper/output/social-leads.db — base DÉDIÉE, séparée
+               de bangkok.db (2026-09-12, décision explicite : les leads FB
+               s'analysent à part, une réconciliation avec la référence reste
+               un geste manuel futur, pas un flux automatique). C'est le mode
+               par défaut voulu pour social_leads : pas de page publique
+               dessus, donc pas de raison de payer du quota Supabase non plus
+               (règle 9). Supabase reste disponible si une revue web est un
+               jour voulue.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import sys
 from pathlib import Path
+
+# Appelé par l'agent social-leads avec stdout en tube : Python retombe alors sur
+# cp1252 et le premier « → » plantait en UnicodeEncodeError. Mesuré : 10
+# collectes (13→22/09) rejetées chaque nuit du 21 au 26/09, 0 fiche chargée.
+for _flux in (sys.stdout, sys.stderr):
+    try:
+        _flux.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
 
 BASE = Path(__file__).resolve().parent.parent
 MIGRATION = BASE / "supabase" / "migrations" / "social_leads.sql"
@@ -44,9 +63,36 @@ def lead_id(f: dict) -> str:
     return f"facebook:{f.get('groupe','?')}:{h}"
 
 
-def to_row(f: dict) -> dict | None:
-    if not f.get("est_une_annonce"):
-        return None
+# Villes thaïlandaises fréquentes hors Bangkok, citées de temps en temps dans
+# ces groupes (annonce d'un membre ailleurs, discussion) — rejet explicite
+# plutôt qu'une absence de filtre qui laisserait tout passer par défaut.
+AUTRE_VILLE = re.compile(
+    r"\b(pattaya|phuket|chiang\s*mai|chiang\s*rai|hua\s*hin|koh\s*samui|koh\s*phangan|"
+    r"เชียงใหม่|เชียงราย|ภูเก็ต|พัทยา|หัวหิน|สมุย)\b", re.I,
+)
+
+
+def collecte_solide(f: dict) -> bool:
+    """2026-09-12, demande explicite : ne collecter que du condo à Bangkok,
+    et seulement si assez de champs sont renseignés pour être comparable au
+    marché des plateformes (adresse/condo, surface, prix OU loyer, chambres).
+    Vérifié AVANT tout le reste — un condo sans ces 4 signaux n'est pas une
+    fiche exploitable, juste du bruit qui gonflerait social_leads pour rien.
+    """
+    if f.get("type_bien") != "condo":
+        return False
+    texte = f"{f.get('quartier','')} {f.get('texte','')}"
+    if AUTRE_VILLE.search(texte):
+        return False
+    a_adresse = bool((f.get("nom_immeuble") or "").strip())
+    a_surface = isinstance(f.get("surface_sqm"), (int, float)) and f.get("surface_sqm", 0) > 0
+    a_prix = (isinstance(f.get("prix_vente_thb"), (int, float)) and f.get("prix_vente_thb", 0) > 0) or \
+             (isinstance(f.get("loyer_mensuel_thb"), (int, float)) and f.get("loyer_mensuel_thb", 0) > 0)
+    a_chambres = isinstance(f.get("chambres"), (int, float)) and f.get("chambres", 0) > 0
+    return a_adresse and a_surface and a_prix and a_chambres
+
+
+def _row(f: dict) -> dict:
     num = lambda v: v if isinstance(v, (int, float)) and v > 0 else None
     return {
         "id": lead_id(f),
@@ -81,22 +127,39 @@ def to_row(f: dict) -> dict | None:
     }
 
 
-COLS = list(to_row({"est_une_annonce": True}).keys())
+def to_row(f: dict) -> dict | None:
+    if not f.get("est_une_annonce"):
+        return None
+    if not collecte_solide(f):
+        return None
+    return _row(f)
+
+
+COLS = list(_row({}).keys())
 
 
 def charger_sqlite(rows: list[dict]) -> None:
-    db = BASE / "archive" / "lowi-archive.db"
+    db = BASE / "scraper" / "output" / "social-leads.db"
     con = sqlite3.connect(db)
     # Le SQL Postgres n'est pas exécutable tel quel en SQLite : on crée une
     # table équivalente simplifiée (mêmes colonnes, sans les contraintes).
     con.execute(
         "create table if not exists social_leads ("
         + ", ".join(f"{c} text" for c in COLS)
-        + ", status text default 'new', first_seen text, last_seen text, primary key(id))"
+        + ", status text not null default 'new',"
+        + " first_seen text not null default (datetime('now')),"
+        + " last_seen text not null default (datetime('now')),"
+        + " primary key(id))"
     )
     ph = ",".join("?" * len(COLS))
+    # upsert : first_seen n'est JAMAIS réécrit (c'est la date de première
+    # collecte, la donnée d'historique qu'on veut préserver) ; seul last_seen
+    # avance à chaque republication vue — c'est ce qui rendra mesurable la
+    # fraîcheur des annonces Facebook une fois plusieurs jours accumulés.
+    maj = ", ".join(f"{c}=excluded.{c}" for c in COLS if c != "id")
     con.executemany(
-        f"insert or replace into social_leads ({','.join(COLS)}) values ({ph})",
+        f"insert into social_leads ({','.join(COLS)}) values ({ph}) "
+        f"on conflict(id) do update set {maj}, last_seen=datetime('now')",
         [tuple(str(r[c]) if r[c] is not None else None for c in COLS) for r in rows],
     )
     con.commit()

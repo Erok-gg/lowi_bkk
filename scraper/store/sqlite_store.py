@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pipeline import details
-from store.base import BaseStore
+from store.base import COLONNES_LISTING, COLONNES_LOCALES, BaseStore
 
 _SCHEMA = """
 create table if not exists listings (
@@ -59,6 +59,21 @@ create table if not exists scan_runs (
 create index if not exists idx_listings_khet on listings(khet);
 create index if not exists idx_listings_status on listings(status);
 create index if not exists idx_images_listing on listing_images(listing_id);
+-- PERIMETRE ASSAINI — meme definition que la vue Postgres du meme nom
+-- (supabase/migrations/plausibilite.sql) et que lib/market-bounds.ts. Les trois
+-- doivent rester alignes : c'est la regle de la source unique de CLAUDE.md, et
+-- une 3e definition divergente avait deja ete trouvee dans study/config.json le
+-- 2026-08-03. Creee ici parce que le stockage de reference est passe en local
+-- le 2026-08-23 : sans elle, l'etude de marche n'a plus de perimetre.
+create view if not exists listings_sane as
+select * from listings
+where price is not null
+  and (area_sqm is null or area_sqm between 15 and 500)
+  and (
+    (deal_type = 'sale' and price between 800000 and 100000000)
+    or
+    (deal_type = 'rent' and price between 3000 and 500000)
+  );
 """
 
 
@@ -75,6 +90,27 @@ JOURS_AVANT_SORTIE_VENDU = 7
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _contenu_a_change(existing, col: str, valeur_liee) -> bool:
+    """Le contenu synchronisable a-t-il vraiment bougé pour cette colonne ?
+
+    Compare la valeur déjà stockée (`existing`, un `sqlite3.Row` — donc déjà
+    dans la représentation SQLite : JSON pour les listes, 0/1 pour les
+    booléens) à la valeur qui vient d'être liée par `_valeur()` — MÊME
+    représentation des deux côtés, pas de conversion à inventer ici.
+    Tolérance volontaire sur `None` vs valeur : deux façons différentes de
+    dire "pas de valeur" (`None`, `""`) ne comptent pas comme un changement,
+    sinon `dirty_since` se déclencherait sur du bruit de normalisation plutôt
+    que sur un changement réel — en cas de doute persistant, on considère
+    que ça a changé (mieux vaut une remontée inutile qu'une remontée manquée).
+    """
+    ancien = existing[col] if col in existing.keys() else None
+    if ancien == valeur_liee:
+        return False
+    if not ancien and not valeur_liee:
+        return False
+    return True
 
 
 def _median(valeurs) -> float | None:
@@ -96,11 +132,50 @@ def _median(valeurs) -> float | None:
     return float(v[m]) if len(v) % 2 else (v[m - 1] + v[m]) / 2.0
 
 
+#: Attente d'un verrou avant d'abandonner. Le defaut de sqlite3 est 5 s.
+#:
+#: MESURE DU 2026-08-25, cycle de 08:26 : l'orchestrateur lance les CINQ
+#: extracteurs EN PARALLELE — ce qui allait de soi tant que le stockage etait
+#: Postgres, qui accepte cinq ecrivains. SQLite n'en accepte qu'UN. Resultat sur
+#: le premier cycle apres la bascule locale du 2026-08-23 : 4 790 erreurs
+#: « database is locked », FazWaz a enregistre 28 annonces pour 3 285 echecs,
+#: PropertyScout est mort a l'ecriture de son scan_run. Aucune donnee perdue
+#: (chaque echec est attrape annonce par annonce et l'annonce est retiree de
+#: `seen_ids`, donc le garde-fou anti-delistage a tenu), mais le cycle etait
+#: perdu a 99 %.
+#:
+#: 60 s : une transaction d'upsert dure quelques millisecondes ; il faudrait des
+#: milliers d'ecrivains simultanes pour depasser ce delai. On attend son tour au
+#: lieu d'abandonner.
+#:
+#: 2026-09-09 — PORTE A 300 s. La premisse ci-dessus a cesse d'etre vraie : une
+#: ecriture coute desormais 0,99 s en moyenne (mesure du run du 08/09, table
+#: « ou est passe le temps », 1 397 appels / 22,9 min) sur une base passee de
+#: 1,19 Go (26/08) a 2,24 Go, et 5 extracteurs ecrivent en parallele. La nuit du
+#: 08/09 : 6 747 « database is locked », dont 4 402 sur fazwaz et 2 345 sur
+#: ddproperty — les deux seules etapes qui demarrent a la MEME seconde ; toutes
+#: les etapes `then_*`, decalees, en ont eu ZERO. Les 7 cycles precedents : 0.
+#: Effet de seuil, donc, sur une grandeur qui monte de ~75 Mo/jour.
+#: 300 s ne corrige pas la latence d'ecriture — il empeche qu'une passe entiere
+#: soit perdue le temps qu'elle soit traitee. Se defait en remettant 60.
+ATTENTE_VERROU_S = 300
+
+
 class SqliteStore(BaseStore):
     def __init__(self, db_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(db_path)
+        self.db = sqlite3.connect(db_path, timeout=ATTENTE_VERROU_S)
         self.db.row_factory = sqlite3.Row
+        # WAL : les lecteurs cessent de bloquer l'ecrivain, et un commit n'a plus
+        # a reecrire le journal complet. C'est ce qui rend la parallelisation des
+        # extracteurs tenable — l'ecriture reste serialisee, mais chaque tour de
+        # verrou dure des millisecondes au lieu de dizaines.
+        # synchronous=NORMAL est le reglage SUR sous WAL (aucune corruption
+        # possible en cas de plantage applicatif ; seule une coupure de courant
+        # peut coûter les dernieres transactions, que le scrap suivant reprend).
+        self.db.execute("pragma journal_mode=WAL")
+        self.db.execute("pragma synchronous=NORMAL")
+        self.db.execute(f"pragma busy_timeout={ATTENTE_VERROU_S * 1000}")
         self.db.executescript(_SCHEMA)
         self._migrate()
         self.db.commit()
@@ -176,6 +251,30 @@ class SqliteStore(BaseStore):
                          *details.COLONNES):
             if col not in lcols:
                 self.db.execute(f"alter table listings add column {col} {typ}")
+        # `dirty_since` : marque locale des lignes dont le CONTENU synchronisable
+        # (COLONNES_LISTING) a changé depuis le dernier envoi réussi vers
+        # Supabase — ou dont le statut vient de basculer hors 'active'. Sert de
+        # file d'attente pour `ops/remonter-local.py --delta` (2026-09-07) :
+        # avant, chaque remontée réévaluait TOUTE la fenêtre active (81 889
+        # lignes, 33 lots) pour laisser Postgres décider ce qui avait changé —
+        # demandé par l'utilisateur en observant l'incident du jour (`remonter-
+        # supabase` bloqué par le pooler Supabase, "ECIRCUITBREAKER: too many
+        # authentication failures") : "only update what's new and remove what's
+        # not updated anymore". `dirty_since` déplace le calcul du delta côté
+        # local (déjà fait à l'écriture, gratuit) au lieu d'un aller-retour
+        # réseau par lot pour le découvrir.
+        if "dirty_since" not in lcols:
+            self.db.execute("alter table listings add column dirty_since text")
+            # Backfill : toute ligne active OU déjà délistée est marquée sale UNE
+            # FOIS pour établir la base de référence sur Supabase (l'ancien
+            # mécanisme n'a jamais suivi qui était déjà synchronisé) — la
+            # prochaine remontée en mode --delta fait donc un dernier passage
+            # complet, puis devient réellement incrémentale ensuite.
+            self.db.execute(
+                "update listings set dirty_since=? where status='active' or delisted_at is not null",
+                (_now(),),
+            )
+        self.db.execute("create index if not exists idx_listings_dirty on listings (dirty_since)")
         self.db.execute("create index if not exists idx_listings_unit on listings (unit_key)")
         self.db.execute("""create table if not exists cohort_snapshots (
             id integer primary key autoincrement, taken_at text not null,
@@ -233,36 +332,42 @@ class SqliteStore(BaseStore):
 
     def touch_listing(self, listing_id: str) -> None:
         # Revue = série d'absences interrompue : on remet le compteur à zéro.
-        self.db.execute(
-            "update listings set status='active', last_seen=?,"
-            " missed_count=0, first_missed_at=null,delisted_at=null where id=?",
-            (_now(), listing_id),
-        )
+        # `dirty_since` : ne bouge QUE si la ligne n'était pas déjà active —
+        # une résurrection change ce que Supabase doit savoir, un simple
+        # "revu, rien de neuf" ne doit pas gonfler le paquet du jour.
+        row = self.db.execute("select status from listings where id=?", (listing_id,)).fetchone()
+        etait_active = row is not None and row["status"] == "active"
+        now = _now()
+        if etait_active:
+            self.db.execute(
+                "update listings set status='active', last_seen=?,"
+                " missed_count=0, first_missed_at=null,delisted_at=null where id=?",
+                (now, listing_id),
+            )
+        else:
+            self.db.execute(
+                "update listings set status='active', last_seen=?,"
+                " missed_count=0, first_missed_at=null,delisted_at=null,dirty_since=? where id=?",
+                (now, now, listing_id),
+            )
         self.db.commit()
 
     def upsert_listing(self, norm: dict, images: list[dict] | None) -> tuple[str, float | None]:
         existing = self.get_listing(norm["id"])
         now = _now()
-        cols = (
-            "source", "source_url", "title", "deal_type", "quota", "tenure", "price",
-            "currency", "area_sqm", "price_per_sqm", "bedrooms", "bathrooms", "condo_name",
-            "address_raw", "khet", "khwaeng", "street", "lat", "lng",
-            # cohorte (robuste aux republications), âge du bâtiment, empreinte photo
-            "unit_key", "year_built", "photo_count", "photo_sizes",
-            # provenance : qui publie, quand, et republication signalée par la source
-            "agent_id", "agency_id", "posted_at", "is_auto_repost", "market_status",
-            # descriptif libre (capturé depuis le 2026-07-31, non rétroactif)
-            "description", "page_text",
-            # détails extraits du descriptif (cf. pipeline/details.py)
-            *(c for c, _ in details.COLONNES),
-        )
+        # Exemplaire unique dans store/base.py (cf. le commentaire la-bas).
+        # Le local ecrit EN PLUS `description` et `page_text` : depuis le
+        # 2026-08-25 ils ne partent plus vers Supabase (l'app ne les lit jamais,
+        # ils pesaient 290 Mo sur un quota gratuit de 500 deja depasse). Le
+        # local est l'archive de reference, il garde tout.
+        cols = COLONNES_LISTING + COLONNES_LOCALES
 
         if existing is None:
             self.db.execute(
-                f"insert into listings (id,{','.join(cols)},status,first_seen,last_seen,raw_data) "
-                f"values (?,{','.join('?' for _ in cols)},'active',?,?,?)",
+                f"insert into listings (id,{','.join(cols)},status,first_seen,last_seen,raw_data,dirty_since) "
+                f"values (?,{','.join('?' for _ in cols)},'active',?,?,?,?)",
                 (norm["id"], *[self._valeur(c, norm) for c in cols], now, now,
-                 json.dumps(norm.get("raw_data", {}), ensure_ascii=False)),
+                 json.dumps(norm.get("raw_data", {}), ensure_ascii=False), now),
             )
             if norm.get("price") is not None:
                 self._add_price(norm["id"], norm["price"], now)
@@ -280,12 +385,21 @@ class SqliteStore(BaseStore):
         # l'ancienne valeur, et un instantané ne dit rien d'une évolution.
         self._track_posted_at(existing, norm.get("posted_at"), now)
         self._suivre_statut_marche(existing, norm.get("market_status"), now)
+        valeurs_liees = [self._valeur(c, norm) for c in cols]
+        # Une résurrection (déjà inactive/sold, revue en scan) compte comme un
+        # changement de contenu même si toutes les colonnes sont identiques :
+        # Supabase doit apprendre que l'annonce est de nouveau active.
+        contenu_change = existing["status"] != "active" or any(
+            _contenu_a_change(existing, c, v)
+            for c, v in zip(COLONNES_LISTING, valeurs_liees[:len(COLONNES_LISTING)])
+        )
+        dirty_since = now if contenu_change else existing["dirty_since"]
         self.db.execute(
             f"update listings set {','.join(c+'=?' for c in cols)},"
             f"status='active',last_seen=?,raw_data=?,"
-            f"missed_count=0,first_missed_at=null,delisted_at=null where id=?",
-            (*[self._valeur(c, norm) for c in cols], now,
-             json.dumps(norm.get("raw_data", {}), ensure_ascii=False), norm["id"]),
+            f"missed_count=0,first_missed_at=null,delisted_at=null,dirty_since=? where id=?",
+            (*valeurs_liees, now,
+             json.dumps(norm.get("raw_data", {}), ensure_ascii=False), dirty_since, norm["id"]),
         )
         status = "unchanged"
         if new_price is not None and old_price is not None and float(new_price) != float(old_price):
@@ -386,13 +500,44 @@ class SqliteStore(BaseStore):
         Voir SupabaseStore.appliquer_ventes pour le raisonnement."""
         from datetime import timedelta
         limite = (datetime.now(timezone.utc) - timedelta(days=jours)).isoformat()
+        # `dirty_since` : la sortie du stock actif est un changement de statut
+        # que --delta doit propager (retrait côté Supabase), même si aucune
+        # colonne de contenu n'a bougé.
         cur = self.db.execute(
-            "update listings set status='sold', delisted_at=market_status_since "
+            "update listings set status='sold', delisted_at=market_status_since, dirty_since=? "
             "where market_status='sold' and status='active' "
             "  and market_status_since is not null and market_status_since <= ?",
-            (limite,))
+            (_now(), limite))
         self.db.commit()
         return cur.rowcount
+
+    def ids_actifs(self, source: str, deal_type: str | None = None) -> set[str]:
+        q = "select id from listings where source=? and status='active'"
+        params: list = [source]
+        if deal_type:
+            q += " and deal_type=?"
+            params.append(deal_type)
+        return {r[0] for r in self.db.execute(q, params).fetchall()}
+
+    def toucher_lot(self, ids, quand: str) -> int:
+        """Equivalent SQLite de la version Postgres (lots de 500 : limite de
+        variables liees). Ne touche que les lignes deja 'active'."""
+        ids = list(ids)
+        if not ids:
+            return 0
+        touchees = 0
+        for i in range(0, len(ids), 500):
+            lot = ids[i:i + 500]
+            trous = ",".join("?" * len(lot))
+            cur = self.db.execute(
+                f"update listings set last_seen=?, missed_count=0,"
+                f" first_missed_at=null"
+                f" where id in ({trous}) and status='active'",
+                [quand] + lot,
+            )
+            touchees += cur.rowcount
+        self.db.commit()
+        return touchees
 
     def mark_missing_inactive(self, source: str, seen_ids: set[str],
                               deal_type: str | None = None,
@@ -429,8 +574,8 @@ class SqliteStore(BaseStore):
             # Daté de la PREMIÈRE absence, sinon la durée de vie serait
             # surestimée d'un cycle de scan complet.
             self.db.execute(
-                "update listings set status='inactive', delisted_at=? where id=?",
-                (r["first_missed_at"] or now, r["id"]),
+                "update listings set status='inactive', delisted_at=?, dirty_since=? where id=?",
+                (r["first_missed_at"] or now, now, r["id"]),
             )
             missing.append(r["id"])
         self.db.commit()

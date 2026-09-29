@@ -33,6 +33,7 @@ from pipeline.geo_match import KhetMatcher  # noqa: E402
 from pipeline import chrono  # noqa: E402
 from pipeline.images import process_images  # noqa: E402
 from pipeline import photo_sig  # noqa: E402
+from pipeline import sitemap  # noqa: E402
 from pipeline.fiche import write_fiche  # noqa: E402
 from pipeline.keepawake import prevent_sleep  # noqa: E402
 from store.sqlite_store import SqliteStore  # noqa: E402
@@ -161,6 +162,9 @@ def main() -> None:
         timeout_seconds=cfg.get("timeout_seconds", 30),
         respect_robots=cfg.get("respect_robots", True),
         image_rate_limit_seconds=cfg.get("image_rate_limit_seconds", 0.4),
+        backend=cfg.get("fetcher_backend", "requests"),
+        outage_poll_seconds=cfg.get("outage_poll_seconds", 30.0),
+        outage_max_wait_seconds=cfg.get("outage_max_wait_seconds", 20 * 60.0),
     )
     matcher = KhetMatcher()
     geocoder = None
@@ -205,6 +209,16 @@ def main() -> None:
         print(f"→ exclusions actives : {', '.join(excludes)}")
 
     n_new = n_changed = n_unchanged = n_skipped = n_total = n_excluded = n_errors = 0
+    # ── Mode sitemap (le stub porte `lastmod`, cf. pipeline/sitemap.py) ──
+    # La fenêtre borne ce qu'on INGÈRE ou RÉACTIVE (définition de série des
+    # 150 pages : « ~2 mois »), pas ce qu'on confirme vivant. Le budget borne
+    # les fiches ouvertes par run : au premier passage, 11 135 inconnues +
+    # 5 825 délistées à tort attendent dans la fenêtre (mesure 2026-09-13) —
+    # à ~4 s la fiche, ce serait 19 h d'un coup. Étalé sur ~9 nuits à 1 000.
+    fenetre_jours = float(cfg.get("sitemap_max_age_days", 60))
+    budget_visites = cfg.get("max_detail_visits")  # None = illimité
+    n_visites = n_confirmees = n_reportees = n_hors_fenetre = n_indisponibles = 0
+    mode_sitemap = cfg.get("discovery") == "sitemap"
     seen_ids: set[str] = set()
     price_alerts: list[str] = []
     completed = False  # True si le scan est allé au bout (cond. au délistage --full)
@@ -226,6 +240,28 @@ def main() -> None:
             # déjà connue dont le prix (lu dans la liste) n'a pas bougé. Raccourcit
             # fortement les scraps futurs.
             existing = store.get_listing(lid)
+
+            if stub.get("lastmod"):
+                verdict = sitemap.trier(
+                    existing, stub["lastmod"], fenetre_jours,
+                    budget_dispo=(budget_visites is None or n_visites < budget_visites),
+                    a_images=store.has_images(lid))
+                if verdict == "confirmer":
+                    # présente dans le sitemap et rien de neuf depuis notre
+                    # dernier passage → vivante, fiche non rouverte
+                    store.touch_listing(lid)
+                    n_unchanged += 1
+                    n_skipped += 1
+                    n_confirmees += 1
+                    continue
+                if verdict == "reporter":
+                    n_reportees += 1      # budget épuisé : vivante, visitée un prochain run
+                    continue
+                if verdict == "ignorer":
+                    n_hors_fenetre += 1   # inconnue ou délistée, hors fenêtre : pas suivie
+                    continue
+                n_visites += 1
+
             stub_price = stub.get("price")
             if (existing is not None and stub_price is not None
                     and existing["price"] is not None
@@ -240,6 +276,11 @@ def main() -> None:
             # Nouvelle annonce ou prix changé → on visite la fiche (détail + galerie)
             rec = adapter.parse_listing(fetcher, stub)
             if not rec:
+                if stub.get("_indisponible"):
+                    # fiche injoignable, aucun prix connu : ni écrite, ni
+                    # comptée comme vue (sinon --full la croirait vivante)
+                    seen_ids.discard(lid)
+                    n_indisponibles += 1
                 continue
             norm = normalize(rec)
             # filet de sécurité : nom de condo connu seulement via la fiche détail
@@ -344,8 +385,25 @@ def main() -> None:
 
     completed = True  # boucle allée au bout
 
+    # Coupure réseau non résolue en cours de scan (fetch.py a attendu 20 min
+    # avant d'abandonner une URL, cf. Fetcher._attend_coupure) : le scan s'est
+    # arrêté au milieu, indiscernable en apparence d'une fin de liste normale
+    # (le bug du 2026-08-01 — "une coupure réseau ressemblait à un scan
+    # réussi" — dont le correctif vivait dans ops/superviseur.py, un script
+    # externe retiré depuis sans remplacement). On le rend discernable ici :
+    # pas de délistage sur un scan qu'on SAIT partiel, et un marqueur repris
+    # par agents/orchestrator.py pour redéclarer la source due tout de suite
+    # plutôt que d'attendre la cadence normale (demain).
+    coupure = fetcher.a_subi_coupure
+    if coupure:
+        print(f"[COUPURE-RESEAU] {args.source} : scan interrompu après {n_total} "
+              f"annonces vues (réseau non revenu sous {int(fetcher.outage_max_wait_seconds)}s)")
+
     removed = 0
-    if completed and args.full:
+    if coupure and args.full:
+        print("  ⚠ délistage ANNULÉ : scan coupé par une coupure réseau non résolue "
+              "(pas un « site en panne / structure cassée », voir [COUPURE-RESEAU] ci-dessus).")
+    if completed and args.full and not coupure:
         # Garde-fou anti-accident : si le scan a trouvé anormalement peu d'annonces
         # (site en panne, pagination cassée, blocage…), on ANNULE le délistage pour
         # ne pas vider la base. Seuil : < 50 % des actives en base pour ce scope.
@@ -383,7 +441,8 @@ def main() -> None:
     print(chrono.rapport(), flush=True)
 
     store.record_scan_run(args.source, n_total, n_new, removed, n_changed,
-                          notes="full" if args.full else "partial")
+                          notes="coupure-reseau" if coupure
+                          else ("full" if args.full else "partial"))
     # Snapshot des stats par quartier (séries temporelles)
     try:
         store.record_khet_snapshots()
@@ -402,6 +461,11 @@ def main() -> None:
     print(f"  scannées : {n_total} | nouvelles : {n_new} | changées : {n_changed} "
           f"| inchangées : {n_unchanged} (dont {n_skipped} dédup, fiche non re-visitée) "
           f"| retirées : {removed} | exclues : {n_excluded} | erreurs : {n_errors}")
+    if mode_sitemap:
+        print(f"  sitemap : {n_confirmees} confirmées par lastmod | {n_visites} fiches visitées"
+              f"{'' if budget_visites is None else f' (budget {budget_visites})'} "
+              f"| {n_reportees} reportées | {n_hors_fenetre} hors fenêtre {fenetre_jours:.0f} j "
+              f"| {n_indisponibles} indisponibles")
     if price_alerts:
         print("\nAlertes prix :")
         print("\n".join(price_alerts))

@@ -40,8 +40,19 @@ import sys
 REGLAGES = [
     ("SUB_VIDEO", "VIDEOIDLE", 300, "s",
      "écran éteint après 5 min"),
-    ("SUB_SLEEP", "STANDBYIDLE", 18000, "s",
-     "veille après 5 h — filet de sécurité, pas la protection principale"),
+    # REPOUSSÉ de 5 h à 13 h le 2026-08-26, en conséquence de l'ajout de
+    # `remonter-supabase` à la lane daily. Mesures : un cycle complet dure
+    # 7 h 15 (ledger, cycle du 2026-08-22, 25 agents), la remontée ajoute
+    # ~3 h 40 d'upserts (débit mesuré 4,1 annonces/s sur 53 258) plus ~40 min de
+    # recopie de statuts, soit ~11 h 35 au total. Un filet à 5 h coupait donc
+    # désormais le cycle en son milieu au lieu de le rattraper après coup —
+    # exactement la panne qui a tué extract-ddproperty deux cycles d'affilée le
+    # 2026-08-16. 13 h laisse ~1 h 25 de marge.
+    # CONTREPARTIE ASSUMÉE : si le verrou d'éveil de garde-veille échoue, la
+    # machine reste allumée 13 h au lieu de 5. C'est le prix d'un filet qui ne
+    # coupe pas ce qu'il est censé protéger.
+    ("SUB_SLEEP", "STANDBYIDLE", 46800, "s",
+     "veille après 13 h — filet de sécurité calé sur un cycle de ~11 h 35"),
     ("SUB_PROCESSOR", "PROCTHROTTLEMIN", 5, "%",
      "processeur au repos entre requêtes réseau"),
     ("SUB_PROCESSOR", "PROCTHROTTLEMAX", 60, "%",

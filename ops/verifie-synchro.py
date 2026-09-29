@@ -21,7 +21,8 @@ CE QU'IL VÉRIFIE, et pourquoi chacun compte
                               en base sans run local correspondant vient d'une
                               AUTRE machine. C'est LE risque de la période de
                               bascule : deux PC qui scrapent les 5 mêmes sources.
-  4. L'archive suit         — elle est la seule copie de ce que le serveur purge.
+  4. La sauvegarde suit     — clé USB à jour, seule copie hors machine de la
+                              base de référence (celle que le serveur purge).
   5. git est poussé         — les sorties du coureur ne sont visibles de l'autre
                               poste que par GitHub. Un commit oublié = un PC qui
                               lit des études périmées sans le savoir.
@@ -35,6 +36,7 @@ Lancement :
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sqlite3
 import subprocess
@@ -43,7 +45,6 @@ from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LEDGER = os.path.join(ROOT, "agents", "ledger.db")
-ARCHIVE = os.path.join(ROOT, "archive", "lowi-archive.db")
 QUEUE = os.path.join(ROOT, "agents", "queue")
 SOURCES = ["fazwaz", "ddproperty", "propertyscout", "nestopa", "livinginsider"]
 
@@ -178,15 +179,22 @@ def main() -> int:
     elif not scans:
         print(f"{INFO}aucune écriture en base sur la fenêtre — rien à croiser")
     else:
-        # Chaque scan_run doit tomber DANS la fenêtre d'un run d'extracteur local.
+        # Chaque scan_run doit tomber DANS la fenêtre d'un run d'extracteur local
+        # (ou, depuis que remonter-local.py trace aussi son passage, de l'agent
+        # remonter-supabase — sinon SA propre écriture s'auto-dénonce comme
+        # double coureur : elle ne matche aucun agent extract-*).
         # Sinon, quelqu'un d'autre a écrit : l'ancien poste, ou un lancement manuel.
         fenetres = []
         for ag, st, en, stt in runs:
-            if not ag.startswith("extract-"):
+            if ag.startswith("extract-"):
+                src = ag.replace("extract-", "")
+            elif ag == "remonter-supabase":
+                src = ag
+            else:
                 continue
             d, f = _dt(st), _dt(en) or datetime.now(timezone.utc)
             if d:
-                fenetres.append((ag.replace("extract-", ""), d, f))
+                fenetres.append((src, d, f))
         orphelines = []
         for src, st, *_ in scans:
             couvert = any(s == src and d <= st <= f + timedelta(minutes=10)
@@ -204,24 +212,43 @@ def main() -> int:
             print(f"{OK}toutes les écritures en base viennent de ce poste "
                   f"({len(scans)} passe(s) rapprochée(s) de {len(fenetres)} run(s))")
 
-    # ───────────────────────────── 4. archive
-    titre("4. Archive locale")
-    if not os.path.exists(ARCHIVE):
-        souci("archive/lowi-archive.db absente — elle est la seule copie de ce que "
-              "le serveur purge au bout de 90 jours")
+    # ───────────────────────────── 4. sauvegarde clé USB
+    titre("4. Sauvegarde (clé USB)")
+    # Corrigé le 2026-09-29 : ce bloc vérifiait encore archive/lowi-archive.db,
+    # remplacé depuis le 2026-08-25 par la copie clé USB (ops/sauvegarde-cle.py,
+    # agent backup-apres-cycle) — répliquer Supabase vers ce fichier sauvegardait
+    # la MAUVAISE base depuis la bascule SQLite, et le fichier n'existe plus. Le
+    # check criait au loup en continu (règle 2) sur un mécanisme abandonné. La
+    # clé n'étant pas forcément branchée à l'instant du contrôle, on lit le
+    # dernier run réussi au ledger (métriques posées par le script lui-même :
+    # 3 ouvertures réelles avant rotation) plutôt que le fichier sur disque.
+    if not os.path.exists(ledger):
+        souci("ledger introuvable — impossible de vérifier la sauvegarde clé USB")
     else:
-        mo = os.path.getsize(ARCHIVE) / 1048576
-        try:
-            ar = sqlite3.connect(f"file:{ARCHIVE}?mode=ro", uri=True)
-            integre = ar.execute("pragma quick_check").fetchone()[0]
-            n_arch = ar.execute("select count(*) from listings").fetchone()[0]
-            ar.close()
-            print(f"{OK if integre == 'ok' else ALERTE}intégrité : {integre} — "
-                  f"{mo:.0f} Mo, {n_arch} annonces")
-            if integre != "ok":
-                anomalies.append("archive corrompue")
-        except Exception as e:                                      # noqa: BLE001
-            souci(f"archive illisible : {type(e).__name__}: {e}")
+        led4 = sqlite3.connect(ledger)
+        r = led4.execute(
+            "select started_at, metrics from agent_runs where agent='backup-apres-cycle' "
+            "and status='ok' order by started_at desc limit 1").fetchone()
+        led4.close()
+        if not r:
+            souci("aucun run 'backup-apres-cycle' réussi trouvé au ledger")
+        else:
+            st, metrics_raw = r
+            age_j = (datetime.now(timezone.utc) - _dt(st)).total_seconds() / 86400
+            try:
+                m = json.loads(metrics_raw or "{}")
+            except json.JSONDecodeError:
+                m = {}
+            essais = m.get("essais") or []
+            n_ok = sum(1 for e in essais if e.get("ok"))
+            marque = OK if m.get("ok") and n_ok == len(essais) and essais else ALERTE
+            print(f"{marque}dernier backup réussi il y a {age_j:.1f} j — "
+                  f"{m.get('mo', '?')} Mo, {n_ok}/{len(essais)} essai(s) de "
+                  f"relecture passés, destination {m.get('destination', '?')}")
+            if age_j > 2:
+                souci(f"dernier backup clé USB vieux de {age_j:.1f} j (cadence : 1 j)")
+            elif not essais or n_ok != len(essais):
+                souci("dernier backup 'ok' au ledger mais essais de relecture incomplets")
 
     # ───────────────────────────── 5. git
     titre("5. Dépôt git")

@@ -141,6 +141,11 @@ def _parse_address(full: str) -> dict:
     return out
 
 
+#: Code de tenure du blob de liste. Meme convention que la fiche detail
+#: (tenureCode "F"/"L"), verifiee identique le 2026-08-23.
+_TENURE = {"F": "freehold", "L": "leasehold"}
+
+
 class DdpropertyAdapter(BaseAdapter):
     source = "ddproperty"
 
@@ -228,6 +233,16 @@ class DdpropertyAdapter(BaseAdapter):
                 "posted_at": _posted_at(it.get("postedOn")),
                 # Le site signale lui-même ses republications automatiques.
                 "is_auto_repost": produits.get("isAutoRepost"),
+                # Surface et tenure sont DANS LE BLOB DE LISTE — verifie le
+                # 2026-08-23 (`floorArea: 117`, `additionalData.tenure: "F"`).
+                # On les ignorait, et c'etaient justement les deux champs qui
+                # justifiaient d'ouvrir la page detail. La fiche les ecrase
+                # ensuite si elle repond ; ici on remplit un trou, on ne
+                # remplace rien. Sans eux, une annonce recensee mais jamais
+                # visitee n'a pas de prix au m2, donc aucune valeur d'analyse.
+                "area_sqm": _float(it.get("floorArea")),
+                "tenure": _TENURE.get(
+                    str((it.get("additionalData") or {}).get("tenure") or "").upper()),
                 **addr,
             })
         return stubs

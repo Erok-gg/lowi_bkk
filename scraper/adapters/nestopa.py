@@ -90,14 +90,20 @@ class NestopaAdapter(BaseAdapter):
     source = "nestopa"
 
     def sonder(self, fetcher: Fetcher) -> tuple[bool, str]:
-        """Nestopa : flux ld+json, items de type `Product`. Gelée à 1 page
-        (`max_pages`) depuis le 2026-08-11 (403 ailleurs) — le test porte
-        donc sur la SEULE page réellement scrapée en production."""
+        """Nestopa : flux ld+json, items de type `Product`.
+
+        La sonde demande l'URL QUE LA PRODUCTION DEMANDE, pas une variante
+        commode : avec `respect_robots: false` (arbitrage du 2026-08-22) c'est
+        `?page=1`. Tester la page bare pendant que le scan réel passe par
+        `?page=` avait justement laissé la source à 0 annonce du 2026-08-17 au
+        2026-08-22 avec une sonde verte."""
         searches = self.config.get("searches") or []
         if not searches:
             return False, "config sans 'searches'"
         base = self.config["base_url"]
         url = urljoin(base + "/", searches[0]["path"].lstrip("/"))
+        if not self.config.get("respect_robots", True):
+            url = f"{url}?{self.config.get('page_param', 'page')}=1"
         html = fetcher.get_text(url, referer=base)
         if not html:
             return False, "page de liste inaccessible (0 octet, erreur réseau, ou 403)"
@@ -112,13 +118,12 @@ class NestopaAdapter(BaseAdapter):
                 continue
         if not prods:
             return False, "ld+json présent mais aucun item '@type':'Product' — structure du flux changée"
-        # PAS de super().sonder() ici : list_urls() ajoute toujours '?page=1'
-        # (page_param, même à max_pages=1), or leur robots.txt interdit TOUTE
-        # requête '?page=' — y compris page 1. La page bare (sans query) que
-        # cette méthode vient de vérifier EST la seule qui répond ; rappeler
-        # list_urls() ne ferait que retomber sur le même blocage robots et
-        # déclarerait à tort une structure cassée. Le test s'arrête donc ici.
-        return True, f"page 1 (bare, sans '?page=') ok — {len(prods)} item(s) Product"
+        # PAS de super().sonder() ici : la sonde générique rappellerait
+        # list_urls(), qui reparcourrait le flux entier — c'est le scan complet
+        # qu'on cherche justement à éviter avant de savoir s'il vaut la peine.
+        # Ce qui est vérifié ci-dessus suffit : le flux répond et son ld+json
+        # contient toujours des Product.
+        return True, f"{url.rsplit('/', 1)[-1]} ok — {len(prods)} item(s) Product"
 
     def __init__(self, config: dict):
         super().__init__(config)
@@ -139,6 +144,15 @@ class NestopaAdapter(BaseAdapter):
 
         for search in self.config["searches"]:
             deal = search["deal_type"]
+            # ARRÊT SUR REJEU — mesuré le 2026-08-23 : au-delà de sa 50e page,
+            # le flux ne rend NI page vide NI 404, il RENVOIE LA PAGE 1 (mêmes
+            # sku, même taille, vérifié aux pages 51, 52, 150, 300, 600, 1200).
+            # Le `break` sur page vide ci-dessous ne se déclenche donc jamais :
+            # avec max_pages=150 on redemandait 100 fois la page 1 par flux,
+            # soit ~200 requêtes inutiles et 10 min de scan par cycle, sans une
+            # seule annonce de plus. On s'arrête sur la vraie fin : une page qui
+            # n'apporte aucun sku nouveau.
+            vus: set[str] = set()
             for page in range(1, max_pages + 1):
                 url = urljoin(base + "/", search["path"].lstrip("/"))
                 url = f"{url}?{page_param}={page}"
@@ -153,6 +167,12 @@ class NestopaAdapter(BaseAdapter):
                         pass
                 if not prods:
                     break
+                skus_page = {str(p.get("sku") or "") for p in prods}
+                if skus_page and skus_page <= vus:
+                    print(f"  [nestopa] {search['path']} page {page} : aucun sku "
+                          f"nouveau — fin du flux (le site rejoue une page déjà vue)")
+                    break
+                vus |= skus_page
                 for p in prods:
                     offers = p.get("offers") or {}
                     src_url = (offers.get("url") or "").split("?")[0]

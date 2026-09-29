@@ -82,8 +82,68 @@ def connect(path: str | None = None) -> sqlite3.Connection:
 class Ledger:
     def __init__(self, path: str | None = None):
         self.conn = connect(path)
-        self._verrou = threading.Lock()   # écritures sérialisées (extracteurs parallèles)
+        # Sérialise TOUT accès à self.conn, lectures comprises — pas seulement les
+        # écritures comme le disait ce commentaire jusqu'au 2026-09-13. Mesuré ce
+        # jour-là : 5 extracteurs en parallèle, extract-livinginsider a levé
+        # `sqlite3.InterfaceError: bad parameter or other API misuse` (silencieux —
+        # aucune ligne au ledger, voir orchestrator.run_lane) alors que last_run()
+        # (lecture, hors verrou jusqu'ici) tournait dans un thread pendant qu'un
+        # autre committait via start_run()/end_run(). Le module sqlite3 de Python
+        # n'est pas sûr pour un usage concurrent d'UNE connexion partagée au-delà
+        # de ce que documente PEP 249 — check_same_thread=False lève juste
+        # l'interdiction, ça ne rend pas les appels concurrents sûrs pour autant.
+        self._verrou = threading.Lock()
+        self._migrer_pid()
         self.reap_stale()
+
+    def _migrer_pid(self) -> None:
+        """Ajoute `pid` aux runs. Migration douce : la table existe en production.
+
+        Sans le PID, un run reste « en cours » pendant `max_hours` même quand le
+        processus est mort depuis longtemps — et l'agent concerné est alors
+        SAUTÉ à chaque cycle (orchestrator.run_agent refuse de relancer un agent
+        déjà en cours). Constaté le 2026-08-25 : deux extracteurs tués à 09:05
+        ont été écartés du cycle de 09:35, sans qu'aucune alerte ne le dise.
+        Avec le PID, la question « ce run est-il vivant ? » se mesure au lieu de
+        se déduire d'une durée arbitraire."""
+        cols = {r[1] for r in self.conn.execute("pragma table_info(agent_runs)")}
+        if "pid" not in cols:
+            self.conn.execute("alter table agent_runs add column pid integer")
+            self.conn.commit()
+
+    @staticmethod
+    def _processus_vivant(pid) -> bool:
+        """Le processus existe-t-il encore ? Windows : OpenProcess via ctypes.
+
+        Mesuré le 2026-09-08 : `OpenProcess` échoue avec `ERROR_ACCESS_DENIED`
+        (code 5) quand l'appelant est dans une session Windows différente de
+        celle du processus visé — exactement le cas d'une session Claude Code
+        interactive qui interroge le ledger PENDANT qu'un cycle nocturne tourne
+        (tâche planifiée, session « Services »). Reproduit en direct : un
+        `OpenProcess(SYNCHRONIZE, ...)` sur le PID bien vivant de
+        l'orchestrateur a rendu un handle nul avec `GetLastError()==5`, ce qui
+        a fait classer `remonter-supabase` (alors 4 h dans une synchronisation
+        légitime) comme `interrompu` alors qu'il tournait toujours — un simple
+        `python -m agents.orchestrator status` depuis une autre session suffit
+        à le déclencher. Un handle nul ne veut donc PAS dire absent : seul
+        `ERROR_ACCESS_DENIED` distingue « existe mais inaccessible » de
+        « n'existe plus », et le code traitait les deux cas pareil."""
+        if not pid:
+            return True          # PID inconnu (run d'avant la migration) → on ne tranche pas
+        try:
+            import ctypes
+            ERROR_ACCESS_DENIED = 5
+            SYNCHRONIZE = 0x00100000
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            h = kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
+            if not h:
+                return ctypes.get_last_error() == ERROR_ACCESS_DENIED
+            # 0 = toujours actif ; 0x80 (WAIT_ABANDONED)/0 signalé = terminé
+            etat = kernel32.WaitForSingleObject(h, 0)
+            kernel32.CloseHandle(h)
+            return etat != 0
+        except Exception:                                # noqa: BLE001
+            return True          # dans le doute, on ne referme pas un run vivant
 
     def reap_stale(self, max_hours: int = 12) -> int:
         """Referme les runs restés en 'running'.
@@ -91,22 +151,34 @@ class Ledger:
         Un processus tué (arrêt de tâche, redémarrage, coupure) ne referme jamais
         sa ligne. Sans ce nettoyage, l'agent concerné resterait éternellement
         'en cours' et l'orchestrateur ne le relancerait plus — la panne serait
-        silencieuse, exactement le mode de défaillance qu'on cherche à éliminer."""
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_hours)).isoformat()
-        cur = self.conn.execute(
-            "update agent_runs set status='interrompu', ended_at=? "
-            "where status='running' and started_at < ?", (now(), cutoff))
-        self.conn.commit()
-        return cur.rowcount
+        silencieuse, exactement le mode de défaillance qu'on cherche à éliminer.
+
+        DEUX CRITÈRES, et le premier est une MESURE (2026-08-25) : un run dont le
+        processus n'existe plus est mort, quelle que soit son ancienneté. Le
+        délai de 12 h ne reste que comme filet pour les runs sans PID (ceux
+        d'avant la migration) et pour un PID recyclé par le système."""
+        ferme = 0
+        for r in self.conn.execute(
+                "select id, pid, started_at from agent_runs where status='running'").fetchall():
+            trop_vieux = r["started_at"] < (
+                datetime.now(timezone.utc) - timedelta(hours=max_hours)).isoformat()
+            if trop_vieux or not self._processus_vivant(r["pid"]):
+                self.conn.execute(
+                    "update agent_runs set status='interrompu', ended_at=? where id=?",
+                    (now(), r["id"]))
+                ferme += 1
+        if ferme:
+            self.conn.commit()
+        return ferme
 
     # ── runs ────────────────────────────────────────────────────────────
     def start_run(self, agent: str, tier: str, lane: str | None = None,
                   log_path: str | None = None) -> int:
         with self._verrou:
             cur = self.conn.execute(
-                "insert into agent_runs(agent,tier,lane,started_at,status,log_path)"
-                " values(?,?,?,?, 'running', ?)",
-                (agent, tier, lane, now(), log_path))
+                "insert into agent_runs(agent,tier,lane,started_at,status,log_path,pid)"
+                " values(?,?,?,?, 'running', ?, ?)",
+                (agent, tier, lane, now(), log_path, os.getpid()))
             self.conn.commit()
         return int(cur.lastrowid)
 
@@ -123,17 +195,20 @@ class Ledger:
         if only_ok:
             q += " and status='ok'"
         q += " order by started_at desc limit 1"
-        return self.conn.execute(q, (agent,)).fetchone()
+        with self._verrou:
+            return self.conn.execute(q, (agent,)).fetchone()
 
     def recent_runs(self, agent: str, limit: int = 20) -> list[sqlite3.Row]:
-        return self.conn.execute(
-            "select * from agent_runs where agent=? and status='ok'"
-            " order by started_at desc limit ?", (agent, limit)).fetchall()
+        with self._verrou:
+            return self.conn.execute(
+                "select * from agent_runs where agent=? and status='ok'"
+                " order by started_at desc limit ?", (agent, limit)).fetchall()
 
     def runs_since(self, iso: str) -> list[sqlite3.Row]:
-        return self.conn.execute(
-            "select * from agent_runs where started_at >= ? order by started_at",
-            (iso,)).fetchall()
+        with self._verrou:
+            return self.conn.execute(
+                "select * from agent_runs where started_at >= ? order by started_at",
+                (iso,)).fetchall()
 
     # ── findings ────────────────────────────────────────────────────────
     def finding(self, agent: str, severity: str, kind: str, subject: str,
@@ -153,24 +228,28 @@ class Ledger:
         if severity:
             q += " and severity=?"
             p.append(severity)
-        return self.conn.execute(q + " order by created_at desc", p).fetchall()
+        with self._verrou:
+            return self.conn.execute(q + " order by created_at desc", p).fetchall()
 
     # ── escalations ─────────────────────────────────────────────────────
     def escalate(self, ticket: str, agent: str, kind: str, severity: str) -> None:
-        self.conn.execute(
-            "insert or ignore into escalations(ticket,agent,kind,severity,created_at,status)"
-            " values(?,?,?,?,?, 'open')", (ticket, agent, kind, severity, now()))
-        self.conn.commit()
+        with self._verrou:
+            self.conn.execute(
+                "insert or ignore into escalations(ticket,agent,kind,severity,created_at,status)"
+                " values(?,?,?,?,?, 'open')", (ticket, agent, kind, severity, now()))
+            self.conn.commit()
 
     def resolve(self, ticket: str, resolution: str, status: str = "done") -> None:
-        self.conn.execute(
-            "update escalations set status=?, resolved_at=?, resolution=? where ticket=?",
-            (status, now(), resolution, ticket))
-        self.conn.commit()
+        with self._verrou:
+            self.conn.execute(
+                "update escalations set status=?, resolved_at=?, resolution=? where ticket=?",
+                (status, now(), resolution, ticket))
+            self.conn.commit()
 
     def open_escalations(self) -> list[sqlite3.Row]:
-        return self.conn.execute(
-            "select * from escalations where status='open' order by created_at").fetchall()
+        with self._verrou:
+            return self.conn.execute(
+                "select * from escalations where status='open' order by created_at").fetchall()
 
     def close(self) -> None:
         self.conn.close()

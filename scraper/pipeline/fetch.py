@@ -4,6 +4,22 @@ Une seule Session persistante (cookies) : parcourir la liste AVANT les fiches
 réchauffe les cookies anti-bot (ex. Cloudflare __cf_bm de DDproperty), ce qui
 débloque les pages de détail. En-têtes navigateur réalistes ; pas de brotli
 forcé (requests ne décode que gzip/deflate par défaut).
+
+Deux backends de session, choisis par site via `fetcher_backend` dans
+`config/<source>.json` (défaut "requests", inchangé) :
+  - "requests"  : comportement historique, en-têtes Chrome-126 statiques.
+  - "curl_cffi" : empreinte TLS/JA3 usurpée (impersonation Chrome réelle,
+    en-têtes générés par curl_cffi lui-même — cohérents avec la version
+    impersonée, donc PAS mélangés avec `_BROWSER_HEADERS`). Ajoute des
+    retries intégrés (3, backoff 1 s) là où `requests` n'en a aucun.
+    Mesuré le 2026-08-29 : `curl_cffi.requests.Session` seul (sans passer
+    par `scrapling.fetchers`, qui embarque patchright/browserforge en
+    dépendance "fetchers" — inutile ici et ~110 Mo de plus) — API quasi
+    identique à `requests` (`.get/.head`, `raise_for_status`, `.text`),
+    donc aucune autre méthode de cette classe n'a besoin de brancher sur le
+    backend. `scrapling` (sans extra) reste utilisé ailleurs (adaptateurs
+    FazWaz/LivingInsider) pour le parsing adaptatif — capacité indépendante
+    de ce module.
 """
 from __future__ import annotations
 
@@ -14,8 +30,67 @@ import urllib.robotparser
 from urllib.parse import urljoin
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from pipeline import chrono
+
+# Retries transitoires (5xx / erreurs de connexion) pour le backend "requests" —
+# jusqu'ici SANS aucun retry, contrairement a curl_cffi qui en integre 3
+# (backoff 1s). Mesure le 2026-09-02 : un 522 Cloudflare (origine indisponible,
+# auto-resolu — les 2 autres etapes du meme run ont reussi normalement juste
+# apres) sur fazwaz a fait echouer `get_text()` en un seul essai, ce que
+# `sonder()` traduit en "page de liste inaccessible" -> ticket haute severite
+# etiquete `parser_break` alors qu'aucune structure n'avait change. Meme
+# nombre d'essais que curl_cffi pour ne pas favoriser un backend sur l'autre.
+_RETRY_STATUS = (500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 530)
+_retry = Retry(total=3, backoff_factor=1.0, status_forcelist=_RETRY_STATUS,
+               allowed_methods=("GET", "HEAD"))
+_RETRY_ADAPTER = HTTPAdapter(max_retries=_retry)
+
+# Exceptions réseau à traiter comme un échec de requête récupérable, quel que
+# soit le backend actif. curl_cffi n'est importé ici que si présent — le
+# backend "requests" (par défaut, 5 sites sur 6) ne doit jamais l'exiger.
+_REQUEST_EXC: tuple[type[Exception], ...] = (requests.RequestException,)
+try:
+    from curl_cffi.requests.exceptions import RequestException as _CurlRequestException
+    _REQUEST_EXC = (requests.RequestException, _CurlRequestException)
+except ImportError:
+    pass
+
+# Sous-ensemble de _REQUEST_EXC qui signifie « on n'a même pas atteint le
+# site » (DNS, connexion refusée/impossible, délai dépassé) — PAR OPPOSITION à
+# une réponse HTTP obtenue mais mauvaise (404, ou 5xx déjà épuisé par
+# _RETRY_ADAPTER : requests.exceptions.RetryError / HTTPError). Distinction
+# mesurée nécessaire : la coupure internet du script d'origine (`ops/
+# superviseur.py`, retiré le 2026-07-31 lors du passage au système d'agents,
+# sans remplacement — capacité perdue en silence, pas une decision) attendait
+# le retour du réseau ; un 404 ou un 522 persistant, eux, n'ont RIEN à voir
+# avec le réseau et ne doivent pas déclencher une attente de 20 minutes
+# (verrouillé par test_fetch_retry.py : panne HTTP persistante -> None vite).
+_COUPURE_EXC: tuple[type[Exception], ...] = (
+    requests.exceptions.ConnectionError, requests.exceptions.Timeout,
+)
+try:
+    from curl_cffi.requests.exceptions import ConnectionError as _CurlConnErr
+    from curl_cffi.requests.exceptions import Timeout as _CurlTimeout
+    _COUPURE_EXC = _COUPURE_EXC + (_CurlConnErr, _CurlTimeout)
+except ImportError:
+    pass
+
+#: Cadence de sonde pendant une coupure — mêmes 30 s que l'ancien superviseur
+#: (2026-08-01). La sonde EST la requête elle-même : "ce qui compte n'est pas
+#: d'avoir une route, c'est que les sites répondent" (principe déjà posé).
+OUTAGE_POLL_SECONDS = 30.0
+#: Plafond d'attente INLINE avant d'abandonner cette URL et de laisser
+#: `run.py` consigner un scan coupé plutôt que "complet" — 20 min : assez pour
+#: un routeur qui redémarre, borné pour ne pas manger le budget de 6 h du
+#: sous-processus (agents/core/shell.py) sur une seule page si la coupure est
+#: bien plus longue. Une coupure qui dépasse ce plafond est reprise au
+#: prochain déclenchement de l'orchestrateur (agents/orchestrator.py détecte
+#: le marqueur [COUPURE-RESEAU] et redéclare la source due immédiatement),
+#: pas par une attente indéfinie dans ce process.
+OUTAGE_MAX_WAIT_SECONDS = 20 * 60.0
 
 # Jitter anti-ban : chaque attente = délai de base × (1 + [0..JITTER_RATIO]).
 # Jamais plus rapide que le débit configuré, mais variable au-dessus → cadence
@@ -134,16 +209,37 @@ class Robots:
 class Fetcher:
     def __init__(self, base_url: str, user_agent: str, rate_limit_seconds: float = 2.5,
                  timeout_seconds: int = 30, respect_robots: bool = True,
-                 image_rate_limit_seconds: float = 0.4):
+                 image_rate_limit_seconds: float = 0.4, backend: str = "requests",
+                 outage_poll_seconds: float = OUTAGE_POLL_SECONDS,
+                 outage_max_wait_seconds: float = OUTAGE_MAX_WAIT_SECONDS):
         self.base_url = base_url.rstrip("/")
         self.user_agent = user_agent
         self.rate_limit = rate_limit_seconds
         self.image_rate_limit = image_rate_limit_seconds
         self.timeout = timeout_seconds
         self.respect_robots = respect_robots
+        self.backend = backend
+        self.outage_poll_seconds = outage_poll_seconds
+        self.outage_max_wait_seconds = outage_max_wait_seconds
+        # Posé à True dès qu'UNE requête a dû attendre le plafond ci-dessus
+        # sans que le réseau revienne — lu par run.py en fin de scan pour
+        # distinguer "coupure" de "fin de liste normale" (voir _COUPURE_EXC).
+        self.a_subi_coupure = False
         self._last_request = 0.0
-        self._session = requests.Session()
-        self._session.headers.update({"User-Agent": user_agent, **_BROWSER_HEADERS})
+        if backend == "curl_cffi":
+            from curl_cffi.requests import Session as CurlSession
+            # Pas de `_BROWSER_HEADERS` ici : curl_cffi génère déjà un jeu
+            # d'en-têtes cohérent avec la version Chrome qu'il impersone
+            # (sec-ch-ua, Accept, Accept-Encoding avec brotli qu'il décode
+            # nativement — vérifié le 2026-08-29). Les mélanger figerait
+            # sec-ch-ua sur Chrome 126 pendant que la signature TLS avance,
+            # un décalage que les anti-bots regardent justement.
+            self._session = CurlSession(impersonate="chrome")
+        else:
+            self._session = requests.Session()
+            self._session.headers.update({"User-Agent": user_agent, **_BROWSER_HEADERS})
+            self._session.mount("https://", _RETRY_ADAPTER)
+            self._session.mount("http://", _RETRY_ADAPTER)
         self._robots = self._load_robots() if respect_robots else None
 
     def _load_robots(self):
@@ -154,7 +250,7 @@ class Fetcher:
         try:
             r = self._session.get(url, timeout=self.timeout)
             text = r.text if r.status_code == 200 else ""
-        except requests.RequestException:
+        except _REQUEST_EXC:
             text = ""
         low = text.lower()
         looks_like_robots = "disallow" in low or "user-agent" in low
@@ -177,6 +273,33 @@ class Fetcher:
         if elapsed < delay:
             time.sleep(delay - elapsed)
         self._last_request = time.time()
+
+    def _attend_coupure(self, url: str) -> None:
+        """Bloque jusqu'au retour du réseau (sonde = re-essayer `url` elle-même,
+        toutes les `outage_poll_seconds`), ou jusqu'à `outage_max_wait_seconds`.
+
+        Appelé UNIQUEMENT sur une exception de `_COUPURE_EXC` (DNS, connexion
+        refusée/impossible, timeout) — jamais sur un 4xx/5xx, qui prouve déjà
+        que le site est joignable. Repris de `ops/superviseur.py` (2026-08-01,
+        retiré depuis), mais posé DANS le code du fetcher plutôt que dans un
+        script wrapper externe — pour ne plus dépendre de l'existence d'un
+        superviseur séparé."""
+        attente = 0.0
+        while attente < self.outage_max_wait_seconds:
+            print(f"  ⚠ coupure réseau supposée sur {url} — sonde dans "
+                  f"{self.outage_poll_seconds:.0f}s (attente cumulée {attente:.0f}s"
+                  f"/{self.outage_max_wait_seconds:.0f}s)", flush=True)
+            time.sleep(self.outage_poll_seconds)
+            attente += self.outage_poll_seconds
+            try:
+                self._session.get(url, timeout=min(self.timeout, 10))
+                print(f"  ✓ réseau revenu après {attente:.0f}s — reprise", flush=True)
+                return
+            except _COUPURE_EXC:
+                continue
+        self.a_subi_coupure = True
+        print(f"  ✗ coupure réseau non résolue après {attente:.0f}s — abandon de {url}",
+              flush=True)
 
     def get_text(self, url: str, referer: str | None = None) -> str | None:
         if self.respect_robots and not self.allowed(url):
@@ -205,7 +328,20 @@ class Fetcher:
                 r = self._session.get(url, headers=headers, timeout=self.timeout)
                 r.raise_for_status()
                 return r.text
-        except requests.RequestException as e:
+        except _COUPURE_EXC as e:
+            print(f"  échec GET {url} (coupure ?) : {e}")
+            self._attend_coupure(url)
+            if self.a_subi_coupure:
+                return None
+            try:  # réseau revenu pendant l'attente -> un seul nouvel essai
+                with chrono.mesure("reseau_liste" if est_liste else "reseau_fiche"):
+                    r = self._session.get(url, headers=headers, timeout=self.timeout)
+                    r.raise_for_status()
+                    return r.text
+            except _REQUEST_EXC as e2:
+                print(f"  échec GET {url} (après retour réseau) : {e2}")
+                return None
+        except _REQUEST_EXC as e:
             print(f"  échec GET {url} : {e}")
             return None
 
@@ -224,7 +360,7 @@ class Fetcher:
             if r.status_code >= 400 or "content-length" not in r.headers:
                 return None
             return int(r.headers["content-length"])
-        except (requests.RequestException, ValueError):
+        except (*_REQUEST_EXC, ValueError):
             return None
 
     def get_bytes(self, url: str) -> bytes | None:
@@ -236,6 +372,19 @@ class Fetcher:
                 r = self._session.get(url, timeout=self.timeout)
                 r.raise_for_status()
                 return r.content
-        except requests.RequestException as e:
+        except _COUPURE_EXC as e:
+            print(f"  échec GET (bytes) {url} (coupure ?) : {e}")
+            self._attend_coupure(url)
+            if self.a_subi_coupure:
+                return None
+            try:
+                with chrono.mesure("reseau_image"):
+                    r = self._session.get(url, timeout=self.timeout)
+                    r.raise_for_status()
+                    return r.content
+            except _REQUEST_EXC as e2:
+                print(f"  échec GET (bytes) {url} (après retour réseau) : {e2}")
+                return None
+        except _REQUEST_EXC as e:
             print(f"  échec GET (bytes) {url} : {e}")
             return None

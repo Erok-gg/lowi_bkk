@@ -24,12 +24,25 @@
 param(
     [string]$Heure = "01:00",
     [switch]$GarderAnciennes,
-    # Contrepartie du reveil : la machine reveillee a 01:00 pour un cycle de
-    # ~5 h restait allumee jusqu'au matin. --veille-a-la-fin la rendort quand la
-    # lane est finie. Cote Python, agents/core/veille.py REFUSE si clavier ou
-    # souris ont bouge dans les 15 min : la tache peut demander la veille sans
-    # risque de l'imposer a quelqu'un qui travaille.
-    [switch]$SansVeilleALaFin
+    # RENDORMIR EN FIN DE CYCLE : DESACTIVE PAR DEFAUT depuis le 2026-08-25.
+    #
+    # L'idee etait bonne (ne pas laisser un portable allume toute la nuit apres
+    # un cycle de ~5 h) mais la mesure l'a demolie sur CE poste :
+    #   - `powercfg /a` : seul l'etat S0 « faible consommation, connecte au
+    #     reseau » existe, ni S1 ni S2 ni S3 ;
+    #   - test du 2026-08-25 09:11 : la machine entre en veille (Kernel-Power 42
+    #     a 09:11:10) et en RESSORT 3 SECONDES PLUS TARD (107 a 09:11:13). Elle
+    #     ne dort donc pas vraiment — l'economie d'energie est imaginaire ;
+    #   - et c'est dans cet etat ambigu que le cycle du 2026-08-25 01:00 n'a PAS
+    #     demarre, laissant une nuit entiere sans scrap sans que rien ne le dise.
+    # Le reveil programme, lui, FONCTIONNE : `powercfg /lastwake` designe
+    # nommement le minuteur de la tache comme cause du reveil. Le probleme
+    # n'etait pas de se reveiller, mais de s'endormir.
+    #
+    # Une journee de marche perdue coute plus qu'une nuit de veille d'un
+    # portable sur secteur. Reactivable par -VeilleALaFin si le compromis change.
+    [switch]$VeilleALaFin,
+    [switch]$SansVeilleALaFin   # conserve pour compatibilite : sans effet, c'est le defaut
 )
 
 $ErrorActionPreference = 'Stop'
@@ -67,7 +80,7 @@ foreach ($t in $anciennes) {
 # ca. Le rattrapage vient de la BASE, pas de StartWhenAvailable - qui ne rattrape
 # rien quand c'est la tache elle-meme qui est cassee.
 $argOrch = "`"$orch`" --due"
-if (-not $SansVeilleALaFin) { $argOrch += " --veille-a-la-fin" }
+if ($VeilleALaFin) { $argOrch += " --veille-a-la-fin" }
 $action = New-ScheduledTaskAction -Execute $py -Argument $argOrch -WorkingDirectory $root
 $trigger = New-ScheduledTaskTrigger -Daily -At $Heure
 # Declencheur QUOTIDIEN : la cadence de 4 jours (et le "decale au lendemain si
@@ -80,21 +93,81 @@ $trigger = New-ScheduledTaskTrigger -Daily -At $Heure
 # jamais reactive depuis). Sans ce reglage, WakeToRun est ignore et la tache ne
 # se declenche que si le PC est deja allume a l'heure dite (StartWhenAvailable
 # rattrape alors au demarrage suivant).
+# ExecutionTimeLimit ILLIMITE (TimeSpan zero = PT0S, "ne jamais arreter la
+# tache" selon la doc Task Scheduler) depuis le 2026-08-28, sur consigne
+# explicite de l'utilisateur. AVANT : 10h, calibrees le 2026-07-31 pour une
+# duree de cycle de ~7h15 (journal du 2026-08-22). La duree a grossi a
+# ~11h35 le 2026-08-26 (ajout de remonter-supabase) sans que cette limite
+# soit remontee en consequence -> Windows a tue l'orchestrateur en cours de
+# route 3 nuits de suite (26, 27, 28/08 - agents/audits/reparations-2026-08-2{7,8}.md),
+# emportant avec lui watch-health/report/backup-apres-cycle/overseer a
+# chaque fois. Le vrai correctif de fond est le batching de
+# remonter-local.py (SupabaseStore.upsert_listings_bulk, meme session) qui
+# fait tomber sa duree de ~4h20 a quelques minutes - la limite de 10h
+# redeviendrait large. Elle est retiree quand meme : un cycle DDproperty
+# anormalement lent (deja mesure a 7h47 le 2026-08-27, cause jamais
+# etablie) peut a lui seul recreer la meme marge insuffisante. La
+# contrepartie EST le garde-fou de remplacement : `ops/pouls.py
+# --verifier` alerte desormais si un cycle tourne encore apres 16h (voir
+# pouls.py, verifier_cycle_long) - la protection se deplace d'un couperet
+# aveugle vers un signal qui laisse le cycle finir tout en prevenant si
+# quelque chose ne termine vraiment pas.
+#
+# -DisallowHardTerminate AJOUTE le 2026-08-29 - 4e nuit de coupure, ExecutionTimeLimit
+# pourtant deja retire la veille (donc CE N'ETAIT PLUS LA MEME CAUSE). Mesure sur
+# la tache en l'etat : `LastTaskResult=3221225786` (0xC000013A, STATUS_CONTROL_C_EXIT,
+# le code que Task Scheduler pose quand IL tue lui-meme le process) et
+# `AllowHardTerminate=True` (reglage par defaut, jamais pose explicitement avant
+# ce commit). Le journal Systeme montre `extract-ddproperty` avoir fini tout son
+# travail (log complet jusqu'aux stats finales, ~00:29 UTC) et le process parent
+# de l'orchestrateur (PID verifie mort) disparu ~2 min plus tard - sans exception
+# Python, sans traceback, sans depassement d'ExecutionTimeLimit (PT0S). Un
+# `WakeToRun=True` combine a `AllowHardTerminate=True` est le mecanisme documente
+# par Microsoft pour ce symptome : quand la machine reveillee pour la tache doit
+# repartir en veille (ou est reveillee "pour de vrai" par un evenement utilisateur,
+# ici mouvement souris a 07:29:46 heure locale), Task Scheduler tue purement et
+# simplement le process de la tache si `AllowHardTerminate` ne le lui interdit pas.
+# Aucune garantie que ce soit LA seule cause (mecanisme non reproduit en
+# laboratoire, seulement mesure sur incident reel) mais c'est la premiere
+# explication qui colle a TOUS les faits observes sans hypothese supplementaire.
+#
+# -LogonType S4U (remplace Interactive) AJOUTE le 2026-09-01 - la piste etait deja
+# identifiee et laissee de cote le 2026-08-30 ("Piste de fond non appliquee : LogonType
+# de la tache reste Interactive", agents/queue/done/2026-08-30T045030-pouls-cycle_manquant.json).
+# LE MEME SYMPTOME A REPRODUIT malgre le correctif du dessus : run Windows du 2026-08-31,
+# tache lancee 08:09:17 (rattrapage StartWhenAvailable, machine sortie de veille moderne a
+# 08:09:13 - Kernel-Power Id 507), tuee 10:19:47 avec EXACTEMENT le meme code de retour
+# 3221225786 (0xC000013A) - MAIS cette fois avec AllowHardTerminate deja a False (verifie
+# via Get-ScheduledTask AVANT toute correction de cette session). Ca invalide l'hypothese du
+# 2026-08-29 : ce n'est pas Task Scheduler qui tue le process via son propre mecanisme de
+# hard-terminate (ce reglage l'interdit precisement), donc autre chose envoie ce signal.
+# LogonType=Interactive attache le process a la session bureau interactive de l'utilisateur ;
+# un changement d'etat de cette session (veille moderne S0, verrouillage, reprise) peut
+# entrainer l'equivalent d'un CTRL_LOGOFF/CTRL_SHUTDOWN cote console, que python.exe termine
+# sans capturer (pas de handler pose) - c'est exactement le code STATUS_CONTROL_C_EXIT observe
+# les DEUX fois (2026-08-29 et 2026-08-31). S4U (Service for User) fait tourner la tache hors
+# de toute session interactive, sans mot de passe stocke (le compte a juste besoin du droit
+# "Ouvrir une session en tant que tache/travail par lots", accorde automatiquement par
+# Register-ScheduledTask) - non affecte par les transitions de session. Aucun code du depot
+# n'exige de bureau interactif (aucun usage de presse-papiers/GUI/automatisation d'ecran,
+# verifie par grep avant ce changement). Reversible : repasser `-LogonType Interactive`
+# ci-dessous et relancer ce script restaure l'ancien comportement.
 $settings = New-ScheduledTaskSettingsSet `
     -WakeToRun `
     -StartWhenAvailable `
     -DontStopIfGoingOnBatteries `
     -AllowStartIfOnBatteries `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 10) `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) `
     -MultipleInstances IgnoreNew `
+    -DisallowHardTerminate `
     -RestartCount 2 -RestartInterval (New-TimeSpan -Minutes 15)
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Limited
 
 if ($PSCmdlet.ShouldProcess($nom, "Register-ScheduledTask")) {
     Register-ScheduledTask -TaskName $nom -Action $action -Trigger $trigger `
         -Settings $settings -Principal $principal -Force `
         -Description "Orchestrateur des 12 agents Lowi BKK. Lit agents/agents.json et le ledger, lance ce qui est du. Cadence reelle par agent geree par le ledger (every_days dans agents.json), pas par ce declencheur." | Out-Null
-    $mentionVeille = if ($SansVeilleALaFin) { "sans rendormissement" } else { "rendort la machine en fin de cycle" }
+    $mentionVeille = if ($VeilleALaFin) { "rendort la machine en fin de cycle" } else { "sans rendormissement (defaut depuis le 2026-08-25)" }
     Write-Host "`n  $nom enregistree (quotidienne a $Heure, reveil demande, $mentionVeille)"
 }
 
@@ -120,6 +193,14 @@ if (-not (Test-Path $exeLine)) {
 }
 if ($verif -notmatch '<WakeToRun>true</WakeToRun>') {
     Write-Host "`n  [!] WakeToRun absent du XML enregistre." -ForegroundColor Yellow
+}
+if ($verif -notmatch '<AllowHardTerminate>false</AllowHardTerminate>') {
+    Write-Host "`n  [!] AllowHardTerminate absent ou toujours a true - Task Scheduler" -ForegroundColor Yellow
+    Write-Host "      peut a nouveau tuer l'orchestrateur au retour de veille (2026-08-29)."
+}
+if ($verif -notmatch '<LogonType>S4U</LogonType>') {
+    Write-Host "`n  [!] LogonType n'est pas S4U - la tache reste liee a la session" -ForegroundColor Yellow
+    Write-Host "      interactive, exposee au meme signal que le 2026-08-31 (voir commentaire ci-dessus)."
 }
 Write-Host "`n  [OK] Aucun guillemet echappe, executable present." -ForegroundColor Green
 Write-Host "  Test a chaud :  Start-ScheduledTask -TaskName $nom"

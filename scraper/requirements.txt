@@ -2,6 +2,17 @@
 requests>=2.31
 beautifulsoup4>=4.12
 Pillow>=10.2
+# Scrapling — optimisation 2026-08-29 (docs/journal-technique.md) :
+#   - curl_cffi : backend HTTP "curl_cffi" de pipeline/fetch.py (empreinte TLS/JA3
+#     usurpee + retries integres). Utilise DIRECTEMENT, sans passer par
+#     scrapling.fetchers (qui tire patchright+browserforge en extra "fetchers",
+#     ~110 Mo pour un navigateur dont on n'a pas besoin ici).
+#   - scrapling (SANS extra) : parseur Adaptor seul, pour le parsing adaptatif
+#     (relocalisation d'un element apres un changement de balisage) dans les
+#     adaptateurs fazwaz/livinginsider. Aucune dependance navigateur avec ce
+#     package nu (verifie : lxml/cssselect/orjson/tld/w3lib seulement).
+curl_cffi>=0.16.1
+scrapling>=0.4.15
 # partie online (Supabase via Postgres direct) :
 psycopg[binary]>=3.1
 openpyxl>=3.1  # exports xlsx de l'etude (study/run_study.py)

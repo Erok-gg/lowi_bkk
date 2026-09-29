@@ -1,0 +1,69 @@
+{
+ "fetched": "2026-08-26",
+ "dopa": {
+  "yymm_buddhist": "6907",
+  "population_by_khet": {
+   "Phra Nakhon District": 37933,
+   "Dusit District": 71858,
+   "Nong Chok District": 188928,
+   "Bang Rak District": 39707,
+   "Bang Khen District": 183009,
+   "Bang Kapi District": 140471,
+   "Pathum Wan District": 37923,
+   "Pom Prap Sattru Phai District": 35338,
+   "Phra Khanong District": 83548,
+   "Min Buri District": 140302,
+   "Lat Krabang District": 182840,
+   "Yan Nawa District": 72086,
+   "Samphanthawong District": 17930,
+   "Phaya Thai District": 62754,
+   "Thon Buri District": 94859,
+   "Bangkok Yai District": 58364,
+   "Huai Khwang District": 83847,
+   "Khlong San District": 60945,
+   "Taling Chan District": 100213,
+   "Bangkok Noi District": 94197,
+   "Bang Khun Thian District": 185278,
+   "Phasi Charoen District": 120431,
+   "Nong Khaem District": 154398,
+   "Rat Burana District": 74161,
+   "Bang Phlat District": 85459,
+   "Din Daeng District": 108062,
+   "Bueng Kum District": 134204,
+   "Sathon District": 68564,
+   "Bang Sue District": 115929,
+   "Chatuchak District": 154601,
+   "Bang Kho Laem District": 74032,
+   "Prawet District": 183369,
+   "Khlong Toei District": 87966,
+   "Suan Luang District": 123145,
+   "Chom Thong District": 136892,
+   "Don Mueang District": 165587,
+   "Ratchathewi District": 60283,
+   "Lat Phrao District": 110214,
+   "Vadhana District": 79175,
+   "Bang Khae District": 191610,
+   "Lak Si District": 96365,
+   "Sai Mai District": 213001,
+   "Khan Na Yao District": 92605,
+   "Saphan Sung District": 97935,
+   "Wang Thonglang District": 101898,
+   "Khlong Sam Wa District": 216379,
+   "Bang Na District": 84348,
+   "Thawi Watthana District": 80975,
+   "Thung Khru District": 124053,
+   "Bang Bon District": 97671
+  }
+ },
+ "bot": {
+  "_comment": "Indice prix condos Bank of Thailand / REIC — saisie MANUELLE trimestrielle en attendant une clé API BOT (portal.api.bot.or.th, gratuit). Ajouter une entrée par publication ; le rapport trace nos médianes contre cette série. base : indice REIC nouveaux condos Bangkok.",
+  "series": [
+   {
+    "period": "2025-Q1",
+    "condo_index_bkk": 163.3,
+    "yoy_pct": 3.6,
+    "source": "REIC/Bangkok Post 2025-05"
+   }
+  ]
+ }
+}

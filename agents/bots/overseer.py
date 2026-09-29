@@ -16,6 +16,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from agents.core import alert, escalation, local_llm
+from agents.core.metrics import aplatir
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS = os.path.join(ROOT, "skills")
@@ -79,7 +80,11 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
         vus.add(agent)
         attendus = contrat_de(agent)
         try:
-            metrics = json.loads(r["metrics"] or "{}")
+            # APLATI : les champs de contrat d'un agent T0 vivent sous `etapes`
+            # depuis le chainage du 2026-08-06. 13 contrats sur 23 etaient
+            # comptes violes le 2026-08-22 pour cette seule raison, champs
+            # presents un etage plus bas (voir agents/core/metrics.py).
+            metrics = aplatir(json.loads(r["metrics"] or "{}"))
         except json.JSONDecodeError:
             metrics = {}
 
@@ -159,7 +164,9 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
 
     # Écriture de l'audit lisible
     os.makedirs(AUDITS, exist_ok=True)
-    jour = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Jour LOCAL : un cycle qui finit avant 07:00 Bangkok est encore la veille en
+    # UTC — même défaut que study/run_study.py (éditions mal datées, 2026-09-28).
+    jour = datetime.now().astimezone().strftime("%Y-%m-%d")
     path = os.path.join(AUDITS, f"{jour}.md")
     with open(path, "a", encoding="utf-8") as f:
         f.write(f"\n## Cycle « {lane} » — {datetime.now(timezone.utc):%H:%M} UTC\n\n")

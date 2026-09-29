@@ -31,6 +31,7 @@ scraper/.venv/Scripts/python.exe agents/orchestrator.py status
 | `watch-sources` | Surveillance | T1→T2 | 14 j |
 | `analyze-sale` `analyze-rent` | Analyse ×2 | T1 | 4 j |
 | `organize` | Data organizing | T0+T1 | 4 j |
+| `social-leads` | Analyse | T2 (`claude -p`) | 1 j |
 | `report` | Data reporting | T0→T2 | 4 j |
 | `storage` | Security & storage | T0 | 7 j |
 | `overseer` | Overseeing | T1 | 1 j |
@@ -61,9 +62,14 @@ ajouterait du non-déterminisme à du code qui marche.
 **T1 — local `qwen3:8b`, en MODE EXTRACTION uniquement.** Le modèle constate des
 faits ; c'est du code qui décide. Voir plus bas.
 
-**T2 — Claude, par file de tickets.** Il n'y a ni CLI `claude` ni clé API sur la
-machine : les agents déposent des tickets dans `queue/`, qu'une session Claude
-planifiée draine — elle a l'accès au dépôt et peut vraiment réparer un adaptateur.
+**T2 — Claude, par file de tickets.** Les agents déposent des tickets dans
+`queue/`, qu'une session Claude planifiée draine — elle a l'accès au dépôt et
+peut vraiment réparer un adaptateur. Nuance depuis le 2026-09-13 : le CLI
+`claude` **est** sur PC2 (`~/.local/bin/claude.exe`, arrivé avec la migration
+du 2026-08-21), et l'agent `social-leads` l'appelle en `claude -p` (Haiku)
+pour une extraction bornée — lire du texte libre et remplir un schéma. Les
+tickets restent le canal de tout ce qui demande une décision ou une
+réparation ; `claude -p` n'est qu'un exécutant à contexte minimal.
 
 ### T1 absent : le marqueur `agents/t1-absent` (2026-08-21)
 

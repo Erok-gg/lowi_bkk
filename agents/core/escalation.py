@@ -89,3 +89,26 @@ def resolve(ticket: str, resolution: str, ledger=None) -> bool:
     if ledger is not None:
         ledger.resolve(ticket, resolution)
     return True
+
+
+def reconcile(ledger) -> int:
+    """Ferme dans le ledger les escalades dont le ticket est déjà dans queue/done/.
+
+    Trouvé le 2026-08-29 : `orchestrator status` affichait 12 « escalades ouvertes »
+    datant du 2026-07-31/08-01, toutes déjà résolues et déplacées vers `queue/done/`
+    par des sessions passées qui avaient édité/déplacé le fichier à la main au lieu
+    d'appeler `resolve()` ci-dessus — le seul chemin qui met aussi à jour le ledger.
+    Le compteur ne pouvait donc que croître, jamais décroître : un garde-fou qui
+    ment (règle 2). Rendu appelable indépendamment de `resolve()` puisque la dérive
+    vient de tickets fermés SANS passer par lui ; ne fait rien pour un ticket encore
+    dans `queue/` (non résolu) ni pour un déjà `status != 'open'` en base."""
+    fermees = 0
+    for e in ledger.open_escalations():
+        ticket = e["ticket"]
+        if os.path.exists(os.path.join(DONE, ticket)):
+            ledger.resolve(
+                ticket,
+                "Réconcilié automatiquement (orchestrator status) : le ticket était "
+                "déjà dans queue/done/ mais le ledger n'avait jamais été mis à jour.")
+            fermees += 1
+    return fermees
