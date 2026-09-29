@@ -23,7 +23,12 @@ scraper en ligne) :
   3. un changement de prix ajoute une ligne à `price_history` ; un prix
      inchangé n'en ajoute aucune ;
   4. les identifiants ne se mélangent pas entre eux (chaque ligne reçoit ses
-     propres valeurs, pas celles du lot).
+     propres valeurs, pas celles du lot) ;
+  5. (2026-09-02) une ligne STRICTEMENT IDENTIQUE à ce qui est déjà en base
+     n'est PAS réécrite (`maj` ne la compte pas, `last_seen` n'avance pas) —
+     le garde-fou ajouté contre l'alerte Supabase « Disk IO Budget depleting »
+     (733 375 UPDATE mesurés pour ~98 573 lignes vivantes, `remonter-supabase`
+     repoussant toute la fenêtre active sans filtre delta chaque jour).
 
 Écrit contre le VRAI Supabase (même approche que test_stores_alignes.py — pas
 de base de test séparée sur ce projet perso). Données synthétiques, préfixe
@@ -121,8 +126,8 @@ try:
     # --- 2. Mise a jour : 1 prix change, 2 inchanges -------------------------
     print("\nMise a jour (1 prix change sur 3)")
     r2 = store.upsert_listings_bulk([_ligne(0, 1_500_000), _ligne(1, 2_000_000), _ligne(2, 3_000_000)])
-    verifie("0 nouvelle, 3 mises a jour, 1 changee",
-            r2["nouvelles"] == 0 and r2["maj"] == 3 and r2["changees"] == 1, str(r2))
+    verifie("0 nouvelle, 1 seule mise a jour reelle (2 lignes inchangees non reecrites), 1 changee",
+            r2["nouvelles"] == 0 and r2["maj"] == 1 and r2["changees"] == 1, str(r2))
 
     lignes2 = {r[0]: r for r in store._execute(
         "select id, price, first_seen, last_seen from listings where id = any(%s)", (IDS,)
@@ -131,13 +136,32 @@ try:
     verifie("first_seen INCHANGE apres mise a jour (meme invariant que upsert_listing)",
             all(lignes2[i][2] == premiers_first_seen[i] for i in IDS),
             "upsert_listings_bulk ne doit JAMAIS toucher first_seen d'une ligne existante")
-    verifie("last_seen avance", all(lignes2[i][3] >= premiers_first_seen[i] for i in IDS))
+    verifie("last_seen avance SEULEMENT pour la ligne reellement modifiee",
+            lignes2[IDS[0]][3] > premiers_first_seen[IDS[0]])
+    verifie("last_seen N'AVANCE PAS pour les 2 lignes strictement identiques (garde-fou anti-reecriture)",
+            lignes2[IDS[1]][3] == premiers_first_seen[IDS[1]] and lignes2[IDS[2]][3] == premiers_first_seen[IDS[2]],
+            f"{lignes2[IDS[1]][3]} vs {premiers_first_seen[IDS[1]]}")
 
     nb_prix2 = store._execute(
         "select count(*) from price_history where listing_id = any(%s)", (IDS,)
     ).fetchone()[0]
     verifie("4 lignes price_history apres 1 changement (3 initiales + 1 nouvelle)",
             nb_prix2 == 4, f"{nb_prix2} lignes")
+
+    # --- 3. Renvoi du lot IDENTIQUE (etat post-etape-2) -----------------------
+    # Simule le cas reel quotidien de remonter-supabase : la meme fenetre active
+    # est repoussee chaque jour, la plupart des lignes n'ont pas change depuis
+    # la veille. Rien ne doit s'ecrire.
+    print("\nRenvoi identique (etat stable, cas quotidien reel)")
+    r3 = store.upsert_listings_bulk([_ligne(0, 1_500_000), _ligne(1, 2_000_000), _ligne(2, 3_000_000)])
+    verifie("0 nouvelle, 0 mise a jour, 0 changee (rien n'avait besoin d'etre reecrit)",
+            r3["nouvelles"] == 0 and r3["maj"] == 0 and r3["changees"] == 0, str(r3))
+
+    lignes3 = {r[0]: r for r in store._execute(
+        "select id, last_seen from listings where id = any(%s)", (IDS,)
+    ).fetchall()}
+    verifie("last_seen INCHANGE pour les 3 lignes (aucune n'a ete reecrite)",
+            all(lignes3[i][1] == lignes2[i][3] for i in IDS))
 
 finally:
     _nettoyer(store)
