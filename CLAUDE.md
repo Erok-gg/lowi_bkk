@@ -1,5 +1,10 @@
 # CLAUDE.md — Bangkok Real Estate Map
 
+> Contexte partagé avec le dépôt `lowi-th` (plateforme investissement, `lowi.asia`) :
+> @~/.claude/lowi-partage.md
+> ⚠ Les deux projets ne décrivent **pas la même opération** — voir ce fichier avant
+> d'écrire quoi que ce soit sur la structure juridique ou le montage financier.
+>
 > Doc de référence du projet. À lire avant toute modif. Tient l'état d'avancement à jour.
 >
 > **Flow complet du système (scrap → parsing → stockage → heuristiques → calculs) : [docs/pipeline.md](docs/pipeline.md)**
@@ -15,10 +20,25 @@
 >
 > **Présentation non technique — flux, méthode, valeur, limites : [docs/dossier-investisseur/](docs/dossier-investisseur/README.md)**
 >
-> **Décisions, méthodes et défauts corrigés : voir [docs/journal-technique.md](docs/journal-technique.md)**
+> **Comment chaque chiffre est calculé, et pourquoi : [docs/methodes-calculs.md](docs/methodes-calculs.md)**
+> — formules, constantes de réglage, justification chiffrée de chaque seuil, et
+> la section « ce qu'on ne calcule PAS et pourquoi ». À lire avant de toucher à
+> une statistique, et à mettre à jour quand une méthode change.
+>
+> **Décisions et défauts corrigés : voir [docs/journal-technique.md](docs/journal-technique.md)**
 > (registre append-only — le *pourquoi* des choix, ce qui a été mesuré, ce qui
 > restait faux au moment de la décision, et la traçabilité de provenance).
 > Toute décision structurante ou tout défaut découvert s'y consigne, daté.
+> **Condensé le 2026-08-26** : il ne porte plus qu'un résumé des grandes étapes
+> + les entrées courantes. Le détail antérieur (3 380 lignes, toutes les mesures)
+> est intégralement conservé dans
+> [docs/journal-technique-archive-2026-06_08.md](docs/journal-technique-archive-2026-06_08.md),
+> **qui fait foi** pour l'antériorité des méthodes et le détail d'une enquête passée.
+>
+> **Registre des demandes : [docs/masterlog.md](docs/masterlog.md)** — horodaté,
+> append-only, **à ne PAS ouvrir par défaut** : il ne se consulte que sur demande
+> explicite. Il garde trace de ce qui a été *voulu* (y compris les demandes sans
+> suite), là où le journal porte le *pourquoi* et git le *quoi* livré.
 
 ## Règles de travail sur ce dépôt — à appliquer sans qu'on le redemande
 
@@ -54,6 +74,39 @@ méthode statistique. Proposer, chiffrer, laisser décider.
 s'applique avec sa contrepartie côté code (`_COLS`, stores, types) — les deux
 vont ensemble, sinon le scrap suivant échoue sur une colonne inconnue.
 
+**7. Tout doit pouvoir être repris en arrière.** Une migration livre son
+rollback *avant* d'être appliquée, et ce rollback se génère depuis l'état live,
+pas depuis ce que les fichiers du dépôt prétendent (les deux avaient divergé de
+4 vues le 2026-08-20). Même exigence hors SQL : une bascule de stockage, un
+changement de cadence ou un dégraissage se décrit avec le chemin du retour. Si
+on ne sait pas énoncer comment défaire, on ne fait pas.
+
+**8. La donnée est protégée avant d'être optimisée.** Aucune purge, aucun
+dégraissage, aucune suppression sans copie **vérifiée ligne à ligne** ailleurs —
+le bon test n'est jamais « même nombre de lignes » (le local en a
+légitimement plus), c'est « aucune ligne de la source ne manque à la copie ».
+Un garde-fou de sauvegarde qui lit une liste de tables figée ne garde rien : la
+liste se lit au catalogue à chaque exécution (défaut mesuré deux fois, sur
+`SYNC_TABLES` puis `TABLES_ATTENDUES`).
+
+**9. Vercel reste sous son free tier**, et cela se mesure au lieu de se
+supposer. Trois leviers, tous connus : le poids des pages, le nombre
+d'invocations (toutes les pages sont en `force-dynamic` — l'accès dépend d'un
+cookie — donc **une visite = une invocation**), et le volume tiré de la base.
+Avant d'ajouter une page lourde ou une source de données, chiffrer ce qu'elle
+coûte. Rappel de terrain : le free tier **Supabase** a été dépassé (143 % le
+2026-08-20) sans qu'aucune alerte ne se déclenche — le quota d'un tiers ne
+prévient pas, il se surveille.
+
+**10. Chaque milestone important est audité après coup.** L'audit porte sur la
+**structure** (le code fait-il ce que la doc annonce ?), la **sécurité des
+postes** (ce qui est exposé sur PC1/PC2 : ports, clés, tâches planifiées,
+secrets hors dépôt) et la **sécurité de Vercel** (surface publique, gate
+d'accès, RLS côté base, quota). Il se consigne au journal, y compris quand il ne
+trouve rien. Précédent qui justifie la règle : les 15 vues `SECURITY DEFINER`
+ouvraient `anon` en **écriture** pendant des semaines, et rejouer un
+`create or replace view` du dépôt rouvrait la faille en silence.
+
 ## Objectif
 Outil **perso, non public** : carte interactive de Bangkok découpée par quartiers, cliquable (zoom au clic), thème dark violet/anthracite, alimentée par des annonces immobilières scrapées (condos **vente + location**, **foreigner & thai quota**), avec fiches biens et statistiques agrégées (ville / quartier / rue).
 
@@ -68,13 +121,63 @@ sorties locales, juger une archive « en retard ») **se vérifie d'abord par
 `$env:COMPUTERNAME`** : la même phrase est juste sur un poste et destructrice
 sur l'autre.
 
+## Architecture des données — où vit la vérité
+
+> Section refaite le **2026-08-26**. Elle décrivait jusque-là Supabase comme la
+> base d'écriture, ce qui avait cessé d'être vrai le 2026-08-25 (bascule SQLite,
+> commit `cea4938`). Une doc de référence périmée sur ce point ment avec
+> autorité : le premier réflexe, avant de raisonner sur les données, est de
+> vérifier **où le dernier scrap a écrit**.
+
+Trois étages, trois rôles distincts. Ils ne se synchronisent **pas** tout seuls.
+
+| Étage | Contenu | Rôle | Qui écrit | Qui lit |
+|---|---|---|---|---|
+| **PC2 — `scraper/output/bangkok.db`** | 11 tables, 1,19 Go | **Référence.** Base complète, y compris `page_text` et `description` (compressés zlib, ~66 % de gain mesuré) | les 5 extracteurs + le recensement (`--store sqlite`) | `study/run_study.py`, `ops/dashboard.py`, les agents (`LOWI_STORE=sqlite` par défaut) |
+| **Supabase (cloud, ap-southeast-1)** | 9 tables + 13 vues, 139 Mo | **Fenêtre chaude** servie au public. Dégraissée le 2026-08-25 : sans `page_text`, `description`, `cohort_snapshots`, `listing_amenities` | `ops/remonter-local.py` — **manuel, non branché** | l'app Next déployée |
+| **Vercel** | aucun stockage | **Lecture seule.** Sert la carte et les pages | — | l'utilisateur du site |
+
+**Sens de circulation, et ses deux ruptures actuelles :**
+
+```
+sources web ──► PC2 (SQLite, référence) ──✗── Supabase (fenêtre chaude) ──► Vercel ──► navigateur
+                      │                    (1)
+                      └──► archive/lowi-archive.db  ◄──✗── (2) les 3 agents de backup
+                                                              répliquent encore Supabase → archive
+```
+
+1. **`ops/remonter-local.py` n'est appelé par aucun agent** (absent de toute
+   `cmd` et de toute lane dans `agents/agents.json`). Le serveur est donc figé
+   au **2026-08-22** ; le site sert un marché périmé sans le signaler.
+2. **Les agents de sauvegarde vont dans le mauvais sens** depuis la bascule : ils
+   répliquent Supabase vers l'archive, alors que la référence est désormais
+   locale.
+
+**Ce qui n'existe pas, et ne doit pas être supposé :** il n'y a **aucun chemin
+de Vercel vers PC2**. Ni tunnel, ni port ouvert, ni IP fixe, ni service.
+`lib/listings-db.ts` n'a que deux branches exclusives — `LOWI_SQLITE_DB` (un
+**fichier** local, donc hors d'atteinte depuis Vercel) ou `SUPABASE_DB_URL`. Une
+requête que le serveur ne sait pas satisfaire n'est pas déléguée à PC2 : elle
+échoue ou renvoie un résultat incomplet.
+
+**Piège de développement local.** `.env.local` définit `LOWI_SQLITE_DB`, qui
+**prime sur Supabase** (`lib/listings-db.ts:74`). Un `npm run dev` sur PC2 lit
+donc la base locale, pas ce que voit le public. Deux vues différentes des mêmes
+pages selon l'endroit d'où l'on regarde — de quoi croire à un bug de fraîcheur
+qui n'en est pas un, ou l'inverse.
+
+**Avant toute manipulation de données, la question à trancher en premier :**
+*laquelle des trois vues est-ce que je regarde ?* `ops/verifie-synchro.py` répond
+en lecture seule (cycle passé ? serveur alimenté ? double coureur ? archive à
+jour ? git poussé ?) — il n'appartient à aucune lane, il se lance à la main.
+
 ## Stack & choix architecturaux (verrouillés)
 | Domaine | Choix | Raison |
 |---|---|---|
 | Moteur carte | **MapLibre GL JS** (vectoriel WebGL) | Thème dark 100% custom, glow jaune sur bordures, couches POI selon zoom, zoom fluide animé |
 | Frontend | **Next.js (App Router) + TypeScript + Tailwind** | SSR/routes API, theming par tokens |
 | Données géo | **OSM Overpass** → GeoJSON commité dans `/data` | Fiable, gratuit, pas d'appel runtime |
-| Backend/stockage | **Supabase (Postgres + Storage)** | DB relationnelle + stockage images webp |
+| Backend/stockage | **SQLite local (référence) + Supabase (fenêtre chaude servie à Vercel)** | Depuis le 2026-08-25 : le free tier Supabase plafonne à 500 Mo et la base en pesait 810 ; le recensement DDproperty en aurait ajouté ~540. PC2 a 905 Go libres et SQLite compresse `page_text`. Détail : § Architecture des données |
 | Scraping | **Python**, pattern adaptateurs | Modulaire ; ajouter un site = un module |
 | Images | **webp 1024×768** optimisées (Pillow) | Efficacité / poids |
 | Accès privé | **Mot de passe partagé** (page `/login` + cookie, runtime Node — `lib/auth.ts`) | Le middleware Edge plante sur Vercel (`__dirname` injecté par leur runtime, bundle pourtant propre) → gate en Node |
@@ -108,7 +211,15 @@ On doit pouvoir changer **variables de scraping** et **présentation des donnée
 - **Couleurs / thème** → `config/theme.ts` (+ `map-style.json` pour la carte).
 - **Style carte (eau, rues, métro, labels)** → `config/map-style.json`.
 
-## Modèle de données (Supabase)
+## Modèle de données
+
+> **Le schéma ci-dessous est celui de la référence (SQLite local, 11 tables).**
+> Supabase n'en porte que 9 : le dégraissage du 2026-08-25 y a retiré
+> `cohort_snapshots` et `listing_amenities`, ainsi que les colonnes `page_text`
+> et `description` de `listings`. Toute lecture côté app doit donc se limiter à
+> ce que le serveur détient encore — `COLONNES_LISTING` (`scraper/store/base.py`)
+> est l'exemplaire unique, et `agents/tests/test_stores_alignes.py` le compare
+> aux colonnes **réelles** des deux bases.
 - **listings** : `id, source, source_url, title, deal_type(sale|rent), quota(foreigner|thai), price, currency, area_sqm, price_per_sqm, bedrooms, bathrooms, condo_name, address_raw, khet, khwaeng, street, lat, lng, status(active|inactive|sold), first_seen, last_seen, raw_data jsonb`
 - **listing_images** : `id, listing_id, storage_path, width, height, order`
 - **listing_amenities** : `id, listing_id, name`
@@ -120,7 +231,21 @@ On doit pouvoir changer **variables de scraping** et **présentation des donnée
 - **social_leads** : annonces réseaux sociaux, **table séparée à dessein** (déclaratif non vérifié → ne doit pas contaminer les stats de marché).
 - **Vues** : `khet_stats`, `street_stats`, `listings_sane` (périmètre assaini), `listing_benchmarks` + `opportunites` (cascade de comparaison), `cohort_tension`, `condos_age`.
 
-### Volumétrie (relevée le 2026-07-31 — elle pilote les décisions)
+### Volumétrie — les deux bases ne disent PAS la même chose (relevé le 2026-08-26)
+| | SQLite local (référence) | Supabase (servi à Vercel) |
+|---|---|---|
+| Annonces totales | **76 942** | 69 175 |
+| **Actives** | **53 258** | 46 881 |
+| Dernier `scan_run` | **2026-08-25 23:48** | **2026-08-22 08:27** |
+| Taille | 1,19 Go | 139 Mo / 500 Mo de quota |
+
+> **Écart : 7 767 annonces, dont 6 377 actives**, présentes sur PC2 et absentes
+> du serveur. Le site public sert donc un instantané du 22/08. Ce n'est pas un
+> bug mais une liaison non branchée (§ Architecture des données, rupture 1) —
+> à trancher, car remonter l'intégralité ramènerait le problème de quota qui a
+> motivé la bascule.
+
+### Volumétrie de référence (relevée le 2026-07-31 — conservée, elle éclaire les choix d'alors)
 | | |
 |---|---|
 | Annonces totales | 35 779 |
@@ -190,10 +315,10 @@ Usage perso non-commercial. Fréquence ~hebdo (pas de boucle serrée). Respect r
 - [~] **Phase 2** — **Partie locale FAITE** (FazWaz **+ DDproperty**) : `supabase/schema.sql` écrit (à appliquer demain). Pipeline `scraper/` : adaptateurs FazWaz (JSON-LD liste) et DDproperty (`__NEXT_DATA__` Next.js), **fiche complète par bien + galerie webp 1024×768** (détail visité pour tous les biens, `fetch_detail` activé), normalisation, **matching khet point-in-polygon** (`pipeline/geo_match.py`), fiches HTML, **store SQLite** (`output/bangkok.db`) reflétant le schéma, **diff** (new/changed/unchanged) + `price_history` + alertes, **dédup incrémentale** (prix inchangé lu dans la liste → `[skip-dedup]`, fiche non re-visitée → raccourcit les scraps futurs), `--full` → inactif des disparues, scan_runs + stats khet.
   - **Géoloc** : lat/lng **10/10** sur les tests (FazWaz natif dans le JSON-LD liste ; DDproperty dans le `__NEXT_DATA__` de la fiche) → **pinpoint précis sans géocodage ni Chrome**.
   - **DDproperty / Cloudflare** : pages détail derrière un challenge CF. Contourné **sans Chrome** par une **session `requests` réchauffée** (parcourir la liste d'abord → cookie `__cf_bm`) + en-têtes navigateur, **sans brotli** (requests ne le décode pas). `pipeline/fetch.py` récupère robots.txt via la session ; si illisible (challenge) → accès autorisé par défaut (RFC).
-  - [x] **Online Supabase FAIT** : projet **Lowi_bkk** (`qbyxxbtzxxzuofiptnxe`, région ap-southeast-1), schéma appliqué + **RLS activé**. `store/supabase_store.py` (psycopg, **connexion Postgres directe via pooler session** `aws-1-ap-southeast-1.pooler.supabase.com:5432`, bypass RLS) ; `run.py --store supabase`. Peuplé (~20 biens, images, price_history, scan_runs ; dédup OK online). App Next lit Supabase via `lib/listings-db.ts` quand `SUPABASE_DB_URL` est défini (`pg`, sinon fallback SQLite). Connexions/clés dans `.env.local` + `scraper/.env` (gitignorés).
+  - [x] **Online Supabase FAIT** *(⚠ entrée historique : depuis le 2026-08-25 les extracteurs n'utilisent plus `--store supabase` — voir § Architecture des données)* : projet **Lowi_bkk** (`qbyxxbtzxxzuofiptnxe`, région ap-southeast-1), schéma appliqué + **RLS activé**. `store/supabase_store.py` (psycopg, **connexion Postgres directe via pooler session** `aws-1-ap-southeast-1.pooler.supabase.com:5432`, bypass RLS) ; `run.py --store supabase`. Peuplé (~20 biens, images, price_history, scan_runs ; dédup OK online). App Next lit Supabase via `lib/listings-db.ts` quand `SUPABASE_DB_URL` est défini (`pg`, sinon fallback SQLite). Connexions/clés dans `.env.local` + `scraper/.env` (gitignorés).
   - [x] **Images → Supabase Storage** : bucket public `listings`, upload via clé secret (en-tête `apikey`) — `scraper/pipeline/storage.py`, backfill `scraper/upload_images.py`, sync auto au scrape (`run.py --store supabase`). App résout l'URL via `lib/image-url.ts` (Storage si `NEXT_PUBLIC_SUPABASE_URL`, sinon `/api/img` local).
   - [x] **GitHub** : repo isolé (`git init` dans Lowi_bkk, le parent était le home), poussé sur `Erok-gg/lowi_bkk` (public ; site protégé par basic-auth). Secrets hors repo (`.env.local`, `scraper/.env` gitignorés).
-  - [x] **Déploiement Vercel FAIT** : **https://lowi-bkk.vercel.app** (projet `lowi-bkk`, team schoenaueranthony). Build Next 15.4.11, env (`SUPABASE_DB_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `BASIC_AUTH_PASSWORD`). Accès : page `/login`, mot de passe **anthoicare** (cookie `lowi_auth`). Données Supabase + images Storage.
+  - [x] **Déploiement Vercel FAIT** : **https://lowi-bkk.vercel.app** (projet `lowi-bkk`, team schoenaueranthony). Build Next 15.4.11, env (`SUPABASE_DB_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `BASIC_AUTH_PASSWORD`). Accès : page `/login`, mot de passe stocké **uniquement** dans la variable Vercel `BASIC_AUTH_PASSWORD` (cookie `lowi_auth`) — **plus jamais en clair ici**, voir §5.1 de [docs/replication-blueprint.md](docs/replication-blueprint.md) (exposé en clair sur le dépôt public depuis 2026-06-21, `git log -S "anthoicare"`). Données Supabase + images Storage.
     - **Pièges rencontrés** : (1) `framework: None` sur le projet → 404 partout → corrigé en `nextjs` ; (2) middleware Edge → `__dirname is not defined` (runtime Vercel) même en no-op → remplacé par gate cookie en Node ; (3) Next **downgradé 15.5.19 → 15.4.11** ; (4) protection SSO Vercel désactivée (on utilise notre mot de passe).
 - [x] **Phase UI** — Infrastructure d'interface :
   - [x] Header **Lowi re-teinté sombre** (`components/LowiHeader.tsx`, logo MCTen, accent or), sans auth Supabase ✓
@@ -208,7 +333,7 @@ Usage perso non-commercial. Fréquence ~hebdo (pas de boucle serrée). Respect r
 - [x] **Sources locatif + 2 nouveaux sites (2026-06-23)** : adaptateurs **PropertyScout** (`adapters/propertyscout.py`, Next.js `__NEXT_DATA__`, pagination `/page-N/`) et **Nestopa** (`adapters/nestopa.py`, ld+json `Product` du flux `/th-en/for-sale|for-rent`, filtre Bangkok par l'URL, champs depuis le slug/nom ; **pas de coords serveur** → khet par slug, coords via géocodage). **FazWaz rent réparé** (URL `/property-rent/`, id inclut le deal_type). **Utiliser `.venv/Scripts/python.exe`** (psycopg).
 - [x] **Géocodage condos Nominatim (2026-06-23)** : `scraper/pipeline/geocode.py` (1 req/s, cache `output/geocode-cache.json`, échecs cachés) ; flag `run.py --geocode` (complète street/coords manquants au scrape) ; backfill `scraper/backfill_geocode.py` (ne remplit que le manquant, ne crase pas les coords précises, redéduit le khet sur nouvelles coords). Taux de hit Nominatim ~35-40 % sur noms de condos thaï.
 - [x] **Stats v2 — double médiane par condo (2026-07-04)** : `lib/yields.ts` réécrit. Prix/m² = médiane des annonces PAR CONDO puis médiane des condos (1 immeuble = 1 voix ; neutralise vétusté/vue/étage sans date de construction). Rendement = médiane des rendements **within-condo** (loyer et prix du MÊME immeuble, ≥5 condos appariés, sinon repli ratio marqué †). Winsorisation p5-p95 par groupe (n≥20), badge `lowSample` (<20 condos d'un côté). **Strate 0–1BR par défaut** (panier constant) — toggle Studio–1BR / 2BR / 3BR+ / All sur `/rendements` (calcul client, `YieldsTable`) et `/yields-map`. Méthode expliquée dans l'UI ("How is this computed?" + légende carte). `YListing` porte désormais `id`+`condoName`. Constat data (2026-07-04) : 1 154 condos ont vente ET location actives = 81 % du stock actif → base du within-condo.
-- [x] **Scrap ciblé par district (2026-07-04)** : flag `run.py --config <json>` (config alternative, mêmes clés). Configs `scraper/config/targets/fazwaz-corridors.json` (rent 13 districts + sale 7, URLs `/condo-for-rent/thailand/bangkok/<slug>`) et `ddproperty-corridors.json` (rent, `freetext=<district>`). Cible : rive ouest (Bangkok Noi/Yai, Thon Buri, Phasi Charoen, Bang Phlat, Taling Chan, Chom Thong, Rat Burana) + couloir Orange Est (Bang Kapi, Bueng Kum, Saphan Sung, Wang Thonglang, Min Buri). ⚠ jamais `--full` avec une config ciblée (scan partiel → délistage interdit).
+- [x] **Scrap ciblé par district (2026-07-04)** : flag `run.py --config <json>` (config alternative, mêmes clés). Configs `scraper/config/targets/fazwaz-corridors.json` (rent 13 districts + sale 7, URLs `/condo-for-rent/thailand/bangkok/<slug>`) et `ddproperty-corridors.json` (rent, `freetext=<district>`). Cible : rive ouest (Bangkok Noi/Yai, Thon Buri, Phasi Charoen, Bang Phlat, Taling Chan, Chom Thong, Rat Burana) + couloir Orange Est (Bang Kapi, Bueng Kum, Saphan Sung, Wang Thonglang, Min Buri). ⚠ jamais `--full` avec une config ciblée (scan partiel → délistage interdit). *(La passe FazWaz est retirée depuis le 2026-09-13 — mode sitemap, voir plus bas ; celle de DDproperty reste.)*
 - [x] **Calques couloirs de développement (2026-07-04)** : `npm run geo:corridors` (`scripts/fetch-corridors.ts`) → `public/data/corridors.geojson`. Lignes en construction via Overpass `railway=construction` (Orange E/O, Purple Sud, HSR 3 aéroports + segments génériques gris) + zones de développement seed manuel `data/dev-zones-seed.json` (Bang Sue/KTA acté, Makkasan pending, Khlong Toei port pending, Rama IV livré — polygones approximatifs, statut→couleur). Catégories `future_line` (pointillés, label le long de la ligne) et `dev_zone` (fill + contour pointillé + popup note) dans `poi-config.ts` (groupe `corridors`) ; `pois.ts` gère désormais `geometry:"polygon"` et `dash`. **+ Masques contexte (2026-07-04)** : `expat_zone` (8 hubs expat, seed manuel `data/expat-zones-seed.json` — Sukhumvit core, Silom/Sathon, Riverside, Ari, On Nut, Rama 9, Nichada Thani, Bang Na-Trat) et `industrial_zone` (OSM `landuse=industrial` ≥ 0,25 km², ~60 zones). Décochés par défaut dans la légende.
 - [x] **Framework d'étude de marché récurrente (2026-07-06)** : `study/` — `config.json` (TOUS les paramètres figés, versionnés par `config_version` ; en changer un = incrémenter la version, ça trace les ruptures de série), `context.md` (narratif manuel : historique 10 ans + perspectives, à éditer à la main quand le contexte change), `run_study.py` (orchestrateur). **Rituel : après chaque cycle hebdo de scraps `--full`, lancer `scraper/.venv/Scripts/python.exe study/run_study.py`** → snapshot daté `study/snapshots/YYYY-MM-DD.json` (committé) + étude datée `docs/etudes/etude-YYYY-MM-DD.md`. Les tables d'évolution (prix/m², rendement WC, churn par khet, Δ vs édition précédente) se construisent automatiquement dès 2 snapshots. Sections : état marché 0-1BR, évolution, contexte manuel, 10 opportunités/quartier expat (fiches+liens, flags ⚠ si décote >40 % ou renta >9,5 %), école ≤5 km + métro ≤500 m (existant ou futur), tension délistées (churn normalisé par le stock actif). 1re édition manuelle : `docs/etude-marche-2026-07.md` ; 1re édition framework : `docs/etudes/etude-2026-07-06.md`.
 - [x] **Archivage local + purge serveur (2026-07-09)** : `ops/sync_supabase_local.py` — réplique toutes les tables Supabase dans `archive/lowi-archive.db` (SQLite, gitignoré), puis `--prune` supprime du serveur les annonces inactives délistées >90 j **uniquement si leur copie est vérifiée id par id dans l'archive** (garde-fous : une table archivée en retard sur le serveur → purge interdite ; candidates absentes → annulée). ⚠ **L'introspection n'a longtemps porté que sur les COLONNES** : `SYNC_TABLES` était une liste figée de 7 noms, si bien que `condos`, `cohort_snapshots` et `posted_at_history` (~607 k lignes) n'ont jamais été archivées jusqu'au 2026-08-20. Depuis, tables, colonnes **et clés primaires** sont lues au catalogue à chaque run (`condos` a pour PK `name`, pas `id`). Le local = référence historique complète ; le serveur = fenêtre chaude. ~~Tâche Windows `LowiBKK-ArchiveSync` (hebdo, wrapper `ops/sync-archive.ps1`)~~ — **retirés le 2026-08-22** : l'agent `backup-apres-cycle` fait le même travail. Lancement manuel : `scraper\.venv\Scripts\python.exe ops\sync_supabase_local.py [--prune]`.
@@ -246,5 +371,12 @@ Usage perso non-commercial. Fréquence ~hebdo (pas de boucle serrée). Respect r
 - [x] **Rattrapage sans extraction (2026-08-17)** — `orchestrator.py run-lane --skip-extraction` / `--boot` : rejoue analyse/organisation/rapport/backup/overseer sans retoucher au scrap. Tâche Windows `LowiBKK-RattrapageBoot` (déclenchée à l'ouverture de session) en complément de `LowiBKK-Agents` : si le cycle de nuit a manqué son créneau, la suite repart au logon sans lancer un scrap complet à une heure imprévisible. Trouvé en route : Ollama était éteint, `organize` accumulait des pannes silencieusement (270/275) — corrigé, mais un effet de bord subsiste (paires en échec marquées "traitées" dans le journal de reprise, non re-tirées). Détail : [journal technique du 2026-08-17](docs/journal-technique.md).
 - [x] **Faille RLS fermée + archive complétée (2026-08-20)** — Les 15 vues de `public` étaient **SECURITY DEFINER** (`reloptions = NULL`) et appartiennent à `postgres`, dont `rolbypassrls = true` : `anon` contournait donc intégralement le RLS deny-all des tables en passant par une vue, et pouvait **écrire** sur `listings`/`condos`/`social_leads` via les 3 vues auto-updatables. Prouvé avant correctif (en transaction annulée, écriture no-op : 1 ligne atteinte via `listings_sane`, 0 via `listings`), re-testé après (`42501 permission denied`). Correctif : `security_invoker = true` sur les 15 vues, `revoke all` pour `anon`/`authenticated` sur `public`, **et** `alter default privileges ... revoke all` (sans quoi `pg_default_acl` reposait les grants sur chaque nouvelle table). Les 14 `create or replace view` du dépôt portent désormais `with (security_invoker = true)` — **`CREATE OR REPLACE VIEW` remet `reloptions` à zéro**, rejouer un fichier rouvrait la faille en silence. Rollback généré depuis l'état live : `supabase/migrations/2026-08-20_rollback_rls_hardening.sql`. ⚠ Les 11 alertes `rls_enabled_no_policy` (INFO) **restent et doivent rester** : c'est le deny-all voulu, y ajouter une policy rouvrirait l'accès. Détail, dérive fichiers↔serveur (4 vues sans migration) et ce qui n'a pas été fait : [journal technique du 2026-08-20](docs/journal-technique.md).
 - [x] **Transfert vers un 2e poste + T1 délégué à Claude (2026-08-21)** — `ops/migration/` ([README](ops/migration/README.md)) : `exporte-poste.ps1` / `importe-poste.ps1`. **Les connecteurs ne se transfèrent pas** — vérifié, `mcpServers` est vide dans `~/.claude.json` (global ET projet) : les six connecteurs (Supabase, Gmail, Drive, Vercel, Agenda, visualize) sont liés au **compte** claude.ai et reviennent avec `claude login` ; les routines planifiées aussi (ne pas les recréer, doublon). Ce qui se transporte : mémoire, permissions, ledger, `state/`, `queue/`, secrets, cache Nominatim (2,8 Mo sans les secrets). Trois pièges encodés : `ledger.db` est en **WAL** (copie via l'API `backup` sqlite, sinon transactions perdues) ; le dossier de mémoire **encode le chemin du projet dans son nom**, recalculé à l'import ; les tâches Windows se **réinstallent par `ops/install-*.ps1`**, jamais par réimport du XML (chemins figés — défaut du 2026-07-11). Sans le ledger, `is_due()` relance les 5 extracteurs en `--full` dès le 1er cycle (6 h 30). **Le 2e poste est trop faible pour Ollama** : marqueur **par machine** `agents/t1-absent` (gitignoré, posé par l'import après **sonde** d'Ollama) → `organize` dépose des lots de **60 paires** en ticket drainé par `drain-agent-queue-lowi-bkk`, et `ask_safe` se tait au lieu de produire **jusqu'à 6 constats de sévérité haute par cycle, quotidiennement** (règle 2). **Le contrat ne change pas** : le ticket demande les 6 mêmes faits, `decider()` tranche au retour (verdict direct = 92 % mais **0 % d'abstention**). Retour par `python -m agents.bots.organize --appliquer <reponses.json>`. Deux journaux distincts — `paires-faites` (tranchée) vs `paires-en-ticket` (soumise) — sans quoi on refait le défaut du 2026-08-17. Vérifié par `agents/tests/test_tickets.py`. Ce que la mesure a montré : T1 sur `organize` a produit **7 entrées de revue en 3 semaines** (980 paires soumises) pendant que le stock ambigu montait de 22 071 à 28 306 — le goulot n'est pas le volume. Défaut trouvé en testant, corrigé : `escalation.create()` horodate à la seconde, deux escalades du même agent+motif dans la même seconde **s'écrasaient en silence**. ⚠ **Non fait** : aucun run de production en mode ticket, débit de la boucle non mesuré, extinction des tâches de l'ancien poste **à faire à la main** (sinon les 2 machines scrapent en parallèle). Détail : [journal technique du 2026-08-21](docs/journal-technique.md).
+- [x] **Bascule SQLite : la référence passe sur PC2 (2026-08-25, commit `cea4938`)** — les 5 extracteurs et le recensement écrivent en `--store sqlite`. **Raison mesurée** : le free tier Supabase plafonne à 500 Mo, la base en pesait 810 (**143 %** le 2026-08-20), et le recensement complet du catalogue DDproperty (~113 000 annonces) en aurait ajouté ~540. Serveur dégraissé **810 → 139 Mo** (retrait de `page_text`, `description`, `cohort_snapshots`, `listing_amenities`), migration **et rollback** fournis. Base locale amorcée depuis `archive/lowi-archive.db`. `LOWI_STORE=sqlite` par défaut partout, `LOWI_STORE=supabase` pour relire le serveur.
+- [~] **Liaison PC2 → Supabase — scénario A retenu et implémenté (2026-08-26)** — `ops/remonter-local.py --statut actives --synchro-statuts`. **Le serveur ne porte que le marché consultable** ; l'historique des délistées reste local, où il alimente les statistiques d'évolution. ⚠ **Deux défauts trouvés en implémentant, tous deux mesurés** : (1) `upsert_listing` force `status='active'` et annule `delisted_at` → remonter tout **ressusciterait les 23 684 délistées** (le scénario C recommandé la veille était donc dangereux, pas seulement plus lourd) ; (2) A seul ne propage pas les morts — **400/400 identifiants testés encore `active` en ligne**, soit ~1 876 annonces fantômes, d'où `--synchro-statuts` (recopie idempotente du verdict local, sans re-jugement : le délai de grâce a déjà été appliqué par le vrai scan). **Débit mesuré : 4,1 annonces/s** (pilote de 500 en 2 min 03) → **~3 h 40** pour les 53 258, réseau-bound (2 allers-retours Bangkok↔Singapour par annonce). **Branché en lane `daily` le 2026-08-26** : agent `remonter-supabase` (famille `Security & storage`, `every_days: 1`), inséré **avant `watch-health`** dans `agents.json` — l'ordre de la « suite » EST l'ordre du tableau, il n'y a pas de champ `ordre` ; ça le place juste après le dernier extracteur. **La remontée complète n'a pas encore tourné** : elle part au prochain cycle de 01:00, seul le pilote de 500 est en ligne.
+- [x] **Veille repoussée en conséquence (2026-08-26)** — le cycle passe de **7 h 15** (mesuré au ledger, 2026-08-22) à **~11 h 35**, donc il **finit vers 12:35** et ne tient plus dans la nuit. `STANDBYIDLE` : **5 h → 13 h** (`ops/regle-alimentation.py`), appliqué **et vérifié** (`powercfg /query` → `0x0000b6d0` = 46 800 s — un exit 0 ne prouve rien, cf. `SYSCOOLPOL`). ⚠ **Défaut créé par ce changement, corrigé dans la foulée** : `scrap_en_cours()` ne surveillait que la famille `Extraction` et les motifs `scraper/run.py|recense.py` — un logon à 09:00 (`LowiBKK-RattrapageBoot`) tombait en pleine remontée et relançait une lane par-dessus. La donnée était protégée (verrou d'instance), mais au prix d'une fausse alerte (règle 2) → `LONGS_A_NE_PAS_COUPER` + `ops/remonter-local.py` ajouté aux motifs. **Non vérifié** : `STANDBYIDLE` sur **batterie** reste à 180 s (un cycle sur batterie serait coupé en 3 min).
+- [ ] **⚠ Liaison PC2 → Supabase, ce qui reste** — le vrai correctif de fond est la **mise en lots** (`execute_values`) : à 4,1 annonces/s le réseau porte tout le coût (2 allers-retours Bangkok↔Singapour par annonce), et ~3 h 40 tomberait à ~10 min, rendant le débordement sur la journée sans objet. Le décalage de la veille n'est qu'un contournement de cette lenteur. Restent aussi : inverser les 3 agents de sauvegarde (ils répliquent encore Supabase → archive), et poser un garde-fou de fraîcheur. Conséquence servie au public : Vercel affiche le stock du **22/08**, amputé de 6 377 actives, **sans aucun signal**. **Périmètre chiffré le 2026-08-26** (coût/ligne relevé sur le serveur, journal suite 4) : **A. actives seules 132 Mo (26 %)** · **B. + inactives 30 j 141 Mo (28 %)** · **C. socle complet 157 Mo (31 %)** · D. + `cohort_snapshots`/`listing_amenities` 580 Mo (**116 %**, seul scénario hors quota, et sans usage). **Le quota n'est PAS l'obstacle** — le poids était dans `page_text`/`description` (246 Mo) et `cohort_snapshots` (149 Mo), qui restent locaux. Le critère de choix est fonctionnel : **A casse l'absorption de la tension** (le time-on-market se calcule sur les disparues) et la décote temporelle. **Recommandation : C** — 18 Mo de plus qu'aujourd'hui, aucune page dégradée. Restent à arbitrer : (2) inverser les 3 agents de sauvegarde, qui répliquent encore Supabase → archive ; (3) fixer le seuil d'un garde-fou de fraîcheur — `ops/verifie-synchro.py` fait déjà le croisement mais n'est dans aucune lane. Non mesuré : la **durée** d'une remontée (76 942 upserts ligne à ligne vers ap-southeast-1).
+- [x] **FazWaz : découverte par sitemap (2026-09-13)** — robots.txt interdit `order_by=` depuis le 2026-09-12 ; sans tri par fraîcheur 150 pages = 2,7 % du catalogue. Le même robots.txt déclare `sitemap-listings.xml` (27 fichiers, `lastmod` par annonce) : `scraper/pipeline/sitemap.py` + `discovery: "sitemap"` dans `config/fazwaz.json`. **Mesuré** : 84 534 condos Bangkok dans le sitemap contre 10 915 actives en base ; 17/17 URL testées vivantes, dont 7 que la base croyait délistées — la fenêtre de 150 pages délistait à tort. Règle : présente = vivante (touch sans fiche), `lastmod` > `last_seen` = fiche rouverte, fenêtre 60 j seulement pour inconnues/délistées, budget `max_detail_visits` (1 000 ≈ 55 min à 3,3 s/fiche). Prix/surface/SDB/coords lus sur la fiche (meta `title`/`description`, `:lat`/`:lng`, repli bloc d'infos). Passe couloirs FazWaz retirée d'`agents.json` (plus rien à réactiver). ⚠ **Premier `--full` de production au cycle du 2026-09-14** ; retard de ~17 000 fiches par deal_type repris sur ~9 nuits. Détail : [journal du 2026-09-13](docs/journal-technique.md).
+- [x] **Collecteur Facebook immo rapatrié dans le dépôt (2026-09-13)** — `scraper/social/` ([README](scraper/social/README.md)) : `scrape-immo-facebook.ps1` + `facebook/agent.js` (copie, l'original reste dans `C:\agentic` pour la veille Equance), `immo-groups.json`, `immo-extract.mjs`, `immo-resolve.mjs`. Tâche `LowiBKK-ScrapeImmoFacebook` (01:00) réenregistrée par `ops/install-facebook-task.ps1` ; **le code retour de la tâche est désormais celui du scrape** (avant : celui du dernier `taskkill`, d'où un 0x1 chaque nuit avec un log « ok »). Sorties dans `scraper/output/social/`, logs `ops/logs/facebook/`. **Aval automatique depuis le même jour : agent `social-leads`** (`agents/bots/social_leads.py`, T2, lane `daily`, après `extract-nestopa`) — extraction par **`claude -p` (Haiku, lots de 15 posts, contexte minimal ~48 k tokens mis en cache)**, décisions `vendeur`/`quota` par regex, `immo-resolve.mjs` (référentiel en une passe : 2 s au lieu de > 10 min), `load_social_leads.py --sqlite` (base `social-leads.db` séparée). Marqueur `_charge.json` écrit après chargement = état. Mesuré sur la collecte du 12/09 : 92/92 posts extraits, 54 rapprochés, **25 chargés** (filtre `collecte_solide`). La « routine Claude/Haiku » annoncée le 12/09 n'a jamais existé ; c'est cet agent qui la remplace. Nuance au principe « T2 sans CLI » : `claude` **est** sur PC2 depuis le 2026-08-21 (`~/.local/bin/claude.exe`) — les tickets restent le canal des décisions, `claude -p` celui de l'extraction bornée.
+- [ ] **Consommation Vercel non mesurée (règle 9)** — la règle est posée sans chiffre de départ. Connus : toutes les pages sont en `force-dynamic` (une visite = une invocation) ; `memoTTL` (TTL 1 h, mémoire de processus, **non partagé** entre instances) amortit les requêtes DB mais pas les invocations ; les poids de page datent du 2026-07-28 (3,9–4,0 Mo, `/tension-table` 8,6 Mo) et n'ont pas été remesurés depuis que le stock actif a triplé.
 - [ ] **Suites identifiées (mesurées, non traitées)** : `/tension-table` pèse encore 8,6 Mo (sérialise les 34 275 annonces) ; dédup même-agent applicable au prochain scrape ; sonder PropertyScout pour l'agent ; empreinte photo inerte (0 ligne, `est_doublon` sans appelant) ; `year_built` à backfiller **côté serveur** ; quota étranger par immeuble ; logique métier dupliquée `study/run_study.py` ↔ `lib/yields.ts` ; décision à prendre sur le ticket DotProperty (creuser une fraction non-FazWaz, ou clore) ; premier run de production `livinginsider` à lancer puis bandes `agents.json` à recalibrer.
 - [ ] **Idées plus tard** : jitter/mouvements aléatoires anti-ban ; heatmaps loyers & prix sur la carte (couche MapLibre pondérée).

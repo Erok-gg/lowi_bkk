@@ -77,8 +77,6 @@ ops/miroir/
 # reglages Claude Code PAR MACHINE (permissions, chemins du poste)
 .claude/settings.local.json
 
-# synchro sessions Claude perso entre PC1/PC2 (IP reseau domestique, hors sujet Lowi)
-ops/push-sessions-to-pc1.sh
 
 # Le deck a demenage dans docs/club-deal/ le 2026-08-27 : les regles ci-dessus
 # (lowi_pitch_deck*.html, pitch-assets/) ne le couvraient plus, et `git status`
