@@ -2924,3 +2924,56 @@ aucune statistique n'en dépend.
   qu'aucun vacuum ne tourne déjà. Sans lui, Postgres réutilisera l'espace
   libéré pour les futures insertions (la croissance est donc absorbée), mais
   `pg_database_size` — ce que mesure le quota — ne baisse pas.
+
+### 2026-09-29 — réparation autonome : secret exposé depuis 3 mois + un mois de travail jamais commité
+
+Session de réparation planifiée. Cycle de scraping lui-même sain (tous les
+agents à jour, aucune erreur nouvelle sur 7 jours — voir
+`agents/audits/reparations-2026-09-29.md` pour le détail complet). Les deux
+vrais problèmes trouvés étaient dans le dépôt, pas dans le pipeline.
+
+**Mot de passe du site en clair sur GitHub public depuis le 2026-06-21**
+(commit `34aabd8`). Déjà diagnostiqué en sévérité HAUTE le 2026-09-13
+(`agents/audits/audit-2026-09-13.md`) et par l'audit de sécurité
+`docs/replication-blueprint.md` §5.1 — jamais traité. Corrigé : ligne
+retirée de `CLAUDE.md`, remplacée par un pointeur vers la variable Vercel
+`BASIC_AUTH_PASSWORD`. **Non fait** : changer le mot de passe sur Vercel
+(retirer la ligne ne rotate pas le secret réellement actif) — laissé à
+l'utilisateur, impact d'accès immédiat. L'historique git garde le mot de
+passe ; pas de réécriture tentée (dépôt déjà public depuis des mois, même
+conclusion que l'audit du 13/09).
+
+**171 fichiers non commités, certains depuis avant le 2026-08-26.**
+`ops/verifie-synchro.py` le signalait déjà lui-même. Vérifiés un par un puis
+commités en 4 lots distincts : `CLAUDE.md` (architecture des données, règles
+6-10, état d'avancement — absent de git depuis avant la bascule SQLite du
+25/08), le correctif « double coureur » de `verifie-synchro.py` +
+`agents/tests/test_remonter_bulk.py` (garde-fou anti-réécriture du 09-02,
+déjà en prod dans `supabase_store.py`, testé de nouveau contre le vrai
+Supabase avant commit — vert), 4 docs de référence jamais ajoutées
+(`masterlog.md`, `methodes-calculs.md`, `replication-blueprint.md`,
+`journal-technique-archive-2026-06_08.md`), et 33 jours de sorties d'étude
+jamais commitées depuis le cycle du 22/08 (160 fichiers : `etude-*.md`,
+`.xlsx`/`.csv`, `study/snapshots/*.json`, `study/official/official-*.json`).
+
+**Fausse alerte corrigée dans `verifie-synchro.py`** : la section « archive
+locale » vérifiait encore `archive/lowi-archive.db`, remplacé depuis le
+2026-08-25 par la sauvegarde clé USB (`sauvegarde-cle.py` /
+`backup-apres-cycle`) — le fichier n'existe plus, le check criait au loup en
+continu (règle 2). Lit maintenant le dernier run `backup-apres-cycle`
+réussi au ledger. Vérifié sain : dernier backup 0,2 j, 3 526,7 Mo, 3/3
+essais de relecture.
+
+**Boîte `agents/queue/mail/` vidée** : 21 alertes accumulées du 16/09 au
+27/09 (non vidée depuis le 13/09), toutes déjà résolues à cette date.
+Envoyées en un seul mail de synthèse (pas 21 mails d'historique sans action
+requise — règle 2) plutôt que individuellement.
+
+**Non fait, le plus important à trancher** : la branche
+`fix/reparations-2026-09-26` n'a **aucun upstream configuré** et compte
+**51 commits** d'avance sur `main` — tout le travail depuis la bascule
+SQLite (système d'agents, sécurité RLS, sitemap FazWaz, tous les correctifs
+depuis fin août) n'existe que sur le disque de PC2. Pas poussé par cette
+session (action visible depuis l'extérieur, laissée à l'utilisateur), mais
+c'est le risque numéro un du dépôt en l'état : une panne disque emporterait
+un mois de travail non recréable depuis GitHub.
