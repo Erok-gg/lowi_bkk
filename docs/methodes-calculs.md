@@ -393,3 +393,27 @@ de marché.
 La logique métier est **dupliquée** entre `study/run_study.py` (Python, pour les
 études datées) et `lib/yields.ts` (TypeScript, pour le site). Les deux doivent
 évoluer ensemble ; rien ne le vérifie automatiquement à ce jour.
+
+## 11. Annonces Facebook — doublons, filtres, comparaison (ajouté le 2026-09-30)
+
+Code : `scraper/social_calibrage.py`, lancé après chaque chargement par
+`load_social_leads.py --sqlite`. Base séparée `social-leads.db` : ces
+annonces n'entrent **jamais** dans les statistiques de marché (§ 1).
+
+| Étape | Règle | Mesure qui la justifie (406 fiches, 30/09) |
+|---|---|---|
+| Doublon « même bien » | même immeuble × type × chambres, surface ±2 m², prix ±5 %, regroupement transitif ; la tête de groupe est la première vue | 119 lignes en trop (29,3 %). L'exact en donne 96 ; ±10 % en donnerait 132. Le plateau se situe vers ±2 m² / ±5 % |
+| Hors bornes | bornes de § 1 (vente 800 k–100 M, loyer 3 k–500 k, surface 15–500) | 2 fiches |
+| Loyer au m² aberrant | hors 150–2 000 THB/m² (médiane 657, p10–p90 392–1 029) | 3 fiches |
+| Écart suspect | plus de ±40 % au marché de l'immeuble. **Drapeau seulement**, la fiche reste | 6 fiches |
+| Sur les plateformes | même immeuble × chambres, surface ±7 % (tolérance de § 5), prix ±5 % | 183 / 230 (79,6 %). **Plafond** : deux unités jumelles se confondent. Selon la tolérance, de 144 à 202 sur 230 |
+| Écart au marché | loyer au m² comparé à la médiane des annonces actives du même immeuble × chambres, dans les bornes, avec au moins 3 annonces | médiane 0,0 % (n = 183) ; exclusives −6,9 % (n = 18) |
+
+Rien n'est supprimé : les lignes sont marquées (`dedup_of`,
+`quality_flags`, `on_platforms`). Deux vues donnent le périmètre :
+`social_leads_uniques` et `social_leads_exclusives`. Chaque exécution
+archive ses paramètres, l'entonnoir du dernier chargement (motif de rejet
+par fiche) et une **grille de sensibilité** des deux tolérances. Ces données
+sont dans la table `calibration_runs` et dans
+`scraper/output/social/calibrage/`. C'est là qu'on relit avant de changer
+un seuil.

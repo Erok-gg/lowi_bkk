@@ -3071,3 +3071,40 @@ collecte ratée (collecte 01:00 → `social-leads` vers 07:00 → file vidée pa
 tâche planifiée de 02:14). **Non fait** : le code de sortie vide que
 journalise `scrape-immo-facebook.ps1` (`Start-Process -PassThru` sans lecture
 de `.Handle`). L'alerte n'en dépend pas.
+
+### 2026-09-30 (suite 2) — Calibrage de la chaîne Facebook
+
+À la demande de l'utilisateur : comparer par caractéristiques, filtrer,
+garder les statistiques de chaque choix. Détail des seuils :
+`docs/methodes-calculs.md` § 11 ; mesures de départ :
+`docs/etudes/facebook-2026-09-30.md`.
+
+- **`social_calibrage.py`** — doublons par caractéristiques (29,3 %),
+  drapeaux, présence sur les plateformes (79,6 %, plafond), écart au m² par
+  immeuble × chambres. Rien n'est supprimé (copie de `social-leads.db` prise
+  avant la première écriture). Résultat : 406 lignes → 283 uniques
+  exploitables → 47 exclusives. La grille de sensibilité est archivée à
+  chaque exécution. Durée : 39 s, dont la relecture de `bangkok.db` ; le
+  délai maximal de `charger()` passe de 300 à 900 s.
+- **Collecte** — 15 défilements par groupe ne couvrent que **~12 h** de posts
+  (13:13 → 01:13 UTC le 30/09). Porté à 32 (`FB_MAX_SCROLL`, retour arrière :
+  retirer la ligne du ps1). La sonde enregistre désormais par groupe le
+  nombre de tours, la raison d'arrêt et la date la plus ancienne atteinte.
+  C'est sur ces données qu'on recalibre.
+- **Défaut que j'avais introduit plus tôt dans la journée, corrigé** :
+  l'expression régulière `/login` de la détection de déconnexion avait perdu
+  ses barres obliques inverses à l'écriture et était devenue un commentaire.
+  Seul le test du formulaire fonctionnait (c'est lui qu'avait vérifié l'essai
+  réel). Même cause lors de cette passe : `element.$$` était devenu
+  `element.$` (motif `$$` d'un `String.replace`), corrigé avant commit. Les
+  deux sont relus dans le diff complet depuis le matin.
+- Auteur « Indicateur de statut En ligne » (28 posts) écarté du nom.
+
+**Non fait** : aucune collecte réelle lancée pour vérifier les 32 tours.
+`scrape-immo-facebook.ps1` ferme tous les Chrome ouverts, et un scrap
+Facebook en journée n'était pas justifié. Vérification à la sonde de cette
+nuit. Aucun calibrage appliqué aux 766 posts du 23 au 30/09 : ils attendent
+la reconnexion de `claude -p`. La normalisation de `street` n'est pas faite,
+donc pas de statistique par rue. Le regroupement transitif peut chaîner deux
+logements proches (21 000 → 22 000 → 23 000 dans le groupe de 8 de Rhythm
+Sathorn), à surveiller via `taille_groupes_doublons`.
