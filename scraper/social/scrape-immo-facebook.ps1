@@ -83,6 +83,15 @@ try {
     $env:FB_SKIP_ANALYSIS = "1"
     $env:FB_RICH_CONTENT = "1"
     $env:FB_DAYS_BACK = "7"
+    # Profondeur de défilement par groupe. 15 tours (défaut) = ~12 h de posts,
+    # mesuré le 2026-09-30, pour une collecte quotidienne : environ la moitié
+    # des posts n'était jamais vue (déduit, si le rythme de publication est
+    # régulier). 32 tours visent ~24 h + marge. Le coût : une collecte ~2×
+    # plus longue (6,5 → ~13 min estimés) et deux fois plus de défilement sur
+    # le compte. Le défilement s'arrête de toute façon dès 2 tours sans post
+    # nouveau. Retour arrière : supprimer cette ligne (on revient à 15).
+    # À recalibrer sur `plus_ancien` et `arret` dans logs/sonde-immo.json.
+    $env:FB_MAX_SCROLL = "32"
 
     Write-Log "Lancement du scrape immo..."
     $fb = Start-Process "node" -ArgumentList "facebook/agent.js" -WorkingDirectory $socialDir -PassThru `

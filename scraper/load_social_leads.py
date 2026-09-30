@@ -127,6 +127,29 @@ def _row(f: dict) -> dict:
     }
 
 
+def motif_rejet(f: dict) -> str | None:
+    """Pourquoi une fiche n'entre pas (None = elle entre). Même décision que
+    collecte_solide(), détaillée champ par champ pour l'entonnoir de
+    calibrage (social_calibrage.py) — demandé le 2026-09-30 : garder la
+    statistique de chaque filtre pour pouvoir les affiner."""
+    if not f.get("est_une_annonce"):
+        return "pas_une_annonce"
+    if f.get("type_bien") != "condo":
+        return "pas_un_condo"
+    if AUTRE_VILLE.search(f"{f.get('quartier','')} {f.get('texte','')}"):
+        return "hors_bangkok"
+    num = lambda k: isinstance(f.get(k), (int, float)) and f.get(k, 0) > 0
+    if not (f.get("nom_immeuble") or "").strip():
+        return "sans_immeuble"
+    if not num("surface_sqm"):
+        return "sans_surface"
+    if not (num("prix_vente_thb") or num("loyer_mensuel_thb")):
+        return "sans_prix"
+    if not num("chambres"):
+        return "sans_chambres"
+    return None
+
+
 def to_row(f: dict) -> dict | None:
     if not f.get("est_une_annonce"):
         return None
@@ -139,7 +162,8 @@ COLS = list(_row({}).keys())
 
 
 def charger_sqlite(rows: list[dict]) -> None:
-    db = BASE / "scraper" / "output" / "social-leads.db"
+    # LOWI_SOCIAL_DB : base de test (agents/tests/test_social_calibrage.py).
+    db = Path(os.environ.get("LOWI_SOCIAL_DB") or BASE / "scraper" / "output" / "social-leads.db")
     con = sqlite3.connect(db)
     # Le SQL Postgres n'est pas exécutable tel quel en SQLite : on crée une
     # table équivalente simplifiée (mêmes colonnes, sans les contraintes).
@@ -205,3 +229,14 @@ if __name__ == "__main__":
     quo = sum(1 for r in uniq.values() if r["quota"] == "foreigner")
     print(f"  dont propriétaire direct : {prop} | quota étranger explicite : {quo}")
     (charger_sqlite if "--sqlite" in sys.argv else charger_supabase)(list(uniq.values()))
+    if "--sqlite" in sys.argv:
+        # Dédoublonnage par caractéristiques + comparaison aux plateformes sur
+        # toute la table, statistiques archivées (scraper/social_calibrage.py).
+        from collections import Counter
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import social_calibrage
+        motifs = Counter(motif_rejet(f) or "retenue" for f in fiches)
+        s = social_calibrage.calibrer(entonnoir={"fichier": Path(args[0]).name, "fiches": len(fiches),
+                                                 **dict(motifs)})
+        print(f"calibrage : {s['biens_distincts']} biens distincts sur {s['lignes']} lignes "
+              f"({s['taux_doublons_pct']} % de doublons), {s['exclusives']} exclusives")

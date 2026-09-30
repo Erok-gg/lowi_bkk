@@ -205,10 +205,13 @@ async function extractPost(element, groupName, groupUrl) {
     // Auteur — premier lien de profil avec un texte non vide (le premier
     // match du sélecteur est souvent un lien vide dans le nouveau DOM)
     let author = "Inconnu";
+    // Libellés d'interface lus à la place du nom — mesuré le 2026-09-30 :
+    // « Indicateur de statut En ligne » comme auteur sur 28 posts / 1 703.
+    const PAS_UN_NOM = /indicateur de statut|en\s*ligne|active now|online status/i;
     for (const sel of ["h2 a", "h3 a", "strong > a", 'a[href*="/user/"]']) {
       for (const el of await element.$$(sel)) {
-        const t = (await el.textContent()).trim();
-        if (t.length > 1 && t.length < 60) { author = t; break; }
+        const t = (await el.textContent()).replace(/\s+/g, " ").trim();
+        if (t.length > 1 && t.length < 60 && !PAS_UN_NOM.test(t)) { author = t; break; }
       }
       if (author !== "Inconnu") break;
     }
@@ -374,7 +377,7 @@ async function scrapeGroup(page, groupUrl) {
   // connexion (champ mot de passe présent). Sans ce contrôle, le run finit
   // en « Aucun post collecté », code 0, et rien ne distingue une session
   // perdue d'un groupe silencieux.
-  const deconnecte = //login|/checkpoint|login.php/.test(page.url()) ||
+  const deconnecte = /\/login|\/checkpoint|login\.php/.test(page.url()) ||
     (await page.$('input[name="pass"], form#login_form')) !== null;
   if (deconnecte) {
     console.log(chalk.bold.red(`  ⚠ Session Facebook perdue (mur de connexion sur ${page.url()})`));
@@ -386,9 +389,17 @@ async function scrapeGroup(page, groupUrl) {
   let hitCutoff = false;
   let roundsWithNoNewPost = 0;
   let containersScanned = 0; // pour la sonde de structure (cf. fin de run())
-  // Profondeur de défilement proportionnelle à la fenêtre demandée : 15 tours
-  // suffisent pour 7 jours, il en faut bien plus pour remonter un mois.
-  const maxScrollRounds = Math.min(80, Math.max(15, Math.round(DAYS_BACK * 2)));
+  // Profondeur de défilement. L'hypothèse d'origine (« 15 tours suffisent
+  // pour 7 jours ») est FAUSSE, mesuré le 2026-09-30 : 15 tours ramènent 23 à
+  // 26 posts par groupe, soit ~12 h de publications (13:13 → 01:13 UTC sur la
+  // collecte du 30/09), et 1 392 liens sur 1 398 ne sont vus qu'une nuit —
+  // la collecte étant quotidienne, une partie des posts n'est jamais vue.
+  // FB_MAX_SCROLL (posé par scrape-immo-facebook.ps1) règle la profondeur ;
+  // la sonde enregistre la date la plus ancienne atteinte et la raison
+  // d'arrêt par groupe, pour recalibrer sur mesure plutôt qu'à l'estime.
+  const maxScrollRounds = process.env.FB_MAX_SCROLL
+    ? parseInt(process.env.FB_MAX_SCROLL, 10)
+    : Math.min(80, Math.max(15, Math.round(DAYS_BACK * 2)));
   const maxIdleRounds = 2;          // arrête si rien de nouveau 2 scrolls de suite
 
   while (!hitCutoff && scrollRounds < maxScrollRounds && roundsWithNoNewPost < maxIdleRounds) {
@@ -460,8 +471,11 @@ async function scrapeGroup(page, groupUrl) {
     scrollRounds++;
   }
 
-  console.log(chalk.green(`\n  ${posts.length} posts extraits`));
-  return { posts, containersScanned };
+  const arret = hitCutoff ? "fenetre" : scrollRounds >= maxScrollRounds ? "plafond_scroll" : "rien_de_neuf";
+  const dates = posts.map((p) => p.date).filter(Boolean).sort();
+  console.log(chalk.green(`\n  ${posts.length} posts extraits (${scrollRounds} tours, arrêt : ${arret})`));
+  return { posts, containersScanned, tours: scrollRounds, arret,
+           plus_ancien: dates[0] ?? null, plus_recent: dates[dates.length - 1] ?? null };
 }
 
 function extractGroupName(url) {
@@ -516,9 +530,11 @@ async function run() {
       const groupUrl = groups.shift();
       if (!groupUrl) break;
       try {
-        const { posts, containersScanned, deconnecte } = await scrapeGroup(page, groupUrl);
+        const { posts, containersScanned, deconnecte, tours, arret, plus_ancien, plus_recent } =
+          await scrapeGroup(page, groupUrl);
         allPosts.push(...posts);
         sondeParGroupe.push({ group: groupUrl, containers: containersScanned, posts: posts.length,
+                              tours, arret, plus_ancien, plus_recent,
                               ...(deconnecte ? { deconnecte: true } : {}) });
         await humanDelay(page, 1500, 3000); // pause entre groupes
       } catch (err) {

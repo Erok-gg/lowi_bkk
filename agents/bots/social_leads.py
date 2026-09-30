@@ -296,8 +296,11 @@ def resoudre(extrait: Path, journal=print) -> Path:
 
 
 def charger(resolu: Path, journal=print) -> int:
+    # 900 s : le chargeur recalibre toute la table (social_calibrage.py), ce
+    # qui relit bangkok.db — 39 s mesurées le 2026-09-30 hors scrap, mais un
+    # simple quick_check de la même base a dépassé 2 min pendant un scrap.
     r = subprocess.run([str(PY), str(LOADER), str(resolu), "--sqlite"], cwd=ROOT,
-                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900)
     for ligne in (r.stdout or "").splitlines()[-4:]:
         journal(f"  load | {ligne}")
     if r.returncode != 0:
