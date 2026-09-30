@@ -368,6 +368,19 @@ async function scrapeGroup(page, groupUrl) {
   await page.waitForSelector('div[role="article"]', { timeout: 15000 }).catch(() => {});
   await humanDelay(page, 2000, 3500);
 
+  // Session Facebook perdue ? (demandé le 2026-09-30 : être prévenu par mail
+  // quand la collecte ne peut plus tourner). Déconnecté, Facebook redirige
+  // vers /login ou /checkpoint, ou sert la page du groupe sous un mur de
+  // connexion (champ mot de passe présent). Sans ce contrôle, le run finit
+  // en « Aucun post collecté », code 0, et rien ne distingue une session
+  // perdue d'un groupe silencieux.
+  const deconnecte = //login|/checkpoint|login.php/.test(page.url()) ||
+    (await page.$('input[name="pass"], form#login_form')) !== null;
+  if (deconnecte) {
+    console.log(chalk.bold.red(`  ⚠ Session Facebook perdue (mur de connexion sur ${page.url()})`));
+    return { posts: [], containersScanned: 0, deconnecte: true };
+  }
+
   const posts = [];
   let scrollRounds = 0;
   let hitCutoff = false;
@@ -503,9 +516,10 @@ async function run() {
       const groupUrl = groups.shift();
       if (!groupUrl) break;
       try {
-        const { posts, containersScanned } = await scrapeGroup(page, groupUrl);
+        const { posts, containersScanned, deconnecte } = await scrapeGroup(page, groupUrl);
         allPosts.push(...posts);
-        sondeParGroupe.push({ group: groupUrl, containers: containersScanned, posts: posts.length });
+        sondeParGroupe.push({ group: groupUrl, containers: containersScanned, posts: posts.length,
+                              ...(deconnecte ? { deconnecte: true } : {}) });
         await humanDelay(page, 1500, 3000); // pause entre groupes
       } catch (err) {
         console.error(chalk.red(`  Erreur sur ${groupUrl}: ${err.message}`));
@@ -530,6 +544,9 @@ async function run() {
     groupes: sondeParGroupe,
     ok: groupesEnPanne.length === 0,
     groupes_en_panne: groupesEnPanne.map((g) => g.group),
+    // Lus par agents/bots/social_leads.py, qui dépose le mail d'alerte.
+    deconnecte: sondeParGroupe.some((g) => g.deconnecte),
+    posts_total: allPosts.length,
   };
   mkdirSync("logs", { recursive: true });
   writeFileSync(`logs/sonde-${SOURCE}.json`, JSON.stringify(sonde, null, 2));

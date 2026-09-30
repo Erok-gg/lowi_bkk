@@ -52,6 +52,11 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+# Rejeu manuel (`python agents/bots/social_leads.py`) : la racine du dépôt
+# n'est pas sur le chemin quand le module n'est pas importé par l'orchestrateur.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from agents.core import alert                              # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 SOCIAL = ROOT / "scraper" / "social"
 OUT = ROOT / "scraper" / "output" / "social"
@@ -62,6 +67,9 @@ MODELE = "claude-haiku-4-5-20251001"
 LOT = 15                 # posts par appel : assez pour amortir le contexte, pas
                          # assez pour que le modèle mélange deux annonces
 COLLECTE_MUETTE_H = 48
+SONDE_FB = SOCIAL / "logs" / "sonde-immo.json"   # écrite par facebook/agent.js à chaque collecte
+SONDE_FB_MAX_H = 30      # collecte à 01:00 chaque nuit : 30 h tolère un cycle retardé
+                         # (le 30/09 : 7 h de veille prolongée) sans laisser passer un jour manqué
 
 CHAMPS = ["est_une_annonce", "type_transaction", "type_bien", "prix_vente_thb",
           "loyer_mensuel_thb", "surface_sqm", "chambres", "salles_de_bain",
@@ -333,6 +341,40 @@ def traiter_fichier(src: Path, journal=print, appel=appeler_claude) -> dict:
             "chargees": chargees, "cout_usd": round(cout, 3)}
 
 
+def etat_collecte_facebook(maintenant: datetime | None = None) -> str | None:
+    """Rend la raison pour laquelle la collecte Facebook n'a PAS pu scraper,
+    ou None si elle a tourné normalement. Demandé le 2026-09-30 : « si on ne
+    peut pas scraper Facebook, je veux un mail le lendemain ».
+
+    Lit la sonde plutôt que les fichiers de sortie : une collecte à 0 post
+    n'écrit AUCUN fichier immo_*.json, si bien qu'une session perdue restait
+    invisible 48 h (COLLECTE_MUETTE_H), et encore sans mail (sévérité moyenne)."""
+    maintenant = maintenant or datetime.now(timezone.utc)
+    if not SONDE_FB.exists():
+        return "aucune sonde de collecte (scraper/social/logs/sonde-immo.json absent) — la collecte n'a jamais abouti"
+    try:
+        sonde = json.loads(SONDE_FB.read_text(encoding="utf-8"))
+        quand = datetime.fromisoformat(sonde["horodatage"].replace("Z", "+00:00"))
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        return f"sonde de collecte illisible ({e})"
+    age_h = (maintenant - quand).total_seconds() / 3600
+    if age_h > SONDE_FB_MAX_H:
+        # Chrome qui ne démarre pas, node qui plante avant la fin, tâche
+        # LowiBKK-ScrapeImmoFacebook qui ne part pas : tous finissent ici.
+        return (f"la collecte n'a pas abouti depuis {age_h:.0f} h (dernière le {quand:%d/%m %H:%M} UTC) — "
+                f"voir ops/logs/facebook/immo-last.log et immo-err.log")
+    groupes = sonde.get("groupes") or []
+    if sonde.get("deconnecte") or any(g.get("deconnecte") for g in groupes):
+        return ("Facebook est DÉCONNECTÉ : mur de connexion sur les groupes. Se reconnecter dans le "
+                "profil Chrome d'automatisation (%USERPROFILE%\\ChromeAutomationProfile)")
+    total = sonde.get("posts_total", sum(g.get("posts", 0) for g in groupes))
+    if total == 0:
+        return f"0 post collecté sur {len(groupes)} groupe(s) — session perdue ou page Facebook changée"
+    if not sonde.get("ok", True):
+        return f"structure Facebook cassée sur {len(sonde.get('groupes_en_panne') or [])} groupe(s) (conteneurs vus, 0 post extrait)"
+    return None
+
+
 def run(led, run_id: int, lane: str, spec: dict) -> dict:
     journal = lambda m: print(m, flush=True)                          # noqa: E731
     OUT.mkdir(parents=True, exist_ok=True)
@@ -352,6 +394,19 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
                     "aucune collecte Facebook dans scraper/output/social/",
                     {"dernier": collectes[-1].name if collectes else None,
                      "tache": "LowiBKK-ScrapeImmoFacebook", "logs": "ops/logs/facebook/"}, run_id)
+
+    # Mail si la collecte n'a pas pu scraper : un par cycle tant que dure la
+    # panne (c'est-à-dire un par jour), sans rien bloquer de l'aval — les
+    # collectes des jours précédents restent à extraire.
+    raison = etat_collecte_facebook()
+    if raison:
+        led.finding("social-leads", "high", "facebook_collecte_ko", raison,
+                    {"sonde": str(SONDE_FB)}, run_id)
+        alert.alert("social-leads", "Facebook : la collecte n'a pas pu scraper",
+                    f"{raison}\n\nTant que ce n'est pas réglé, aucune annonce Facebook n'entre dans "
+                    f"la base. Collecte : tâche LowiBKK-ScrapeImmoFacebook (01:00), "
+                    f"script scraper/social/scrape-immo-facebook.ps1.")
+        journal(f"  ✗ collecte Facebook : {raison}")
 
     fichiers = a_traiter()
     m = {"fichiers": 0, "posts": 0, "extraites": 0, "echecs_extraction": 0,
@@ -374,6 +429,9 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
                         f"claude -p non authentifié — {len(fichiers)} collecte(s) en attente, "
                         f"lancer `claude` puis /login sur ce poste : {e}",
                         {"en_attente": [p.name for p in fichiers]}, run_id)
+            alert.alert("social-leads", "claude -p déconnecté : annonces Facebook non extraites",
+                        f"{e}\n\n{len(fichiers)} collecte(s) en attente, reprises automatiquement "
+                        f"après reconnexion : sur PC2, lancer `claude` puis /login.")
             journal(f"  ✗ authentification claude -p : {e} — arrêt, {len(fichiers)} collecte(s) en attente")
             m["detail"].append({"erreur": f"auth : {str(e)[:200]}", "en_attente": len(fichiers)})
             break
