@@ -53,6 +53,17 @@ REGLAGES = [
     # coupe pas ce qu'il est censé protéger.
     ("SUB_SLEEP", "STANDBYIDLE", 46800, "s",
      "veille après 13 h — filet de sécurité calé sur un cycle de ~11 h 35"),
+    # AJOUTÉ le 2026-09-30. Le plan « ASUS Recommended » avait
+    # HIBERNATEIDLE = 1 800 s sur secteur : 30 min après toute entrée en
+    # veille, bascule en veille prolongée, d'où le réveil RTC de 01:00 ne
+    # ressort pas. Mesuré cette nuit-là : Kernel-Power 42 « Hibernate from
+    # Sleep - Fixed Timeout » à 01:01:13, une seconde après le déclenchement
+    # de LowiBKK-Agents ; cycle bloqué jusqu'à l'ouverture du capot à 08:06
+    # (7 h perdues). Veille prolongée quotidienne sur 30 j (13 fois).
+    # Calée sur le même filet de 13 h que STANDBYIDLE, à la demande de
+    # l'utilisateur (« l'alimentation doit tenir toute la nuit »).
+    ("SUB_SLEEP", "HIBERNATEIDLE", 46800, "s",
+     "veille prolongée après 13 h — ne plus couper le réveil de 01:00"),
     ("SUB_PROCESSOR", "PROCTHROTTLEMIN", 5, "%",
      "processeur au repos entre requêtes réseau"),
     ("SUB_PROCESSOR", "PROCTHROTTLEMAX", 60, "%",
