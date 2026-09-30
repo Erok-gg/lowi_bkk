@@ -3108,3 +3108,30 @@ la reconnexion de `claude -p`. La normalisation de `street` n'est pas faite,
 donc pas de statistique par rue. Le regroupement transitif peut chaîner deux
 logements proches (21 000 → 22 000 → 23 000 dans le groupe de 8 de Rhythm
 Sathorn), à surveiller via `taille_groupes_doublons`.
+
+### 2026-10-01 — Réparation autonome : cycle suspendu, pas bloqué ; `reap_stale` fermait les runs longs vivants
+
+Deux tickets `pouls` (`cycle_long` 17 h, `cycle_manquant` 41 h), une seule
+cause. Le cycle du 30/09, parti à 08:07, a été **suspendu** : capot fermé à
+10:12, puis veille prolongée à 10:42 (Kernel-Power 42 « Fixed Timeout »),
+reprise à 01:06 le 01/10. Débit mesuré par les dossiers d'images : 77
+annonces par tranche de 10 min avant la fermeture du capot, 3 entre 10:12 et
+10:42, 0 jusqu'à 01:06, puis 85. La veille moderne arrête donc déjà le travail
+dès que le capot se ferme. `HIBERNATEIDLE` sur secteur vaut **toujours
+1 800 s** : le commit `95e0d42` a ajouté 13 h à `REGLAGES` sans que
+`regle-alimentation.py` soit relancé.
+
+**Défaut corrigé** (branche `fix/reparations-2026-10-01`) : `reap_stale()`
+fermait tout run de plus de 12 h, même avec un PID vivant. Un simple
+`orchestrator status` a ainsi classé `interrompu` le run #642
+(`extract-ddproperty`, page 143/150, bien vivant). Désormais, un PID vivant
+dont la date de création WMI précède le run n'est plus fermé. `OpenProcess`
+est refusé entre sessions, même en accès limité (code 5 mesuré). Le seuil de
+12 h est inchangé. Test : `agents/tests/test_reap_run_long.py`. Vérifié sur le
+vrai PID du cycle, puis run #642 restauré en `running` (ledger copié avant).
+
+**Non fait** : `HIBERNATEIDLE` non appliqué (réglage système, commande
+laissée à l'utilisateur) ; action du capot non modifiée (choix d'usage) ;
+cycle non relancé (il finit seul) ; consommation CPU du dashboard (~8 % d'un
+cœur en continu) relevée, non traitée. Erreurs d'extraction : 8 isolées, toutes
+absorbées. Base : `quick_check` ok, 114 639 actives. Mail `pouls` envoyé.

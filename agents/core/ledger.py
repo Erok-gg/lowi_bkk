@@ -145,6 +145,54 @@ class Ledger:
         except Exception:                                # noqa: BLE001
             return True          # dans le doute, on ne referme pas un run vivant
 
+    @staticmethod
+    def _cree_le(pid) -> datetime | None:
+        """Date de création (UTC) du processus `pid`, lue par WMI — None si
+        absent ou illisible.
+
+        Pourquoi WMI et pas OpenProcess/GetProcessTimes : mesuré le 2026-10-01
+        depuis une session interactive, `OpenProcess` est refusé (code 5) sur
+        l'orchestrateur de la tâche planifiée, MÊME avec
+        PROCESS_QUERY_LIMITED_INFORMATION ; `Win32_Process.CreationDate`, lui,
+        répond (30/09 01:01:13 pour le PID 16436). C'est la seule mesure qui
+        distingue « le même processus, toujours là » d'« un PID recyclé »."""
+        try:
+            import subprocess
+            ps = ("$p = Get-CimInstance Win32_Process -Filter 'ProcessId="
+                  f"{int(pid)}'; if ($p) {{ $p.CreationDate.ToUniversalTime()"
+                  ".ToString('yyyy-MM-ddTHH:mm:ss') }")
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                capture_output=True, text=True, timeout=30,
+                creationflags=0x08000000).stdout.strip()      # CREATE_NO_WINDOW
+            if not out:
+                return None
+            return datetime.fromisoformat(out).replace(tzinfo=timezone.utc)
+        except Exception:                                    # noqa: BLE001
+            return None
+
+    def _toujours_le_meme(self, pid, started_at: str) -> bool:
+        """Le PID d'un run ancien désigne-t-il ENCORE le processus qui l'a
+        ouvert ? Oui si ce processus existe et a été créé avant le run.
+
+        Mesuré le 2026-10-01 : le filet de 12 h ci-dessous refermait les runs
+        LONGS mais VIVANTS. Cycle du 30/09 coupé 14 h 24 par une veille
+        prolongée (capot fermé à 10:12, Kernel-Power 42 à 10:42, reprise à
+        01:06) : `extract-ddproperty`, 18 h d'âge, PID vivant, journal écrit à
+        la seconde, a été classé `interrompu` par un simple
+        `orchestrator status` lancé depuis une autre session (run #642). Un
+        run long n'est pas un run mort — seul un PID recyclé justifie de
+        fermer un PID vivant, et cela se vérifie à la date de création."""
+        cree = self._cree_le(pid)
+        if cree is None:
+            return False
+        try:
+            debut = datetime.fromisoformat(started_at)
+        except ValueError:
+            return False
+        # tolérance d'une seconde : started_at est tronqué à la seconde
+        return cree <= debut + timedelta(seconds=1)
+
     def reap_stale(self, max_hours: int = 12) -> int:
         """Referme les runs restés en 'running'.
 
@@ -156,13 +204,19 @@ class Ledger:
         DEUX CRITÈRES, et le premier est une MESURE (2026-08-25) : un run dont le
         processus n'existe plus est mort, quelle que soit son ancienneté. Le
         délai de 12 h ne reste que comme filet pour les runs sans PID (ceux
-        d'avant la migration) et pour un PID recyclé par le système."""
+        d'avant la migration) et pour un PID recyclé par le système — et depuis
+        le 2026-10-01 il ne ferme plus un PID vivant dont la date de création
+        prouve que c'est bien le processus du run (`_toujours_le_meme`)."""
         ferme = 0
         for r in self.conn.execute(
                 "select id, pid, started_at from agent_runs where status='running'").fetchall():
+            vivant = self._processus_vivant(r["pid"])
             trop_vieux = r["started_at"] < (
                 datetime.now(timezone.utc) - timedelta(hours=max_hours)).isoformat()
-            if trop_vieux or not self._processus_vivant(r["pid"]):
+            if trop_vieux and vivant and r["pid"] and \
+                    self._toujours_le_meme(r["pid"], r["started_at"]):
+                trop_vieux = False
+            if trop_vieux or not vivant:
                 self.conn.execute(
                     "update agent_runs set status='interrompu', ended_at=? where id=?",
                     (now(), r["id"]))
