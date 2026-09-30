@@ -3048,3 +3048,26 @@ au-delà de 13 h dans `ops/regle-alimentation.py`, ou statu quo) ; aucune
 alerte « démarrage tardif » ajoutée (1 cas sur 52, risque de crier au loup) ;
 cycle non relancé (il tourne). Base : `quick_check` ok, 112 691 actives ;
 sauvegarde USB du 29/09 : 3/3 relectures.
+
+### 2026-09-30 (suite) — Mail quand Facebook ne peut pas scraper
+
+Demande de l'utilisateur : être prévenu par mail, le lendemain, si la collecte
+Facebook ne peut pas tourner. Une session perdue était jusqu'ici invisible :
+Facebook sert la page du groupe sous un mur de connexion, le run finit en
+« Aucun post collecté », **code 0, aucun fichier écrit**. Le seul signal était
+`collecte_facebook_muette`, au bout de 48 h, en sévérité moyenne, donc sans mail.
+`agent.js` détecte maintenant le mur de connexion et l'écrit dans la sonde
+(`deconnecte`, `posts_total`). À chaque cycle, `social-leads` lit cette sonde
+et envoie **un mail par jour de panne** (`alert.alert`) dans cinq cas : sonde
+absente, sonde de plus de 30 h, session déconnectée, 0 post, structure cassée.
+Vérifié en réel des deux côtés : session connectée → rien, contexte sans
+cookies → détecté (champ mot de passe, **sans** redirection vers /login : le
+groupe est public).
+
+**Correction de l'entrée précédente** : un constat `high` au ledger n'envoie
+pas de mail à lui seul. La panne d'authentification de `claude -p` passe
+désormais aussi par `alert.alert`. Délai réel du mail : environ 25 h après la
+collecte ratée (collecte 01:00 → `social-leads` vers 07:00 → file vidée par la
+tâche planifiée de 02:14). **Non fait** : le code de sortie vide que
+journalise `scrape-immo-facebook.ps1` (`Start-Process -PassThru` sans lecture
+de `.Handle`). L'alerte n'en dépend pas.
