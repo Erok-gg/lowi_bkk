@@ -3015,3 +3015,36 @@ restés hors ligne jusque-là (demandé par l'utilisateur). Le `main` local de
 (ni trace de performance Chrome) ; le diagnostic tient à la confirmation de
 l'utilisateur. `lowiShimmer` (logo) et l'animation d'entrée des vues restent
 actifs, sans signalement.
+
+## 2026-09-30 — Réparation autonome : aval Facebook muet depuis 7 jours, cycle retardé par la veille prolongée
+
+**`social-leads` en panne depuis le 23/09, sous une fausse étiquette.** 162
+appels `claude -p` en échec, 6 constats moyens par cycle « le modèle n'a rien
+rendu d'exploitable ». Reproduit : le CLI autonome n'est plus authentifié
+(`OAuth session expired and could not be refreshed`). La cause ne se voyait
+pas : stdout tronqué à 300 caractères, alors que le champ `result` arrive en
+fin de JSON. Corrigé (`9d84933`, branche `fix/reparations-2026-09-30`) :
+cause lue dans le JSON, arrêt au premier lot, **un** constat haut
+`claude_cli_non_authentifie`. Test de non-régression + essai réel (1 appel,
+cause exacte, 7 collectes en attente, rien de perdu : aucune n'a son
+`_charge.json`).
+
+**Cycle du 30/09 démarré avec 7 h de retard.** `LowiBKK-Agents` à 01:01:12,
+puis Kernel-Power 42 *« Hibernate from Sleep - Fixed Timeout »* à 01:01:13 ;
+relancé par l'ouverture du capot à 08:06. `HIBERNATEIDLE` secteur = 1 800 s.
+La veille prolongée est quotidienne (13 fois en 30 j) mais tombait jusqu'ici
+hors du cycle ; 1 démarrage retardé sur 52 cycles depuis le 20/08 (hors
+l'arrêt du 09 au 17/09, déjà connu).
+
+**Autorisations** : `.claude/settings.local.json` passe en
+`bypassPermissions` à la demande de l'utilisateur (tâche autonome sans
+prompts). Retour : retirer `defaultMode` et les entrées larges de `allow`.
+
+**Non fait** : reconnexion du CLI (`claude` puis `/login`, à faire par
+l'utilisateur, pas de saisie d'identifiants par un agent) ; `HIBERNATEIDLE`
+non modifié (réglage système, options chiffrées dans
+`agents/audits/reparations-2026-09-30.md` : jamais sur secteur, ou caler
+au-delà de 13 h dans `ops/regle-alimentation.py`, ou statu quo) ; aucune
+alerte « démarrage tardif » ajoutée (1 cas sur 52, risque de crier au loup) ;
+cycle non relancé (il tourne). Base : `quick_check` ok, 112 691 actives ;
+sauvegarde USB du 29/09 : 3/3 relectures.
