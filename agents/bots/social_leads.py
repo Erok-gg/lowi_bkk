@@ -143,6 +143,16 @@ def prompt_lot(posts: list[dict]) -> str:
 
 
 # ─── Appel du modèle ────────────────────────────────────────────────────────
+class AuthClaudeExpiree(RuntimeError):
+    """Le CLI n'est plus authentifié : aucun lot ne peut réussir, et seul
+    l'utilisateur peut y remédier (`claude` puis /login — pas de mot de passe
+    saisi par un agent). Distincte d'un échec de lot pour arrêter tout de
+    suite au lieu de brûler un appel par lot et par fichier."""
+
+
+EST_AUTH = re.compile(r"Failed to authenticate|OAuth|not logged in|/login|Invalid API key", re.I)
+
+
 def _claude_bin() -> str:
     c = shutil.which("claude") or shutil.which("claude.exe")
     if not c:
@@ -160,11 +170,21 @@ def appeler_claude(prompt: str, timeout: int = 300) -> tuple[str, float]:
     with tempfile.TemporaryDirectory() as tmp:
         r = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=timeout, cwd=tmp)
-    if r.returncode != 0:
-        raise RuntimeError(f"claude -p code {r.returncode} : {(r.stderr or r.stdout)[:300]}")
-    d = json.loads(r.stdout)
-    if d.get("is_error"):
-        raise RuntimeError(f"claude -p is_error : {str(d.get('result'))[:300]}")
+    # La cause est dans le champ `result` du JSON, qui arrive EN FIN de sortie :
+    # tronquer stdout à 300 caractères la coupait. Mesuré le 2026-09-30 :
+    # 162 appels en échec du 23 au 29/09, tous journalisés sans leur cause
+    # (« OAuth session expired »), et l'alerte disait « le modèle n'a rien
+    # rendu d'exploitable » — une panne d'authentification déguisée en
+    # défaut de modèle pendant 7 jours.
+    try:
+        d = json.loads(r.stdout)
+    except (json.JSONDecodeError, TypeError):
+        d = None
+    cause = str(d.get("result"))[:300] if isinstance(d, dict) else (r.stderr or r.stdout)[:300]
+    if r.returncode != 0 or not isinstance(d, dict) or d.get("is_error"):
+        if EST_AUTH.search(cause):
+            raise AuthClaudeExpiree(cause)
+        raise RuntimeError(f"claude -p code {r.returncode} : {cause}")
     return d.get("result") or "", float(d.get("total_cost_usd") or 0)
 
 
@@ -241,6 +261,8 @@ def extraire(posts: list[dict], appel=appeler_claude, journal=print) -> tuple[li
             texte, c = appel(prompt_lot(lot))
             cout += c
             objets = parser_reponse(texte, len(lot))
+        except AuthClaudeExpiree:
+            raise                    # inutile de tenter les lots suivants
         except Exception as e:                                      # noqa: BLE001
             journal(f"  lot {debut // LOT + 1} : échec appel — {e}")
             objets = [None] * len(lot)
@@ -342,6 +364,19 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
         t0 = time.time()
         try:
             d = traiter_fichier(src, journal)
+        except AuthClaudeExpiree as e:
+            # UN constat pour la panne, pas un par fichier en attente : le
+            # 2026-09-29 elle en produisait 6 de sévérité moyenne, sans cause.
+            # Haute : rien ne se rétablit sans action humaine, et les
+            # collectes s'empilent (le marqueur _charge.json manque → elles
+            # seront toutes reprises dès la reconnexion, rien n'est perdu).
+            led.finding("social-leads", "high", "claude_cli_non_authentifie",
+                        f"claude -p non authentifié — {len(fichiers)} collecte(s) en attente, "
+                        f"lancer `claude` puis /login sur ce poste : {e}",
+                        {"en_attente": [p.name for p in fichiers]}, run_id)
+            journal(f"  ✗ authentification claude -p : {e} — arrêt, {len(fichiers)} collecte(s) en attente")
+            m["detail"].append({"erreur": f"auth : {str(e)[:200]}", "en_attente": len(fichiers)})
+            break
         except Exception as e:                                          # noqa: BLE001
             led.finding("social-leads", "medium", "aval_social_echec",
                         f"{src.name} : {e}", {"fichier": src.name}, run_id)

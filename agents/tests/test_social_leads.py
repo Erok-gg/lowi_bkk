@@ -86,4 +86,60 @@ with tempfile.TemporaryDirectory() as tmp:
     finally:
         sl.OUT = orig
 print("4. sélection des collectes à traiter par le disque : OK")
+
+# 5. panne d'authentification du CLI (2026-09-23 → 09-29 : 162 appels en
+#    échec, cause tronquée, 6 constats « le modèle n'a rien rendu » par cycle)
+import json as _json, subprocess as _sp, types
+sortie_reelle = _json.dumps({"is_error": True, "total_cost_usd": 0, "usage": {"x": "y" * 400},
+                             "result": "Failed to authenticate: OAuth session expired and could not be refreshed"})
+orig_run = sl.subprocess.run
+sl.subprocess.run = lambda *a, **k: types.SimpleNamespace(returncode=1, stdout=sortie_reelle, stderr="")
+try:
+    try:
+        sl.appeler_claude("x")
+        raise AssertionError("aurait dû lever")
+    except sl.AuthClaudeExpiree as e:
+        assert "OAuth session expired" in str(e), "la cause doit survivre à la troncature"
+    # une autre erreur reste un échec de lot ordinaire, cause lisible
+    sl.subprocess.run = lambda *a, **k: types.SimpleNamespace(
+        returncode=1, stdout=_json.dumps({"is_error": True, "usage": {"x": "y" * 400}, "result": "Overloaded"}), stderr="")
+    try:
+        sl.appeler_claude("x")
+        raise AssertionError("aurait dû lever")
+    except sl.AuthClaudeExpiree:
+        raise AssertionError("Overloaded n'est pas une panne d'auth")
+    except RuntimeError as e:
+        assert "Overloaded" in str(e)
+finally:
+    sl.subprocess.run = orig_run
+
+nb = []
+def appel_auth(prompt):
+    nb.append(1)
+    raise sl.AuthClaudeExpiree("Failed to authenticate: OAuth session expired")
+try:
+    sl.extraire(posts, appel=appel_auth, journal=lambda m: None)
+    raise AssertionError("aurait dû remonter")
+except sl.AuthClaudeExpiree:
+    pass
+assert len(nb) == 1, f"arrêt au premier lot, pas {len(nb)} appels"
+
+class _Led:
+    def __init__(self): self.f = []
+    def finding(self, agent, sev, kind, msg, detail=None, run_id=None): self.f.append((sev, kind))
+with tempfile.TemporaryDirectory() as tmp:
+    d = pathlib.Path(tmp)
+    for j in ("23", "24", "25"):
+        (d / f"immo_2026-09-{j}.json").write_text(_json.dumps({"posts": posts[:2]}), encoding="utf-8")
+    orig_out, orig_tf = sl.OUT, sl.traiter_fichier
+    sl.OUT = d
+    sl.traiter_fichier = lambda src, journal=print, appel=None: (_ for _ in ()).throw(
+        sl.AuthClaudeExpiree("OAuth session expired"))
+    try:
+        led = _Led()
+        sl.run(led, 0, "test", {})
+    finally:
+        sl.OUT, sl.traiter_fichier = orig_out, orig_tf
+    assert led.f == [("high", "claude_cli_non_authentifie")], led.f
+print("5. panne d'auth : cause conservée, arrêt immédiat, UN constat haut : OK")
 print("TOUS LES ESSAIS PASSENT")
