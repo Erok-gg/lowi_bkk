@@ -93,7 +93,8 @@ def _maintenant() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def battement(lane: str = "?", extraction_tentee: bool = True) -> dict:
+def battement(lane: str = "?", extraction_tentee: bool = True,
+              pid: int | None = None) -> dict:
     """Déposé par le cycle, à la fin. Contient de quoi juger SANS le ledger.
 
     `extraction_tentee=False` : cette invocation n'a délibérément pas touché à
@@ -128,10 +129,25 @@ def battement(lane: str = "?", extraction_tentee: bool = True) -> dict:
     try:
         cx = sqlite3.connect(f"file:{LEDGER}?mode=ro", uri=True)
         cx.row_factory = sqlite3.Row
-        depuis = (_maintenant() - timedelta(hours=12)).isoformat()
-        runs = cx.execute(
-            "select agent, status, metrics from agent_runs where started_at >= ?",
-            (depuis,)).fetchall()
+        # `pid` (passé par l'orchestrateur, = son propre PID) : le cycle se
+        # délimite par SES runs, pas par une fenêtre fixe. Mesuré le
+        # 2026-10-01 : cycle du 30/09 long de 21 h 30 (suspendu 14 h 24 par
+        # une veille prolongée, capot fermé) ; les 4 extracteurs, tous `ok`,
+        # avaient démarré 21 h 30 avant le battement, hors de la fenêtre de
+        # 12 h → témoin `extracteurs_lances: 0` et `cycle_vide` crié à tort.
+        # La date de création du processus écarte les homonymes d'un PID
+        # recyclé (cf. _demarrage_processus). Sans elle : fenêtre de 12 h.
+        debut = _demarrage_processus(pid) if pid else None
+        if debut:
+            runs = cx.execute(
+                "select agent, status, metrics from agent_runs"
+                " where pid = ? and started_at >= ?",
+                (int(pid), (debut - timedelta(seconds=1)).isoformat())).fetchall()
+        else:
+            depuis = (_maintenant() - timedelta(hours=12)).isoformat()
+            runs = cx.execute(
+                "select agent, status, metrics from agent_runs where started_at >= ?",
+                (depuis,)).fetchall()
         cx.close()
         extracteurs = [r for r in runs if r["agent"].startswith("extract-")]
         ecrites = 0

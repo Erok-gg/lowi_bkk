@@ -3150,3 +3150,28 @@ capot se ferme), relu à 0. C'est la seule parade à la panne mesurée le 30/09
 `LIDACTION` valait **déjà 0** avant ce changement (le script ne règle que le
 secteur). Un poste débranché, capot fermé, reste donc éveillé jusqu'au
 minuteur batterie (`HIBERNATEIDLE` 12 h, `STANDBYIDLE` 180 s).
+
+### 2026-10-01 (suite 2) — Deux fausses alertes d'un cycle long, corrigées à la source
+
+Le cycle du 30/09 s'est bien terminé à 05:37 : 19 runs, tous `ok`, dont 4
+extracteurs et 5 089 annonces écrites. Il a pourtant produit deux alertes
+hautes, avec mail. Même cause pour les deux : une fenêtre fixe plus courte
+que le cycle, qui a duré 21 h 30 entre le début des extractions et la fin,
+28 h 36 entre `garde-veille` et l'overseer.
+
+- **`pouls` → `cycle_vide`** : `battement()` comptait les extracteurs sur
+  12 h. Il compte désormais les runs du PID de l'orchestrateur, passé par
+  l'appelant, depuis la création de ce processus. Sans PID, l'ancienne
+  fenêtre de 12 h s'applique toujours. Test : `test_pouls_cycle_long.py`.
+  `pouls.json` a été corrigé à la main (15 runs, 4/4 extracteurs, 5 089
+  annonces, recomptés sur le ledger).
+- **`overseer` → `agent_muet` (garde-veille)** : sa fenêtre de 24 h remonte
+  désormais au premier run du cycle quand celui-ci est plus ancien. Test :
+  `test_overseer_cycle_long.py`.
+- Les PID recyclés sont écartés par la date de création du processus, comme
+  dans `_demarrage_processus`. Aucun seuil modifié.
+- Les deux tickets sont clos, les deux mails classés **non envoyés** (fausses
+  alertes). Le mail `social-leads` (`claude -p` déconnecté, panne réelle) a
+  été envoyé.
+
+**Non fait** : la reconnexion de `claude -p` reste à faire par l'utilisateur.

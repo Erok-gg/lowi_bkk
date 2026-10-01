@@ -829,7 +829,11 @@ def main() -> None:
                               if s["name"] == a.target), None)
                 extraction_tentee = bool(
                     cible and cible.get("famille") == "Extraction")
-            battement(current_lane(), extraction_tentee=extraction_tentee)
+            # pid : le cycle = les runs de CE processus (start_run y inscrit
+            # os.getpid()), pas une fenêtre de 12 h — un cycle suspendu par
+            # la veille a duré 21 h 30 le 30/09 (cycle_vide crié à tort).
+            battement(current_lane(), extraction_tentee=extraction_tentee,
+                      pid=os.getpid())
     except Exception as e:                                   # noqa: BLE001
         # Un témoin qui plante ne doit jamais faire échouer un cycle réussi.
         print(f"[pouls] témoin non déposé : {type(e).__name__}: {e}")

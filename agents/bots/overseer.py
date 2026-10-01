@@ -68,8 +68,34 @@ def contrat_de(agent: str) -> set[str]:
     return champs
 
 
+def _debut_du_cycle(led) -> str | None:
+    """Premier run de CE processus orchestrateur (`start_run` y inscrit
+    `os.getpid()`), postérieur à sa création — None si indéterminable.
+
+    Mesuré le 2026-10-01 : cycle du 30/09 long de 28 h 36 entre `garde-veille`
+    (29/09 18:01 UTC, premier agent) et l'overseer (30/09 22:37), dont 14 h 24
+    de veille prolongée (capot fermé). La fenêtre fixe de 24 h ne voyait plus
+    `garde-veille` → `agent_muet` de sévérité haute + mail, à tort (règle 2).
+    La date de création écarte les homonymes d'un PID recyclé."""
+    try:
+        from ops.pouls import _demarrage_processus
+        cree = _demarrage_processus(os.getpid())
+        if cree is None:
+            return None
+        r = led.conn.execute(
+            "select min(started_at) from agent_runs where pid = ? and started_at >= ?",
+            (os.getpid(), (cree - timedelta(seconds=1)).isoformat())).fetchone()
+        return r[0] if r and r[0] else None
+    except Exception:                                    # noqa: BLE001
+        return None
+
+
 def run(led, run_id: int, lane: str, spec: dict) -> dict:
     depuis = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
+    # Un cycle plus long que 24 h (veille) s'audite en entier, pas tronqué.
+    debut = _debut_du_cycle(led)
+    if debut and debut < depuis:
+        depuis = debut
     runs = [r for r in led.runs_since(depuis) if r["agent"] != "overseer"]
 
     honores, violes, lignes = 0, 0, []
