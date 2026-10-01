@@ -3135,3 +3135,18 @@ laissée à l'utilisateur) ; action du capot non modifiée (choix d'usage) ;
 cycle non relancé (il finit seul) ; consommation CPU du dashboard (~8 % d'un
 cœur en continu) relevée, non traitée. Erreurs d'extraction : 8 isolées, toutes
 absorbées. Base : `quick_check` ok, 114 639 actives. Mail `pouls` envoyé.
+
+### 2026-10-01 (suite) — Réglages d'alimentation appliqués (approuvés par l'utilisateur)
+
+`ops/regle-alimentation.py` relancé : les 6 réglages renvoient 0 et ont été
+**relus** avec `powercfg /qh` plutôt que crus sur leur code retour.
+`HIBERNATEIDLE` sur secteur vaut bien `0xb6d0` (13 h). Un `powercfg` avait
+déjà été lancé à 12:45 (évènement UserModePowerService 12), hors de cette
+session. **Ajouté : `LIDACTION` sur secteur = 0** (ne rien faire quand le
+capot se ferme), relu à 0. C'est la seule parade à la panne mesurée le 30/09
+(capot fermé, débit tombé de 77 à 3 annonces par 10 min). Retour :
+`powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 1`, puis
+`/setactive SCHEME_CURRENT`. Constaté sans y toucher : sur batterie,
+`LIDACTION` valait **déjà 0** avant ce changement (le script ne règle que le
+secteur). Un poste débranché, capot fermé, reste donc éveillé jusqu'au
+minuteur batterie (`HIBERNATEIDLE` 12 h, `STANDBYIDLE` 180 s).

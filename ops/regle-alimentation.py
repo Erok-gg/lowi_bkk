@@ -64,6 +64,14 @@ REGLAGES = [
     # l'utilisateur (« l'alimentation doit tenir toute la nuit »).
     ("SUB_SLEEP", "HIBERNATEIDLE", 46800, "s",
      "veille prolongée après 13 h — ne plus couper le réveil de 01:00"),
+    # AJOUTÉ le 2026-10-01, approuvé par l'utilisateur. Capot fermé sur
+    # secteur → ne rien faire (0). Mesuré le 30/09 : capot fermé à 10:12, la
+    # veille moderne fait tomber le scrap de ~77 à 3 annonces / 10 min AVANT
+    # même la veille prolongée — aucun minuteur ne protège contre ça, seule
+    # l'action du capot le fait. Batterie non touchée (setacvalueindex).
+    # Retour : même commande avec 1 (veille), valeur Windows par défaut.
+    ("SUB_BUTTONS", "LIDACTION", 0, "",
+     "capot fermé sur secteur : ne rien faire — le cycle continue"),
     ("SUB_PROCESSOR", "PROCTHROTTLEMIN", 5, "%",
      "processeur au repos entre requêtes réseau"),
     ("SUB_PROCESSOR", "PROCTHROTTLEMAX", 60, "%",
