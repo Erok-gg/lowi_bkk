@@ -3203,3 +3203,71 @@ que le cycle, qui a duré 21 h 30 entre le début des extractions et la fin,
 régénéré » dans `watch-health` (touche le contrat de métriques de
 l'adaptateur) ; cause de la coupure réseau ; vérification de la sauvegarde USB
 de cette nuit, encore en cours.
+
+## 2026-10-04 (journée) — veille Claude du cycle, cycle à 02:30, trois défauts
+
+Demande de l'utilisateur : que Claude suive le cycle toute la journée (Haiku
+toutes les 30 min, Opus en cas de problème, silence une fois le travail fini),
+réparer FazWaz puis le relancer, et démarrer les scraps à 02:30.
+
+**Ce qui a déclenché la demande — mon propre rapport, faux par omission.**
+Le 02/10, j'ai signalé `claude -p` déconnecté alors que l'utilisateur s'était
+reconnecté la veille : j'avais repris un constat du 30/09 sans le revérifier.
+Le 04/10, j'ai annoncé que `social-leads` avait « bien tourné » (c'était vrai)
+sans regarder le reste du cycle : `remonter-supabase` en échec et un constat
+haut FazWaz étaient dans le ledger. J'ai aussi affirmé l'absence de collecte du
+29/09 sans l'avoir vérifiée (cause trouvée ensuite, voir plus bas).
+
+**Faits.**
+- **Veille** : `ops/veille-cycle.py` + tâche `LowiBKK-VeilleClaude` (02:30,
+  toutes les 30 min sur 23 h 30, sans `WakeToRun`). Le code décide de l'état
+  (pas parti / en cours / terminé) et des problèmes. Haiku (`claude -p`, sans
+  outil) rend le verdict. En cas de problème : ticket `veille-claude`, puis
+  `claude -p --model opus` détaché, une fois par jour et par signature. Un
+  marqueur `agents/state/veille/<jour>.json` éteint la veille. L'heure du
+  cycle est lue sur la tâche : une constante aurait crié « pas parti » à
+  chaque transition. Testé en réel sur le cycle du jour : verdict fidèle,
+  marqueur posé, passage suivant silencieux (code 0). Test :
+  `test_veille_cycle.py`, 5/5.
+- **FazWaz attend la régénération du sitemap** : il sonde le 1er fichier, qui
+  porte toujours les plus fraîches (mesuré sur les 28), toutes les 15 min,
+  pendant 3 h au plus. FazWaz tourne en parallèle de DDproperty (5,6 h en
+  médiane) : l'attente n'allonge pas le cycle. Test :
+  `test_fazwaz_sitemap_regeneration.py`, 3/3. `test_fazwaz_sitemap.py`
+  passe toujours (attente désactivée dans sa config : sinon il dormait 15 min
+  sur son propre cache).
+- **Cycle et collecte Facebook à 02:30** (décision de l'utilisateur ; FazWaz
+  régénère à 02:04). Routine `lowi-reparation-autonome` à 12:00 (après la fin
+  médiane du cycle, ~10:45). Widget resynchronisé.
+- **Collecte Facebook écrasée** : `immo_<date UTC>.json`. La collecte du 30/09
+  à 08:14 et celle du 01/10 à 01:24 tombent le même jour UTC, et la seconde a
+  écrasé la première avant son chargement (`scraped_at` du fichier :
+  2026-09-30T18:24Z). C'est la « collecte manquante du 29/09 ». Suffixe
+  horaire si le fichier existe.
+- **Code retour de la collecte Facebook toujours vide** depuis le 13/09 :
+  `ExitCode` est vide sous PowerShell 5.1 avec `-RedirectStandard*` tant
+  qu'on n'a pas lu `.Handle` (reproduit : `cmd /c exit 3` → vide sans, 3
+  avec). La tâche rendait donc 0 quel que soit le sort du scrape.
+- **Temps de scrap mesuré** (ledger, 14 j, runs ok) : cycle 8,2 h en médiane
+  (moyenne 9,5 h, tirée par les 28,6 h du 30/09) ; DDproperty 5,6 h, FazWaz
+  0,9 h, PropertyScout 0,2 h, Nestopa 0,2 h.
+
+**Non fait.**
+- **`LowiBKK-Agents` n'est PAS déplacée à 02:30** : tâche S4U, sa modification
+  exige un terminal administrateur (`Accès refusé`). Commande à lancer :
+  `powershell -NoProfile -ExecutionPolicy Bypass -File ops\install-agents-task.ps1`
+  (02:30 par défaut désormais). Tant que ce n'est pas fait, le cycle part à
+  01:00 et la collecte Facebook à 02:30. FazWaz attend alors la régénération,
+  et la veille suit l'heure réelle de la tâche : aucun des deux ne casse.
+- **Coût de la veille, plus haut qu'estimé** : 0,09 $ par passage Haiku (le
+  CLI embarque ~48 k tokens fixes), soit ~1,5 $ par cycle de 8 h (16 passages),
+  ~45 $/mois. Leviers possibles, non appliqués : n'appeler Haiku que quand
+  l'état mécanique change, ou espacer à 1 h. Arbitrage laissé à l'utilisateur.
+- **Garde-fou `parseur_casse` non retouché** : avec l'attente, un 0 nouvelle
+  après 3 h sans régénération sera un vrai signal ; l'option 3 du rapport du
+  matin (étiqueter « sitemap non régénéré ») n'est pas faite.
+- **Collecte Facebook du 30/09 08:14 perdue**, non récupérable. Les posts
+  couvrent 7 jours, donc la collecte suivante en a probablement repris une
+  bonne partie (non mesuré).
+- 15 posts non extraits (collecte du 28/09) : non retentés.
+- Branche `fix/veille-claude-2026-10-04` non poussée, non fusionnée.
