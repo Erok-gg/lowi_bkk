@@ -165,7 +165,9 @@ def regenere_depuis(precedent: list[dict] | None, shard1: list[dict] | None) -> 
     01:01 (avant) : il a relu le MÊME sitemap, plus frais lastmod 03/10
     01:31 des deux côtés. Résultat : 1 fiche ouverte, 0 nouvelle, contre 99 à
     315 les nuits précédentes. Le constat `parseur_casse` qui a suivi était
-    faux, et une journée de mises à jour a été perdue.
+    faux. Rien n'est perdu (lastmod > last_seen rattrape au run suivant),
+    mais tout arrive avec un jour de retard. Régénération mesurée à 02:04
+    (lastmod de l'index, rapport de réparation du 2026-10-04).
 
     Le test porte sur le 1er fichier seulement : il porte toujours les
     annonces les plus fraîches. Mesuré sur les 28 fichiers le 2026-10-04 :
