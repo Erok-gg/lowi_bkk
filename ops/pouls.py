@@ -221,6 +221,22 @@ def verifier(seuil_h: int) -> int:
     age_h = (maintenant - fin).total_seconds() / 3600
 
     if age_h > seuil_h:
+        # Un cycle EN COURS, démarré après ce battement, prouve que la tâche
+        # s'est déclenchée : rien ne « manque », le cycle précédent a seulement
+        # fini tôt et celui-ci finira tard. Mesuré le 2026-10-04 (ticket
+        # `2026-10-02T010004-pouls-cycle_manquant.json`) : fin du cycle à
+        # 05:37 le 01/10, cycle suivant lancé à 01:00 le 02/10 et terminé à
+        # 11:33 — le contrôle de 08:00 tombait dedans, 26,4 h après la fin
+        # précédente, et criait pendant que 4 extracteurs tournaient
+        # normalement (tous `ok`, runs #656-#669). La durée d'un tel cycle
+        # reste surveillée par `verifier_cycle_long` (seuil inchangé).
+        info = _cycle_en_cours()
+        if info and datetime.fromisoformat(info["debut"]) > fin:
+            debut = datetime.fromisoformat(info["debut"])
+            print(f"  ✓ dernier battement il y a {age_h:.1f} h, mais un cycle "
+                  f"est en cours depuis {debut.astimezone():%d/%m %H:%M} "
+                  f"(sur {info['agent_bloque']}) — surveillé par cycle_long")
+            return 0
         _crier("cycle_manquant",
                f"Aucun cycle depuis {age_h:.0f} h (seuil {seuil_h} h)",
                f"Dernier cycle terminé le {fin.astimezone():%d/%m à %H:%M}.\n"

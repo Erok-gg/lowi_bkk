@@ -3175,3 +3175,31 @@ que le cycle, qui a duré 21 h 30 entre le début des extractions et la fin,
   été envoyé.
 
 **Non fait** : la reconnexion de `claude -p` reste à faire par l'utilisateur.
+
+
+### 2026-10-04 — Réparation autonome : `cycle_manquant` faisait crier un cycle en cours
+
+- **`pouls` → `cycle_manquant` (ticket du 02/10), fausse alerte corrigée.**
+  `verifier()` comparait l'âge du dernier battement (dernière FIN de cycle) à
+  26 h. Fin à 05:37 le 01/10, cycle suivant lancé à 01:00 le 02/10 et terminé à
+  11:33 : le contrôle de 08:00 tombait au milieu, à 26,4 h, alors que les 4
+  extracteurs tournaient. Le contrôle se tait désormais si le ledger montre un
+  cycle en cours démarré après le battement. `cycle_long` (16 h) garde la
+  durée. Seuils inchangés. Test : `test_pouls_cycle_en_cours.py`, qui échoue
+  sans le correctif.
+- **`extract-fazwaz` « parseur_casse » (0 nouvelle), faux positif mesuré.**
+  Sitemap lu à 01:03, régénéré par FazWaz à 02:04 (`lastmod` de l'index). Le run
+  précédent, parti à 03:10, avait déjà lu le même sitemap (85 005 URL dans les
+  deux cas). Pas de perte : découverte cumulative. En régime normal, le
+  décalage est d'environ 23 h.
+- **`remonter-supabase` exit 1** : coupure réseau de 06:04 à 06:45, aucune
+  trace locale. 1 000 annonces non remontées sur 113 493, reprises au cycle
+  suivant.
+- Base : `quick_check` ok, 174 133 annonces. USB du 03/10 ok.
+
+**Non fait** : avancer ou retarder FazWaz par rapport à la régénération de
+02:04 (décision de cadence, 3 options chiffrées dans
+`agents/audits/reparations-2026-10-04.md`) ; étiquetage « sitemap non
+régénéré » dans `watch-health` (touche le contrat de métriques de
+l'adaptateur) ; cause de la coupure réseau ; vérification de la sauvegarde USB
+de cette nuit, encore en cours.
