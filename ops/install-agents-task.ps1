@@ -22,7 +22,7 @@
 
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [string]$Heure = "01:00",
+    [string]$Heure = "02:30",   # 01:00 jusqu'au 2026-10-04 : FazWaz regenere son sitemap vers 02:00
     [switch]$GarderAnciennes,
     # RENDORMIR EN FIN DE CYCLE : DESACTIVE PAR DEFAUT depuis le 2026-08-25.
     #

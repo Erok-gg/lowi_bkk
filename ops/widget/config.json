@@ -49,8 +49,8 @@
     {
       "id": "lowi-reparation-autonome",
       "libelle": "Reparation auto",
-      "cron": "0 2 * * *",
-      "jitter_s": 600,
+      "cron": "0 12 * * *",
+      "jitter_s": 829,
       "actif": true
     },
     {

@@ -407,7 +407,7 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
                     {"sonde": str(SONDE_FB)}, run_id)
         alert.alert("social-leads", "Facebook : la collecte n'a pas pu scraper",
                     f"{raison}\n\nTant que ce n'est pas réglé, aucune annonce Facebook n'entre dans "
-                    f"la base. Collecte : tâche LowiBKK-ScrapeImmoFacebook (01:00), "
+                    f"la base. Collecte : tâche LowiBKK-ScrapeImmoFacebook (02:30), "
                     f"script scraper/social/scrape-immo-facebook.ps1.")
         journal(f"  ✗ collecte Facebook : {raison}")
 

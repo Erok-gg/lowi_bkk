@@ -146,6 +146,38 @@ def lire_cache(chemin: Path, max_age_minutes: float) -> list[dict] | None:
     return data.get("entrees") or None
 
 
+def lire_cache_perime(chemin: Path) -> list[dict] | None:
+    """Le cache tel qu'il est, même trop vieux : c'est le sitemap du run
+    précédent, la référence pour savoir si le site a régénéré depuis."""
+    return lire_cache(chemin, float("inf"))
+
+
+def plus_frais(entrees: list[dict] | None) -> datetime | None:
+    dates = [_aware(e["lastmod"]) for e in entrees or [] if e.get("lastmod")]
+    return max(dates) if dates else None
+
+
+def regenere_depuis(precedent: list[dict] | None, shard1: list[dict] | None) -> bool:
+    """Le site a-t-il publié un nouveau sitemap depuis notre dernière lecture ?
+
+    POURQUOI (2026-10-04) : le cycle part à 01:00, le site régénère vers
+    02:00. Le run du 03/10 était parti à 03:10 (après) et celui du 04/10 à
+    01:01 (avant) : il a relu le MÊME sitemap, plus frais lastmod 03/10
+    01:31 des deux côtés. Résultat : 1 fiche ouverte, 0 nouvelle, contre 99 à
+    315 les nuits précédentes. Le constat `parseur_casse` qui a suivi était
+    faux, et une journée de mises à jour a été perdue.
+
+    Le test porte sur le 1er fichier seulement : il porte toujours les
+    annonces les plus fraîches. Mesuré sur les 28 fichiers le 2026-10-04 :
+    plus frais 03/10 dans le n°1, 28/09 dans le n°2, puis décroissant.
+    Sans run précédent connu, on ne peut pas savoir : on considère régénéré."""
+    avant = plus_frais(precedent)
+    if avant is None:
+        return True
+    apres = plus_frais(shard1)
+    return apres is not None and apres > avant
+
+
 def ecrire_cache(chemin: Path, entrees: list[dict]) -> None:
     chemin.parent.mkdir(parents=True, exist_ok=True)
     chemin.write_text(json.dumps({"fetched_at": time.time(), "entrees": entrees}),

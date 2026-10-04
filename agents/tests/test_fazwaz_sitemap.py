@@ -70,6 +70,7 @@ def _adapter(tmp, deal_types=("sale", "rent")):
     cfg = {"base_url": "https://www.fazwaz.com", "discovery": "sitemap",
            "sitemap_index": "https://www.fazwaz.com/sitemap-listings.xml",
            "sitemap_cache_minutes": 0,
+           "sitemap_attente_max_minutes": 0,    # jamais d'attente de régénération en test
            "sitemap_cache": os.path.join(tmp, "sitemap.json"),   # jamais le cache réel
            "searches": [{"path": "/x", "deal_type": d} for d in deal_types],
            "image": {"max_per_listing": 1}}

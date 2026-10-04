@@ -12,7 +12,7 @@
 #          ... -WhatIf     pour voir sans rien changer
 
 [CmdletBinding(SupportsShouldProcess)]
-param([string]$Heure = "01:00")
+param([string]$Heure = "02:30")   # aligne sur LowiBKK-Agents depuis le 2026-10-04 (reveil RTC commun)
 
 $ErrorActionPreference = 'Stop'
 $root   = Split-Path -Parent $PSScriptRoot

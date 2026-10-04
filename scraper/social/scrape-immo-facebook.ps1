@@ -97,6 +97,12 @@ try {
     $fb = Start-Process "node" -ArgumentList "facebook/agent.js" -WorkingDirectory $socialDir -PassThru `
         -RedirectStandardOutput (Join-Path $logDir "immo-last.log") `
         -RedirectStandardError (Join-Path $logDir "immo-err.log") -NoNewWindow
+    # Lire .Handle AVANT l'attente : sous Windows PowerShell 5.1, avec
+    # -RedirectStandard*, sans handle mis en cache ExitCode reste vide.
+    # Reproduit le 2026-10-04 (`cmd /c exit 3` → "" sans, "3" avec) ; tous les
+    # journaux depuis le 13/09 affichaient « code  » et la tache rendait 0
+    # quel que soit le sort du scrape — le correctif du 13/09 etait inerte.
+    $null = $fb.Handle
     if (-not $fb.WaitForExit(1800000)) {   # 30 min max
         Write-Log "ERREUR : scrape au-delà de 30 min — arrêté"
         $fb.Kill()

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from html import unescape
 from pathlib import Path
 from typing import Iterator
@@ -236,6 +237,39 @@ class FazwazAdapter(BaseAdapter):
         return True, (f"sitemap : {len(fichiers)} fichiers, {len(stubs)}/{len(entrees)} URL "
                       f"retenues dans le 1er, fiche OK ({frais['source_url'].rsplit('-', 1)[-1]})")
 
+    def _attendre_regeneration(self, fetcher: Fetcher, cache: Path, fichiers: list[str]) -> None:
+        """Attend que le site ait régénéré son sitemap depuis notre dernière
+        lecture (cf. sitemap.regenere_depuis). On sonde le 1er fichier toutes
+        les `sitemap_attente_pas_minutes` (15 par défaut), et au plus
+        `sitemap_attente_max_minutes` (180). FazWaz tourne en parallèle de
+        DDproperty, qui dure 5,6 h en médiane (ledger, 14 j au 2026-10-04) :
+        jusqu'à 3 h d'attente n'allongent pas le cycle. Au-delà, on scanne
+        quand même, en le disant : un sitemap qui ne bouge plus du tout est
+        alors un vrai problème, et le constat `parseur_casse` sera fondé."""
+        if not fichiers:
+            return
+        precedent = sitemap.lire_cache_perime(cache)
+        pas = float(self.config.get("sitemap_attente_pas_minutes", 15))
+        plafond = float(self.config.get("sitemap_attente_max_minutes", 180))
+        debut = time.monotonic()
+        while True:
+            x1 = fetcher.get_text(fichiers[0])
+            shard1 = sitemap.parse_shard(x1) if x1 else []
+            if sitemap.regenere_depuis(precedent, shard1):
+                if time.monotonic() - debut > 60:
+                    print(f"  sitemap régénéré après {(time.monotonic() - debut) / 60:.0f} min d'attente",
+                          flush=True)
+                return
+            attendu = (time.monotonic() - debut) / 60
+            if attendu + pas > plafond:
+                print(f"  [sitemap-non-regenere] plus frais lastmod toujours "
+                      f"{sitemap.plus_frais(precedent)} après {attendu:.0f} min — scan sur l'ancien sitemap",
+                      flush=True)
+                return
+            print(f"  sitemap pas encore régénéré (plus frais : {sitemap.plus_frais(shard1)}, déjà lu "
+                  f"au run précédent) — nouvel essai dans {pas:.0f} min", flush=True)
+            time.sleep(pas * 60)
+
     def _entrees_sitemap(self, fetcher: Fetcher) -> list[dict]:
         cache = Path(self.config.get("sitemap_cache") or
                      Path(__file__).resolve().parent.parent / "output" / f"{self.source}-sitemap.json")
@@ -246,6 +280,7 @@ class FazwazAdapter(BaseAdapter):
             return entrees
         xml = fetcher.get_text(self.config["sitemap_index"]) or ""
         fichiers = sitemap.parse_index(xml)
+        self._attendre_regeneration(fetcher, cache, fichiers)
         entrees = []
         for i, f in enumerate(fichiers, 1):
             x = fetcher.get_text(f)
