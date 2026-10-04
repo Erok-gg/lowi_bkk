@@ -266,12 +266,26 @@ def demander_haiku(preuves: dict, etat: str, problemes: list[str]) -> dict:
     prompt = (CONSIGNE_HAIKU.replace("{etat}", etat)
               .replace("{problemes}", json.dumps(problemes, ensure_ascii=False))
               .replace("{preuves}", json.dumps(preuves, ensure_ascii=False, indent=1)))
-    cmd = [_claude_bin(), "-p", "--model", HAIKU, "--output-format", "json",
-           "--tools", "", "--setting-sources", "", "--system-prompt", SYSTEME_HAIKU]
-    # cwd temporaire : sinon le CLI charge CLAUDE.md (mesuré pour social_leads :
-    # 64 k tokens de contexte contre 48 k).
+    # --strict-mcp-config + config MCP vide : sans eux, le CLI embarque la
+    # définition des outils des connecteurs du compte (Gmail, Supabase,
+    # Vercel, Drive…) même avec --tools "". Mesuré le 2026-10-04 sur un appel
+    # trivial : 36 331 tokens de contexte (0,008 $ en lecture de cache, 0,07 $
+    # quand le cache s'écrit) contre 236 tokens (0,0007 $) sans eux. Le
+    # premier passage de la veille avait coûté 0,09 $, les suivants 0,02-0,03 $.
+    # cwd temporaire : sinon le CLI charge CLAUDE.md.
     with tempfile.TemporaryDirectory() as tmp:
-        r = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
+        vide = Path(tmp) / "mcp-vide.json"
+        vide.write_text('{"mcpServers": {}}', encoding="utf-8")
+        cmd = [_claude_bin(), "-p", "--model", HAIKU, "--output-format", "json",
+               "--tools", "", "--setting-sources", "", "--strict-mcp-config",
+               "--mcp-config", str(vide), "--system-prompt", SYSTEME_HAIKU]
+        # Réflexion coupée et cache désactivé. Mesuré le 2026-10-04 sur les
+        # mêmes preuves : 3 618 tokens de réflexion (0,018 $) et 4 454 tokens
+        # ÉCRITS en cache à tarif double (0,009 $), un cache jamais relu
+        # puisque les preuves changent à chaque passage. Total 0,028 $. Sans
+        # les deux : 0,0055 $, même verdict sur deux essais.
+        env = {**os.environ, "MAX_THINKING_TOKENS": "0", "DISABLE_PROMPT_CACHING": "1"}
+        r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, env=env,
                            encoding="utf-8", errors="replace", timeout=300, cwd=tmp)
     try:
         d = json.loads(r.stdout)
