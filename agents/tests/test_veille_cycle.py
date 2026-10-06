@@ -16,7 +16,9 @@ Ce que ce test vérifie :
   3. terminé sans problème → pas d'escalade ; terminé avec erreurs → escalade ;
   4. pas parti 2 h après le début de fenêtre → problème ; 1 h après → on attend ;
   5. la signature d'un problème ne dépend pas de ses chiffres (une seule
-     escalade par jour pour « 3 lignes » puis « 5 lignes »).
+     escalade par jour pour « 3 lignes » puis « 5 lignes ») ;
+  6. un délai Haiku « expiré » parce que le poste dormait (2026-10-06, 5 h 13
+     d'horloge pour un délai de 300 s) n'est pas confondu avec une panne.
 
 Rejeu :  scraper/.venv/Scripts/python.exe agents/tests/test_veille_cycle.py
 """
@@ -102,10 +104,36 @@ def test_signature_sans_chiffres():
     assert a == b != c
 
 
+def test_delai_gele_par_la_veille():
+    """2026-10-06 : appel parti à 05:00:56, « expiré » à 10:14:31 (poste en
+    veille) → HaikuGele, pas d'alerte « /login ». Un vrai blocage de ~300 s
+    reste un TimeoutExpired ordinaire, qui alerte."""
+    import subprocess
+    vrai_run, vraie_horloge = vc.subprocess.run, vc._horloge
+
+    def bloque(*a, **k):
+        raise subprocess.TimeoutExpired(a[0], vc.DELAI_HAIKU_S)
+
+    try:
+        vc.subprocess.run = bloque
+        for ecoule, attendu in ((18_815, vc.HaikuGele), (301, subprocess.TimeoutExpired)):
+            t = iter((1000.0, 1000.0 + ecoule))
+            vc._horloge = lambda: next(t)
+            try:
+                vc.demander_haiku({}, "en_cours", [])
+            except Exception as e:                      # noqa: BLE001
+                assert type(e) is attendu, (ecoule, type(e))
+            else:
+                raise AssertionError("aucune exception")
+    finally:
+        vc.subprocess.run, vc._horloge = vrai_run, vraie_horloge
+
+
 if __name__ == "__main__":
     test_fenetre_suit_la_tache()
     test_en_cours()
     test_termine()
     test_pas_parti()
     test_signature_sans_chiffres()
-    print("OK — test_veille_cycle : 5/5")
+    test_delai_gele_par_la_veille()
+    print("OK — test_veille_cycle : 6/6")

@@ -39,6 +39,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import shutil
@@ -262,6 +263,20 @@ def _claude_bin() -> str:
             or str(Path.home() / ".local" / "bin" / "claude.exe"))
 
 
+DELAI_HAIKU_S = 300
+#: Un délai réellement dépassé se constate ~300 s après le départ. Le
+#: 2026-10-06, l'appel parti à 05:00:56 a « expiré » à 10:14:31 : 18 815 s
+#: d'horloge, le poste en veille moderne de 05:00 à l'ouverture du capot
+#: (Kernel-Power 507 à 10:14:02). L'alerte qui a suivi suggérait un /login
+#: inutile. Au-delà de cette marge, le processus était gelé, pas en panne.
+MARGE_GEL_S = 120
+_horloge = time.time          # remplaçable par le test
+
+
+class HaikuGele(RuntimeError):
+    """Délai expiré parce que le poste dormait pendant l'appel."""
+
+
 def demander_haiku(preuves: dict, etat: str, problemes: list[str]) -> dict:
     prompt = (CONSIGNE_HAIKU.replace("{etat}", etat)
               .replace("{problemes}", json.dumps(problemes, ensure_ascii=False))
@@ -285,8 +300,16 @@ def demander_haiku(preuves: dict, etat: str, problemes: list[str]) -> dict:
         # puisque les preuves changent à chaque passage. Total 0,028 $. Sans
         # les deux : 0,0055 $, même verdict sur deux essais.
         env = {**os.environ, "MAX_THINKING_TOKENS": "0", "DISABLE_PROMPT_CACHING": "1"}
-        r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, env=env,
-                           encoding="utf-8", errors="replace", timeout=300, cwd=tmp)
+        t0 = _horloge()
+        try:
+            r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, env=env,
+                               encoding="utf-8", errors="replace", timeout=DELAI_HAIKU_S, cwd=tmp)
+        except subprocess.TimeoutExpired:
+            ecoule = _horloge() - t0
+            if ecoule > DELAI_HAIKU_S + MARGE_GEL_S:
+                raise HaikuGele(f"délai de {DELAI_HAIKU_S} s constaté après {ecoule / 60:.0f} min "
+                                "d'horloge — poste en veille pendant l'appel") from None
+            raise
     try:
         d = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
@@ -407,7 +430,14 @@ def main() -> int:
     verdict = {}
     if not a.sans_llm:
         try:
-            verdict = demander_haiku(preuves, etat, problemes)
+            try:
+                verdict = demander_haiku(preuves, etat, problemes)
+            except HaikuGele as e:
+                # Gel par la veille : ni panne ni authentification. Pas
+                # d'alerte ; un seul nouvel essai, maintenant que le poste est
+                # réveillé. S'il échoue aussi, c'est une vraie panne → alerte.
+                _ecrire(f"haiku gelé par la veille ({e}) — nouvel essai")
+                verdict = demander_haiku(preuves, etat, problemes)
             _ecrire(f"haiku : {verdict.get('verdict')} — {verdict.get('resume', '')} "
                     f"({verdict.get('cout_usd')} $)")
         except Exception as e:                           # noqa: BLE001
