@@ -3271,3 +3271,313 @@ haut FazWaz étaient dans le ledger. J'ai aussi affirmé l'absence de collecte d
   bonne partie (non mesuré).
 - 15 posts non extraits (collecte du 28/09) : non retentés.
 - Branche `fix/veille-claude-2026-10-04` non poussée, non fusionnée.
+
+## 2026-10-05 — Supabase : budget Disk IO épuisé → remontée nocturne passée en `--delta`
+
+**Déclencheur** : e-mail Supabase « Your project is depleting its Disk IO
+Budget ». Au moment du diagnostic, la base ne répondait plus : deux requêtes
+`pg_stat_statements` ont expiré en timeout. **Rien n'a donc été mesuré côté
+serveur** ; ce qui suit vient du ledger et des logs locaux.
+
+**Mesuré (logs `remonter-supabase`)** :
+- Chaque nuit, le plein renvoi réévaluait **112 436 actives** (contre 53 k en
+  août : le stock a doublé) et **62 266 mortes**, pour ~2 à 5 mises à jour
+  réelles par lot de 500 et **1 689** statuts corrigés (run du 2026-10-05).
+  Le `WHERE` de `upsert_listings_bulk` évite déjà les écritures inutiles, mais
+  pas la relecture de chaque ligne, `raw_data` jsonb compris.
+- 2 des 3 dernières nuits ont échoué au bout de 1 h 40 et 23 min, sur
+  `connect() bloqué au-delà de 25s` : symptôme cohérent avec un budget épuisé
+  (lien de cause à effet **déduit**, pas prouvé).
+- `dirty_since` est posé sur **174 702 / 174 702** lignes depuis le backfill du
+  2026-09-07 : aucune remontée `--delta` n'est jamais allée au bout.
+
+**Décision (arbitrée par l'utilisateur)** : `agents.json` passe
+`remonter-supabase` de `--statut actives --synchro-statuts` à `--delta`.
+Vérifié avant de basculer : `dirty_since` ne bouge que sur changement de
+contenu ou de statut (`sqlite_store.py`), pas sur un simple passage du scrap ;
+le `last_seen` du serveur n'est pas plus figé qu'avant, puisque le plein
+renvoi ne le rafraîchissait déjà pas sur les lignes inchangées.
+`test_dirty_since` est à 10/10. **Le premier passage coûtera autant qu'un
+plein renvoi** (tout est marqué) ; le gain n'apparaît qu'à partir du second.
+Retour arrière : remettre `--statut actives --synchro-statuts`.
+
+**Fausse piste corrigée dans la séance** : j'avais d'abord signalé un défaut
+d'encodage (`'charmap' codec can't encode '⚠'`) dans les runs en échec.
+C'était le `print` de mon propre script de lecture, dans la console cp1252.
+Les logs de production sont propres (`shell.py` force déjà
+`PYTHONIOENCODING=utf-8`). Rien n'a été modifié de ce côté.
+
+**PAS fait, laissé à arbitrage** :
+- B — retirer la copie Supabase → archive (agent `storage` hebdomadaire,
+  `sync_supabase_local.py --prune`, et routine mensuelle de PC1) : une lecture
+  complète de la base à chaque fois, pour un sens de copie devenu faux depuis
+  la bascule SQLite.
+- C — pages Vercel : `force-dynamic` + chargement du stock entier, avec un
+  cache non partagé entre instances. Non mesuré.
+- D — `pg_stat_statements`, bloat de `listings` et advisors de performance à
+  relever dès que la base répondra, puis à comparer après deux nuits en
+  `--delta`.
+- E — passer sur une instance plus grosse (payant) : non retenu.
+- Aucun commit.
+
+### 2026-10-05 (suite) — B fait, C non fait après mesure
+
+**B, retirer la copie Supabase → archive.** Côté agents, c'était déjà fait :
+`storage` et `verifie-backup` ont `lanes: []` depuis le 2026-08-25.
+CLAUDE.md (§ Architecture, rupture 2) était en retard sur ce point. Restait
+la routine Claude `rapport-mensuel-lowi-bkk`, qui tourne sur PC1 dans
+l'ancienne copie `C:\Users\schoe\++FILES++\Lowi_bkk`. Son prompt contenait
+encore deux choses :
+- étape 1 : des scraps `--full --store supabase`, soit des écritures
+  complètes sur le serveur, avec le risque de remettre en « active » les
+  annonces délistées (`upsert_listing` force `status='active'`) ;
+- étape 4 : `sync_supabase_local.py --prune`, soit une lecture complète de
+  toutes les tables plus une purge.
+
+Le prompt a été remplacé : il est identique, sauf que l'étape 1 se limite à
+une lecture de fraîcheur (aucun scrap) et que l'étape 4 est supprimée. La
+version d'origine est conservée dans le transcript de la session PC1 du
+2026-10-01. **Non vérifié** : ce que le run du 2026-10-01 a réellement fait.
+Son transcript s'arrête au premier appel PowerShell.
+
+**C, alléger les lectures de Vercel : NON FAIT.**
+- Mesuré en local : ne charger que la 1re image des annonces actives et que
+  le `price_history` des actives ne retire que **24 %** (147 407 → 112 415)
+  et **35 %** (179 389 → 116 381) des lignes. Côté disque, Postgres balaierait
+  quand même les tables entières pour la jointure. Gain en entrées/sorties
+  estimé proche de zéro (**déduit**). Abandonné.
+- Le vrai levier serait un cache **partagé** entre instances, par exemple un
+  instantané JSON publié chaque nuit dans Storage et lu par Vercel à la place
+  du SQL. Mais `unstable_cache` est plafonné à 2 Mo, et passer par Storage
+  déplace le coût vers l'egress de Storage. C'est un changement d'architecture
+  à chiffrer avant d'y toucher (règle 6).
+- **Trafic Vercel impossible à mesurer aujourd'hui** : le connecteur Vercel ne
+  voit que le projet `blog` de l'équipe `schoenaueranthony`, pas `lowi-bkk`
+  (le site répond pourtant, 200 sur `/login`). Le projet vit probablement sur
+  un autre compte ou une autre équipe.
+- Étape suivante proposée : après deux nuits en `--delta`, lire
+  `pg_stat_statements` pour départager la part des lectures de pages de celle
+  de la remontée. Ne lancer C que si les pages pèsent réellement.
+
+### 2026-10-05 (réparation autonome, 12:00) — veille Claude muette, FazWaz sans sitemap neuf, relance de la remontée
+
+- **La veille `LowiBKK-VeilleClaude` n'a fait aucun passage le 05/10.** Il n'y
+  a aucune ligne dans `ops/logs/veille/` avant mon essai manuel de 12:18, et
+  dernier résultat de la tâche : `0x800710E0` à 12:00:05. Le script, lui,
+  fonctionne (`--sans-llm --sans-escalade --forcer` → `termine`, 3 problèmes),
+  et le jour du cycle est bien calculé. Le poste était en veille moderne au
+  déclenchement de 02:30, et la tâche n'a ni `WakeToRun` ni
+  `StartWhenAvailable`. Ensuite, aucun passage, même pendant la présence de
+  l'utilisateur de 08:51 à 10:40. **Le journal opérationnel du Planificateur
+  est désactivé** : on ne peut pas savoir pourquoi. La prémisse
+  d'`install-veille-task.ps1` (« la veille suit tant que LowiBKK-Agents tient
+  le poste debout ») est démentie. **Non corrigé** : c'est un choix de posture
+  documenté la veille. Options (a) `StartWhenAvailable`, (b) `WakeToRun`,
+  (c) lancement par l'orchestrateur : voir `agents/audits/reparations-2026-10-05.md`.
+- **Le cycle est parti à 03:30 et non à 02:30.** Le poste était en veille
+  moderne de 23:44 à 03:30:03, et la tâche a démarré une seconde après le
+  réveil. Le minuteur de 02:30 n'a pas réveillé le poste. Cause non établie
+  (`powercfg /waketimers` exige un terminal administrateur).
+- **FazWaz « parseur_casse », deuxième nuit** : le parseur n'est pas en
+  cause. Vérifié à 12:1x, l'index du sitemap est encore au 04/10 02:04 et le
+  premier fichier au 04/10 01:37. FazWaz n'a pas régénéré depuis plus de
+  34 h. Le « régénéré chaque nuit vers 02:04 » reposait sur une seule
+  observation. Le marqueur `[sitemap-non-regenere]` est bien dans le journal
+  de l'extracteur, mais `watch-health` ne le lit pas : cette fausse alerte
+  reviendra (règle 2).
+- **`remonter-supabase` : ma relance de 12:20 est venue en plein épuisement
+  du budget Disk IO.** Elle a tourné en plein renvoi, puisque `agents.json`
+  n'était pas encore passé en `--delta`. Résultat : code 0, 569 nouvelles,
+  128 mises à jour, 1 689 statuts corrigés (c'est le « log du 2026-10-05 »
+  cité dans l'entrée précédente). J'avais d'abord conclu à une coupure
+  réseau quotidienne vers 06:00, parce que les échecs touchaient les runs
+  partis entre 05:23 et 06:19. **Cette conclusion est fausse** : à 13:4x, la
+  connexion a de nouveau bloqué au-delà de 25 s alors que le TCP passait.
+  Mes sondes ont été arrêtées. Le mail d'échec en attente a été classé non
+  envoyé (périmé).
+- Base : `quick_check` ok, 174 702 annonces. Sauvegarde USB de la nuit : 3/3
+  essais ok. Extracteurs : 2 lignes d'erreur en tout (404 FazWaz).
+
+**Non fait** : aucun réglage de la tâche de veille ; pas d'étiquette « sitemap
+non régénéré » dans `watch-health` ; budget de reprise de
+`_connect_resilient` laissé à 1 200 s (le problème vient de la charge du
+serveur, attendre ne sert à rien) ; `agents.json` laissé tel quel (modifié
+par la séance de 13:00, non commité) ; aucun commit.
+
+## 2026-10-06 — Réparation autonome : cycle figé 6 h 20 par une coupure secteur en veille moderne
+
+- **Mesuré** (journal Windows) : poste en veille moderne depuis le 05/10
+  16:37 ; le cycle de 02:30 y tournait. Bascule secteur → batterie à 03:51:40,
+  réseau coupé, retour secteur à 05:00:53, mais réveil seulement à
+  l'ouverture du capot (10:14:02). `extract-ddproperty` encore en cours à
+  12:14 ; FazWaz/PropertyScout/Nestopa terminés (278/51/22 nouvelles).
+- L'alerte « claude -p (haiku) en échec » de 10:14 est un artefact : l'appel
+  de 05:00:56 a expiré au réveil. Mail envoyé avec ce diagnostic.
+- Base : `quick_check` ok, 176 325 annonces ; sauvegarde USB 3/3 ok.
+
+**Non fait** : aucun réglage d'alimentation (arbitrage utilisateur) ; pas
+d'étiquette « réveil après veille » dans `veille-cycle.py` (proposée) ; pas de
+relance du cycle ; aucun commit. Détail : `agents/audits/reparations-2026-10-06.md`.
+
+## 2026-10-06 (suite) — Veille : un délai Haiku « expiré » pendant la veille n'est plus une panne
+
+- `ops/veille-cycle.py` : si `claude -p` dépasse son délai alors que plus de
+  300 + 120 s d'horloge se sont écoulées, le processus était gelé par la veille
+  (mesuré ce matin : 18 815 s pour un délai de 300 s). → `HaikuGele`, pas
+  d'alerte, un seul nouvel essai immédiat ; s'il échoue, alerte comme avant.
+  Un vrai blocage (~300 s) alerte toujours.
+- Vérifié : `agents/tests/test_veille_cycle.py` 6/6 (cas 18 815 s → gel, 301 s
+  → panne) ; passage réel `--sans-escalade --forcer` ok (0,0025 $).
+- **Non fait** : pas de lecture du journal Kernel-Power dans le message (le
+  temps d'horloge suffit à trancher) ; le texte « Si c'est une
+  authentification : /login » reste dans l'alerte des vraies pannes.
+
+## 2026-10-06 (soir) — Le garde-fou Supabase nommait la mauvaise cause depuis un mois
+
+**Déclencheur** : veille Haiku du cycle → ticket
+`2026-10-06T150013-veille-claude-cycle_probleme.json`, « remonter-supabase :
+failed (run #722, code 1) ». Compte rendu complet (avec la 1re intervention
+du jour, à 12:15) : [agents/audits/reparations-2026-10-06.md](../agents/audits/reparations-2026-10-06.md).
+
+**Ce qui s'est passé** : run #722 a tourné **8 h 28** (06:11 → 14:39 UTC),
+publié **5 500 / 113 978** annonces, puis rendu la main proprement par son
+disjoncteur. Le disjoncteur a donc bien fonctionné ; ce sont ses **messages**
+qui étaient faux.
+
+**Mesuré, et c'est le point de l'entrée.** L'entrée du 2026-10-05 posait
+l'épuisement du budget Disk IO comme un **lien déduit, pas prouvé** (« rien
+n'a donc été mesuré côté serveur » — la base ne répondait pas). Cette fois
+elle répondait assez pour être interrogée, et le lien est **prouvé** :
+
+- `postgres_logs` du jour : checkpoint d'**UN** buffer (16 ko) = **17,6 à
+  22,4 s** ; 250 buffers (2 Mo) = **147,4 s** ;
+  `pg_database_size('template1')` = **17,1 s** puis **23,6 s** ; autovacuum
+  « worker took too long to start; **canceled** » ; « canceling statement due
+  to statement timeout » en rafale.
+- `supavisor_logs` : `DbHandler: Authentication timeout after 15000ms`, puis
+  `(ECHECKOUTTIMEOUT) unable to check out connection from the pool after
+  15000ms in Session mode`.
+- Écrire 16 ko en 18 s n'est pas une charge mal encaissée : c'est un disque
+  qui ne rend plus la main. Le pooler n'arrive plus à s'authentifier auprès du
+  Postgres dans ses 15 s, donc nos connexions échouent.
+
+**Ce n'était pas le réseau**, contrairement à ce que le log affirmait : DNS
+résolu (3 A records), TCP établi (`TcpTestSucceeded=True`, 8,37 s), les deux
+vérifiés avant de toucher au code. Le MCP Supabase lui-même n'a pas pu
+exécuter de SQL alors que l'API de gestion annonçait `ACTIVE_HEALTHY` — une
+métadonnée de santé ne dit rien de la joignabilité.
+
+**Fréquence** : **5 des 12 derniers runs** de `remonter-supabase` ont échoué
+(**42 %**), dont **3 des 4 dernières nuits**. Asymétrie des durées : une nuit
+qui réussit prend **3 à 6 min** (05/10 : 5 min 14 s pour 112 436 actives +
+62 266 statuts, cohérent avec les ~250/s de `upsert_listings_bulk`) ; une nuit
+qui échoue coûte de 23 min à 8 h 28. **Le coût du travail n'est pas le
+problème, le coût de l'échec l'est.**
+
+### Deux défauts de NOTRE code, corrigés (branche `fix/supabase-connect-vraie-cause-2026-10-06`, `d37777f`)
+
+**1. Le watchdog détruisait la vraie cause et en inventait une.**
+`CONNECT_HARD_TIMEOUT = 25 s` tombe **avant** que libpq ne rende son erreur —
+mesurée à **32,89 / 32,01 / 32,01 s** (3 essais consécutifs contre le vrai
+pooler) :
+
+    FATAL: Failed to connect to database:
+           authentication did not complete within 15000ms
+
+Le watchdog levait donc toujours le premier, avec un message qui **affirmait**
+« hors du contrôle de connect_timeout — DNS ou TCP ». Conséquence concrète et
+vérifiable : les commentaires de `scraper/store/supabase_store.py` parlent de
+DNS depuis un mois (entrées des 2026-09-04, 09-07, 09-09) pour une panne qui
+n'a jamais été réseau. C'est la règle 2 prise en défaut par l'intérieur — un
+garde-fou qui ne crie pas au loup mais qui **désigne le mauvais loup**, ce qui
+coûte autant.
+Correctif : le message ne nomme plus de cause qu'il ignore, et un ramasseur
+restitue la vraie dès qu'elle arrive (le recul du backoff laisse au thread au
+moins 30 s, contre 25 au watchdog).
+
+**2. Fuite de connexion, qui aggravait la panne réessayée.** Si
+`psycopg.connect` aboutissait **après** la deadline, `resultat["db"]` tenait
+une connexion que personne ne fermait jamais. En mode **session** chacune
+occupe un backend du pooler — exactement la ressource dont la pénurie produit
+l'`ECHECKOUTTIMEOUT` relevé ci-dessus. Le commentaire existant mentionnait le
+thread orphelin, pas la connexion qu'il pouvait tenir. Désormais fermées.
+
+**Vérifié en production**, la panne étant encore vive : la ligne « ↳ cause
+réelle de l'attente précédente : … authentication did not complete within
+15000ms » sort bien, aucune attente ne reste en vol, et la connexion a fini
+par être obtenue à **149 s** (instance dégradée, pas morte).
+Non-régression : `agents/tests/test_supabase_cause_reelle.py` (4 essais).
+Suite complète **38/38** (`test_local_llm` sauté, Ollama absent de PC2 par
+conception).
+
+**3. Un test accusait le code à sa place.** `test_social_leads` échouait, et
+**échouait déjà sans mes modifications** (vérifié par `git stash`) : sa sonde
+« déconnecté » est datée en dur du `2026-10-01T01:14:46Z` alors que `run()`
+appelle `etat_collecte_facebook()` **sans argument**, donc avec l'horloge
+réelle. Au 06/10 la sonde avait 134 h, et la branche « n'a pas abouti depuis
+N h » (`SONDE_FB_MAX_H = 30`) répondait avant la branche « DÉCONNECTÉ »
+testée. Horodatage rendu relatif. **La collecte Facebook est saine** :
+`etat_collecte_facebook()` rend `None`, 222 posts le 06/10 à 02:44,
+`LastTaskResult = 0`.
+
+### État du reste
+
+`bangkok.db` : `quick_check` **ok**, WAL, **3,95 Go**, **176 325** annonces
+dont **113 978 actives**, dernier `last_seen` 06/10 06:09 UTC. Sauvegarde clé
+USB du cycle du 05/10 : `"ok": true`, **3 essais sur 3** concordants, 3 884,5
+Mo, copie vérifiée présente (`D:\++SCRAP DB++`, 3,88 Go). Erreurs des
+extracteurs depuis le 29/09, comptées par nature : 9 `OperationalError`,
+7 `[erreur lot N]`, 2 `parseur_casse`, 1 `Traceback` — **toutes** de la
+famille Supabase, **zéro erreur HTTP**, **zéro `SONDE-ECHEC`**. Les 2
+`parseur_casse` FazWaz des 04–05/10 sont des faux positifs sur un `scan_run`
+« 0 nouvelle / 6 retirées » légitime (déjà expliqué le 05/10). 0 escalade
+ouverte. `ops/pouls.py --verifier` s'est tu correctement tout du long (« cycle
+en cours, surveillé par `cycle_long` »).
+
+**Mesure que j'ai d'abord faite de travers, et qui mérite d'être consignée** :
+mon premier comptage d'erreurs annonçait « 94× HTTP 403 » et « 76× HTTP 429 ».
+C'étaient des **chiffres pris dans des nombres** (`43402`, `142929`,
+`104033`) — faux positifs d'un motif de recherche trop large. Il n'y a aucune
+erreur HTTP. Huitième occurrence du schéma d'août 2026 : c'est la mesure, et
+non le système mesuré, qui était en cause. La conclusion inverse aurait lancé
+une enquête anti-bannissement sans objet.
+
+### Non fait, et pourquoi
+
+- **Le fond n'est pas réparé** : l'instance Supabase ne tient plus la charge.
+  **Aucun seuil, palier, budget, cadence ni définition de calcul n'a été
+  touché** (`CONNECT_HARD_TIMEOUT`, `OUTAGE_*`, `CIRCUIT_OUVERT_PALIER`,
+  `JITTER`, périmètre `--delta`, seuil `parseur_casse`, `SONDE_FB_MAX_H`,
+  `COLLECTE_MUETTE_H`) — posture, donc arbitrage de l'utilisateur (règle 5).
+- **Point dur mesuré, laissé en décision** : `--delta` n'arrive pas à
+  s'amorcer. **173 325 / 176 325 lignes (98,3 %)** portent encore
+  `dirty_since` ; la nuit du 06 n'en a nettoyé que **3 000**. Le progrès est
+  persistant (pas un blocage définitif), mais il faut **une nuit complète**
+  pour repartir propre — ce que le disque saturé empêche. Trois options
+  chiffrées dans le compte rendu : (a) laisser gratter, 1 à ~58 nuits selon le
+  disque ; (b) amorcer une fois à la main hors cycle, ~5 min si l'instance
+  répond ; (c) réduire le périmètre publié ou passer au palier payant (coût
+  **non mesuré**, pas lisible d'ici).
+- **Quatrième levier non mesuré** : la part du budget disque consommée par
+  `posted_at_history` (1,70 M lignes / 196 Mo au 2026-09-28, ~400 k/semaine).
+  S'il domine les écritures, le traiter ferait plus que tout le reste —
+  vérifiable seulement par `pg_stat_statements` sur une instance qui répond.
+- **Pas relancé `remonter-supabase`** ni aucun scrap : le cycle tournait encore
+  pendant toute l'intervention, deux publications en parallèle contre une
+  instance à genoux auraient aggravé les choses. Il repart seul à 02:30.
+- **Pas touché à l'instance** (ni `VACUUM`, ni purge, ni palier) : donnée
+  servie au public et poste de dépense.
+- **Volumétries de `CLAUDE.md` non mises à jour** : il annonce 1,19 Go /
+  76 942 annonces (relevé du 2026-08-26) contre **3,95 Go / 176 325** mesurés.
+  Écart signalé, correction non faite — doc de référence, hors périmètre du
+  ticket.
+- **Fragilité repérée, non corrigée** : les `print` de
+  `_connect_resilient`/`_execute` contiennent « ⚠ » ; sur une sortie non-UTF-8
+  ils lèvent `UnicodeEncodeError`, non rattrapé par le
+  `except (OperationalError, InterfaceError)`, ce qui tuerait le run. Inoffensif
+  en production (les logs rendent « ⚠ », et `test_console_utf8.py` garde ce
+  point) ; rencontré dans mon propre harnais, pas dans le cycle.
+- **Branche non poussée, non fusionnée.** Les modifications non commitées
+  trouvées à l'arrivée (arbitrage `--delta` du 05/10 dans `agents.json` + son
+  entrée de journal, CSV d'étude, `official-latest.json`) ont été **laissées
+  telles quelles** : elles ne sont pas de moi.
