@@ -18,7 +18,10 @@ Ce que ce test vérifie :
   5. la signature d'un problème ne dépend pas de ses chiffres (une seule
      escalade par jour pour « 3 lignes » puis « 5 lignes ») ;
   6. un délai Haiku « expiré » parce que le poste dormait (2026-10-06, 5 h 13
-     d'horloge pour un délai de 300 s) n'est pas confondu avec une panne.
+     d'horloge pour un délai de 300 s) n'est pas confondu avec une panne ;
+  7. la veille ne compte pas SON PROPRE compte rendu d'Opus comme une erreur du
+     cycle (2026-10-06 : « zero SONDE-ECHEC » lu comme 1 ligne d'erreur, donc
+     un second Opus appelé pour une panne déjà réparée).
 
 Rejeu :  scraper/.venv/Scripts/python.exe agents/tests/test_veille_cycle.py
 """
@@ -129,6 +132,45 @@ def test_delai_gele_par_la_veille():
         vc.subprocess.run, vc._horloge = vrai_run, vraie_horloge
 
 
+def test_ne_se_surveille_pas_elle_meme():
+    """La veille ne compte pas son propre compte rendu comme une erreur du cycle.
+
+    Defaut mesure le 2026-10-06 : `escalader()` ecrit le rapport d'Opus dans
+    agents/logs/veille-opus-<ts>.log, le MEME dossier que `erreurs_journaux()`
+    balaie. Le rapport de 22:00 disait « zero `SONDE-ECHEC` » — donc que tout
+    allait bien — et la veille de 23:00 l'a compte comme « 1 ligne d'erreur ».
+    Cette ligne en plus changeait la signature du probleme, contournait la
+    deduplication par signature, et rappelait un second Opus pour une panne
+    deja reparee a 15:38 UTC. Un garde-fou qui crie au loup a sa propre voix
+    (regle 2), et qui coute une session Opus entiere par passage.
+    """
+    import pathlib
+    import tempfile
+    d = pathlib.Path(tempfile.mkdtemp())
+    vrai_logs = vc.LOGS
+    try:
+        vc.LOGS = d
+        # un vrai journal d'agent : doit etre compte
+        (d / "extract-ddproperty-2026-10-06T020000.log").write_text(
+            "[erreur] delai curl depasse\n", encoding="utf-8")
+        # le compte rendu d'Opus : prose de Claude, pas une trace d'agent
+        (d / "veille-opus-2026-10-06T220013.log").write_text(
+            "Zero HTTP errors, zero `SONDE-ECHEC`, 0 open escalations.\n"
+            "Traceback cited in prose only.\n", encoding="utf-8")
+        debut = datetime.now().astimezone() - timedelta(hours=2)
+        vu = vc.erreurs_journaux(debut)
+        assert vu == {"extract-ddproperty-2026-10-06T020000.log": 1}, vu
+
+        # Et la consequence qui a reellement declenche le second Opus : sans
+        # l'exclusion, la ligne surnumeraire changeait la signature.
+        base = ["remonter-supabase : failed (run #722, code 1)",
+                "5 ligne(s) d'erreur dans remonter-supabase-2026-10-06T061147.log"]
+        avec_sa_voix = base + ["1 ligne(s) d'erreur dans veille-opus-2026-10-06T220013.log"]
+        assert vc._signature(base) != vc._signature(avec_sa_voix)
+    finally:
+        vc.LOGS = vrai_logs
+
+
 if __name__ == "__main__":
     test_fenetre_suit_la_tache()
     test_en_cours()
@@ -136,4 +178,5 @@ if __name__ == "__main__":
     test_pas_parti()
     test_signature_sans_chiffres()
     test_delai_gele_par_la_veille()
-    print("OK — test_veille_cycle : 6/6")
+    test_ne_se_surveille_pas_elle_meme()
+    print("OK — test_veille_cycle : 7/7")

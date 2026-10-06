@@ -75,6 +75,17 @@ MARGE_AVANT_MIN = 30
 # lendemain.
 PAS_PARTI_APRES_H = 2.0       # compté depuis le début de fenêtre (heure − 30 min)
 MOTIFS_ERREUR = re.compile(r"\[erreur|Traceback|SONDE-ECHEC")
+#: La veille ne se surveille pas elle-même. `escalader()` écrit le compte rendu
+#: d'Opus dans ce MÊME dossier (`veille-opus-<ts>.log`), et un compte rendu
+#: honnête de panne cite forcément les motifs ci-dessus. Mesuré le 2026-10-06 :
+#: le rapport de 22:00 contenait « zero `SONDE-ECHEC` » — une phrase qui dit que
+#: tout va bien — et la veille de 23:00 l'a compté comme « 1 ligne d'erreur »,
+#: changeant la signature du problème, donc contournant la déduplication, donc
+#: rappelant un second Opus pour une panne déjà réparée 22 min plus tôt. Le
+#: garde-fou criait au loup à sa propre voix (règle 2). Ces journaux sont de la
+#: prose de Claude, pas des traces d'agent : ils ne sont pas une preuve sur le
+#: cycle. La panne de fond, elle, reste détectée par son propre run `failed`.
+PREFIXE_JOURNAL_VEILLE = "veille-opus-"
 
 
 def _ecrire(msg: str) -> None:
@@ -127,6 +138,8 @@ def erreurs_journaux(debut_local: datetime) -> dict[str, int]:
     seuil = debut_local.timestamp()
     out = {}
     for p in LOGS.glob("*.log*"):
+        if p.name.startswith(PREFIXE_JOURNAL_VEILLE):
+            continue                 # cf. PREFIXE_JOURNAL_VEILLE : pas sa propre voix
         if p.stat().st_mtime < seuil:
             continue
         with open(p, encoding="utf-8", errors="replace") as f:
