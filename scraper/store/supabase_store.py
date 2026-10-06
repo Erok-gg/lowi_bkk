@@ -62,6 +62,76 @@ JITTER = 0.25
 CONNECT_HARD_TIMEOUT = 25.0
 
 
+#: Attentes abandonnées par le watchdog dont le thread tourne ENCORE. On ne
+#: peut pas tuer un thread Python, seulement cesser de l'attendre — puis
+#: revenir le ramasser. Deux raisons, les deux MESURÉES le 2026-10-06 (cycle
+#: de nuit : `remonter-supabase` abandonnée après 8 h 28, 5 500/113 978) :
+#:
+#: 1. LA VRAIE CAUSE ARRIVE APRÈS LE WATCHDOG, donc on la détruisait.
+#:    `psycopg.connect` contre le pooler session a rendu son erreur en
+#:    32,0 / 32,1 / 32,9 s (3 mesures consécutives) :
+#:    « FATAL: Failed to connect to database: authentication did not complete
+#:    within 15000ms » — c'est le POOLER qui n'arrive pas à s'authentifier
+#:    auprès du Postgres, lui-même à genoux (dans `postgres_logs` le même
+#:    jour : checkpoint d'UN buffer = 17 à 22 s, 250 buffers = 147 s,
+#:    `pg_database_size('template1')` = 23 s, autovacuum « took too long to
+#:    start »). Le watchdog tombe à 25 s, donc AVANT : les ~60 lignes de log
+#:    de la nuit ont toutes annoncé « coupure ? » et « DNS ou TCP », alors que
+#:    le DNS résolvait et que le TCP passait (vérifiés tous les deux). Un
+#:    garde-fou qui nomme la mauvaise cause envoie l'enquête suivante dans le
+#:    mur — c'est exactement ce que la règle 2 interdit, et ce qui explique
+#:    que les commentaires de ce fichier parlent de DNS depuis un mois.
+#:
+#: 2. UNE CONNEXION QUI ATTERRIT EN RETARD RESTAIT OUVERTE. Si `connect()`
+#:    réussit à 26 s, `resultat["db"]` tenait une connexion que personne ne
+#:    fermait jamais. En mode SESSION chacune occupe un backend du pooler —
+#:    et `supavisor_logs` montre précisément « (ECHECKOUTTIMEOUT) unable to
+#:    check out connection from the pool after 15000ms in Session mode ». On
+#:    aggravait donc, fuite par fuite, la panne qu'on réessayait.
+#:
+#: Le ramassage ne change AUCUN délai, aucun palier, aucun budget : il ferme
+#: ce qui traîne et il dit la vérité. Les seuils restent l'arbitrage de
+#: l'utilisateur.
+_attentes_orphelines: list[dict] = []
+
+
+def _ramasse_orphelines() -> str | None:
+    """Ferme les connexions atterries en retard ; rend la vraie cause si connue.
+
+    À appeler juste AVANT un nouvel essai : c'est le seul instant où le thread
+    précédent a eu le temps de finir (le recul du backoff lui en laisse au
+    minimum 30 s, là où le watchdog ne lui en laissait que 25).
+    """
+    vraie_cause: str | None = None
+    for slot in list(_attentes_orphelines):
+        if "db" in slot:
+            try:
+                slot["db"].close()
+            except Exception:  # noqa: BLE001 — fermeture best-effort
+                pass
+        elif "erreur" in slot:
+            # Première ligne seulement : psycopg empile « Multiple connection
+            # attempts failed » + un bloc par IP (3 pour ce pooler), ce qui
+            # noierait le log sans rien ajouter.
+            vraie_cause = str(slot["erreur"]).strip().splitlines()[0]
+        else:
+            continue                 # toujours en vol — on le reverra au tour suivant
+        _attentes_orphelines.remove(slot)
+    return vraie_cause
+
+
+def _dis_la_vraie_cause() -> None:
+    """Imprime la cause réelle d'une attente abandonnée, si elle est arrivée.
+
+    Exemplaire unique : les DEUX boucles de reprise (ouverture initiale et
+    reprise en cours de run) doivent dire la vérité de la même façon — c'est
+    parce qu'elles divergeaient que `_recul` a dû être factorisé, même motif.
+    """
+    cause = _ramasse_orphelines()
+    if cause:
+        print(f"    ↳ cause réelle de l'attente précédente : {cause}", flush=True)
+
+
 def _connect_borne(dsn: str) -> "psycopg.Connection":
     resultat: dict = {}
 
@@ -75,12 +145,18 @@ def _connect_borne(dsn: str) -> "psycopg.Connection":
     fil.start()
     fil.join(CONNECT_HARD_TIMEOUT)
     if fil.is_alive():
-        # Le thread reste orphelin (daemon) si connect() finit par revenir —
-        # on ne peut pas l'interrompre de force en Python, seulement cesser
-        # de l'attendre. Compte comme une coupure pour _execute().
+        # Le thread reste orphelin (daemon). On confie son `resultat` au
+        # ramasseur : ce dict est le SEUL lien qui reste vers une connexion
+        # qui atterrirait en retard (à fermer) ou vers la vraie cause de
+        # l'échec (à dire). Sans cela, les deux étaient perdues — cf. le
+        # commentaire de `_attentes_orphelines`.
+        _attentes_orphelines.append(resultat)
+        # Le message ne NOMME plus de cause : à 25 s on sait seulement que
+        # l'appel n'a pas rendu la main. Prétendre « DNS ou TCP » était faux
+        # le 2026-10-06, et c'est ce qui a fait chercher au mauvais endroit.
         raise psycopg.OperationalError(
-            f"connect() bloqué au-delà de {CONNECT_HARD_TIMEOUT:.0f}s "
-            "(hors du contrôle de connect_timeout — DNS ou TCP) — abandon"
+            f"connect() n'a pas rendu la main en {CONNECT_HARD_TIMEOUT:.0f}s "
+            "(cause pas encore connue — libpq n'a pas fini de répondre) — abandon"
         )
     if "erreur" in resultat:
         raise resultat["erreur"]
@@ -143,7 +219,11 @@ def _connect_resilient(dsn: str, plafond: float | None = None
             pause, palier, motif = _recul(exc, palier)
             print(f"  ⚠ {motif} — nouvel essai dans {pause:.0f}s "
                   f"(attente cumulée {attente:.0f}s/{plafond:.0f}s)", flush=True)
+            # Après la pause, pas avant : le thread orphelin du tour précédent
+            # a eu le temps de finir, donc c'est maintenant que sa vraie cause
+            # est lisible. On la dit SANS toucher au recul déjà décidé.
             time.sleep(pause)
+            _dis_la_vraie_cause()
             attente += pause
 
 #: Exemplaire unique dans store/base.py — la liste etait tenue a la main ici ET
@@ -260,6 +340,11 @@ class SupabaseStore(BaseStore):
                           f"(attente cumulée {attente:.0f}s"
                           f"/{OUTAGE_MAX_WAIT_SECONDS:.0f}s)", flush=True)
                     time.sleep(pause)
+                    # Même raison qu'au démarrage : la vraie cause du tour
+                    # précédent n'est lisible qu'après la pause, et une
+                    # connexion atterrie en retard doit être rendue au pooler
+                    # (mode session = un backend chacune).
+                    _dis_la_vraie_cause()
                     attente += pause
 
     def get_listing(self, listing_id: str) -> dict | None:

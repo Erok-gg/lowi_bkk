@@ -176,14 +176,27 @@ with tempfile.TemporaryDirectory() as tmp:
             r = sl.etat_collecte_facebook(maintenant)
             assert (r is None) if attendu is None else (r and attendu in r), (nom, r)
         # bout en bout : run() sur une session perdue → 1 constat haut + 1 mail, aval non bloqué
-        sl.SONDE_FB.write_text(_json.dumps(cas["deconnecte"][0]), encoding="utf-8")
+        #
+        # HORODATAGE RELATIF, ET NON LA DATE FIGÉE DES CAS CI-DESSUS. `run()`
+        # appelle `etat_collecte_facebook()` SANS argument, donc avec l'horloge
+        # réelle — on ne peut pas lui injecter `maintenant`. Avec la sonde datée
+        # en dur du 2026-10-01, ce test a passé à l'écriture puis pourri : le
+        # 2026-10-06 la sonde avait 134 h, donc la branche « n'a pas abouti
+        # depuis N h » (SONDE_FB_MAX_H = 30) répondait AVANT la branche
+        # « DÉCONNECTÉ » qu'on veut vérifier ici, et l'assertion tombait sur un
+        # faux défaut. Un test qui dépend de la date du jour finit toujours par
+        # accuser le code à sa place (règle 2 : un garde-fou qui crie au loup).
+        deconnecte_frais = dict(cas["deconnecte"][0])
+        deconnecte_frais["horodatage"] = (
+            datetime.now(timezone.utc) - timedelta(hours=1)
+        ).isoformat().replace("+00:00", "Z")
+        sl.SONDE_FB.write_text(_json.dumps(deconnecte_frais), encoding="utf-8")
         orig_alert, orig_out = sl.alert.alert, sl.OUT
         mails = []
         sl.alert.alert = lambda agent, sujet, corps, severity="high": mails.append((sujet, corps))
         sl.OUT = pathlib.Path(tmp)
         try:
             led = _Led()
-            orig_now = sl.datetime
             m = sl.run(led, 0, "test", {})
         finally:
             sl.alert.alert, sl.OUT = orig_alert, orig_out
