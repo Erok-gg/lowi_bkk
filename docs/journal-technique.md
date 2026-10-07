@@ -3627,3 +3627,35 @@ jour et le temps d'écriture par bloc diront si ça a servi.
   les rejouer sur Supabase les remettrait. Non modifiés (ils servent aussi au
   SQLite local) — avertissement porté en tête de la migration.
 - Non vérifié : budget IO et swap dans le tableau de bord (non accessible d'ici).
+
+## 2026-10-07 (suite) — Cycle du 08/10 suspendu pour maintenance, sans fausse alerte
+
+Demande de l'utilisateur : pas de cycle la nuit du 08/10 (une nuit sans
+remontée après la maintenance Supabase), reprise normale le 09/10 à 02:30, et
+la nuit notée comme **maintenance**, pas comme panne.
+
+Désactiver `LowiBKK-Agents` aurait suffi à ne rien lancer, mais deux
+surveillances l'auraient prise pour une panne (règle 2) : `ops/veille-cycle.py`
+(« pas parti » → ticket + Opus) et `ops/pouls.py --verifier` (`cycle_manquant`
+après 26 h). D'où une **fenêtre de maintenance déclarée** :
+`agents/state/maintenance.json` (par machine, gitignoré) lu par
+`agents/core/maintenance.py`.
+- `orchestrator.py --due` / `--boot` : ne lance rien dans la fenêtre, le dit
+  dans son log, ne pose pas de battement. `run`/`run-lane` manuels restent possibles.
+- `veille-cycle.py` : nuit sans run dans la fenêtre → marqueur du jour posé
+  avec le motif, ni Haiku ni escalade (vérifié par simulation du 08/10 02:30 :
+  0 appel modèle, 0 escalade).
+- `pouls.py` : l'âge du dernier battement se compte depuis la fin de la
+  fenêtre si elle le suit (vérifié en réel : ✓ « maintenance déclarée »).
+- Fichier absent ou illisible = **pas** de maintenance (on préfère une fausse
+  alerte à un cycle sauté en silence). `agents/tests/test_maintenance.py`, 4 essais.
+
+Fenêtre posée : **2026-10-08 00:00 → 2026-10-09 00:00 (Bangkok)**. Le cycle du
+jour (07/10), déjà parti, n'est pas touché : sa remontée Supabase sera la
+première mesure de l'effet de la maintenance.
+
+### Non fait
+- La tâche Windows n'est pas désactivée : c'est l'orchestrateur qui s'abstient
+  (aucun ré-armement manuel à oublier). La machine se réveille donc à 02:30 le
+  08/10 et se rendort.
+- Pas d'outil pour poser une fenêtre en ligne de commande : le JSON s'écrit à la main.

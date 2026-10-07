@@ -220,7 +220,20 @@ def verifier(seuil_h: int) -> int:
     fin = datetime.fromisoformat(etat["termine_a"])
     age_h = (maintenant - fin).total_seconds() / 3600
 
-    if age_h > seuil_h:
+    # Une nuit de maintenance déclarée (agents/core/maintenance.py) n'est pas
+    # un cycle manquant : l'âge se compte depuis la FIN de la fenêtre si elle
+    # suit le dernier battement. Sans ça, le cycle suspendu du 2026-10-08
+    # aurait crié « cycle_manquant » dès 26 h après celui du 07.
+    from agents.core import maintenance
+    age_juge_h = age_h
+    m = maintenance.fenetre()
+    if m and m["fin"] > fin:
+        age_juge_h = (maintenant - m["fin"]).total_seconds() / 3600
+        if age_juge_h <= seuil_h:
+            print(f"  ✓ maintenance déclarée jusqu'au {m['fin']:%d/%m %H:%M} "
+                  f"({m['motif']}) — pas de cycle attendu avant")
+
+    if age_juge_h > seuil_h:
         # Un cycle EN COURS, démarré après ce battement, prouve que la tâche
         # s'est déclenchée : rien ne « manque », le cycle précédent a seulement
         # fini tôt et celui-ci finira tard. Mesuré le 2026-10-04 (ticket

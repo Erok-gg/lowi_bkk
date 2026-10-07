@@ -775,8 +775,16 @@ def main() -> None:
     # consultation (`status`, `due`) ne doit surtout pas faire croire qu'un
     # cycle est passé — le témoin sert justement à distinguer les deux.
     a_tourne = False
+    # Maintenance déclarée (agents/core/maintenance.py) : seuls les modes
+    # AUTOMATIQUES s'abstiennent — un `run`/`run-lane` tapé à la main reste
+    # possible. Pas de battement non plus : rien n'a tourné.
+    from agents.core import maintenance
+    en_maintenance = (a.due or a.boot) and maintenance.active()
     try:
-        if a.boot:
+        if en_maintenance:
+            print(f"[maintenance] cycle non lancé — fenêtre jusqu'au "
+                  f"{en_maintenance['fin']:%Y-%m-%d %H:%M %z} : {en_maintenance['motif']}")
+        elif a.boot:
             run_lane(led, current_lane(), a.dry_run, only_due=True, local=a.local,
                      skip_extraction=True)
             a_tourne = True

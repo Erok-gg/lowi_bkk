@@ -437,6 +437,20 @@ def main() -> int:
     if fin.exists() and not a.forcer:
         return 0                      # cycle du jour déjà vérifié : on dort
 
+    # Nuit de maintenance déclarée (agents/core/maintenance.py) : « pas parti »
+    # est l'effet voulu, pas une panne. On le consigne et on dort jusqu'au
+    # prochain cycle — ni Haiku, ni ticket, ni Opus.
+    from agents.core import maintenance
+    m = maintenance.active(maintenant)
+    if m and not preuves["runs"]:
+        ETAT.mkdir(parents=True, exist_ok=True)
+        fin.write_text(json.dumps({"verifie_le": maintenant.isoformat(timespec="seconds"),
+                                   "maintenance": m["motif"],
+                                   "jusqu_au": m["fin"].isoformat()},
+                                  ensure_ascii=False, indent=1), encoding="utf-8")
+        _ecrire(f"cycle du {jour} non lancé : maintenance ({m['motif']}) — veille éteinte")
+        return 0
+
     etat, problemes = etat_mecanique(preuves, maintenant)
     _ecrire(f"état {etat} — {len(preuves['runs'])} runs, {len(problemes)} problème(s)")
 
