@@ -3581,3 +3581,49 @@ une enquête anti-bannissement sans objet.
   trouvées à l'arrivée (arbitrage `--delta` du 05/10 dans `agents.json` + son
   entrée de journal, CSV d'étude, `official-latest.json`) ont été **laissées
   telles quelles** : elles ne sont pas de moi.
+
+## 2026-10-07 — Supabase : moins d'écritures par mise à jour (index, VACUUM, fillfactor)
+
+Suite de l'entrée du 2026-10-06 (soir). L'instance Nano manque de budget IO,
+mais **notre volume est faible** (mesuré, `pg_stat_wal` depuis le 28/09 : 457 Mo
+de WAL en 9 j ≈ 50 Mo/j ; checkpointer : 1,07 Go en 9 j, à ~48 ms par bloc).
+Le levier était le **coût par mise à jour**, pas le volume :
+
+| Mesure avant (stats depuis 2026-09-28) | Valeur |
+|---|---|
+| Index sur `listings` | 13, dont **12 à `idx_scan = 0`** (pkey : 1 255 754) |
+| Mises à jour HOT | **227 / 16 841 (1,3 %)** → ~14 écritures par UPDATE |
+| Versions mortes | **25 027 (14 %)**, autovacuum jamais passé (annulé en boucle) |
+| `statement timeout` sur 24 h | **476**, encore ~50/h à 00:00 UTC hors cycle |
+
+Lecteurs vérifiés avant suppression : `lib/listings-db.ts` ne filtre que sur
+`status='active'` (~65 % des lignes) et `khet is not null` (scans séquentiels de
+toute façon) ; l'app ne lit aucune vue ; les agents d'analyse lisent le SQLite.
+
+**Appliqué sur Supabase à 01:19 UTC** (migration
+`supabase/migrations/2026-10-07_index_inutiles_listings.sql`, rollback livré
+**avant** application, généré depuis `pg_get_indexdef` sur le live) :
+10 index retirés (agent, bench, khet, missed, posted, repost, source, status,
+street, unit) ; gardés : pkey + les deux partiels `market_status`/`sold_since`
+(16 ko, servent à la requête `market_status='sold'` du store) ;
+`fillfactor = 85` ; `VACUUM (ANALYZE)` simple. Résultat immédiat :
+**0 version morte**, `listings` **170 → 148 Mo** (index 12 Mo).
+
+**Point de référence pour juger l'effet** (01:19 UTC) : `n_tup_upd = 16 841`,
+`n_tup_hot_upd = 227`, checkpointer `write_time = 6 556 877 ms` pour
+`136 758` blocs. Après la prochaine remontée, la part HOT des nouvelles mises à
+jour et le temps d'écriture par bloc diront si ça a servi.
+
+### Non fait, et pourquoi
+- **Pas de suspension du cycle** : la maintenance a abouti du premier coup, la
+  condition posée par l'utilisateur (« si tu n'y arrives pas ») n'est pas remplie.
+  Le cycle du jour (DDproperty en cours, écrit en local) continue ;
+  `remonter-supabase` qui suivra sert de premier test.
+- **Pas de `VACUUM FULL`** ni de réécriture de table : trop coûteux en IO, le
+  `fillfactor` ne s'applique donc qu'aux pages écrites désormais.
+- **Pas de passage au palier payant**, pas de changement de périmètre publié :
+  arbitrages de l'utilisateur.
+- `schema.sql` et les migrations historiques **créent encore ces index** :
+  les rejouer sur Supabase les remettrait. Non modifiés (ils servent aussi au
+  SQLite local) — avertissement porté en tête de la migration.
+- Non vérifié : budget IO et swap dans le tableau de bord (non accessible d'ici).
