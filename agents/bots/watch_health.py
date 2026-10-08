@@ -62,8 +62,34 @@ def _metrics(row) -> dict:
 SEUIL_ERREURS_IMAGES = 10
 
 
+#: Marqueur écrit par l'adaptateur FazWaz (`_attendre_regeneration`) quand le
+#: site n'a pas régénéré son sitemap après 3 h d'attente : il rescanne alors
+#: l'ancien, qui ne contient par construction aucune nouvelle annonce.
+MARQUEUR_SITEMAP_FIGE = "[sitemap-non-regenere]"
+
+
+def _sitemap_fige(log_path: str | None) -> bool:
+    """Le run a-t-il scanné un sitemap que le site n'avait pas régénéré ?
+
+    2026-10-08 : 3 constats `parseur_casse` (high) en 5 nuits sur FazWaz
+    (04/10 ×2, 07/10), tous faux — sonde de structure OK, 0 erreur, sitemap
+    non régénéré ; le marqueur est dans les 2 journaux postérieurs à
+    l'attente de régénération (runs 702, 733 ; 686 la précède). Chaque
+    nuit suivante a repris 130 à 278 nouvelles : rien n'était cassé chez nous.
+    Lu dans le journal plutôt que dans les métriques pour ne pas toucher au
+    contrat de sortie des extracteurs (et pour couvrir les runs déjà en base)."""
+    if not log_path:
+        return False
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            return any(MARQUEUR_SITEMAP_FIGE in ligne for ligne in f)
+    except OSError:
+        return False
+
+
 def _classer(nouvelles: int | None, erreurs: int, mediane: float | None,
-             bande: list | None, err_images: int = 0) -> tuple[str, str]:
+             bande: list | None, err_images: int = 0,
+             sitemap_fige: bool = False) -> tuple[str, str]:
     """Rend (verdict, sévérité).
 
     ⚠ `err_images` est SÉPARÉ des autres erreurs, et c'est le point.
@@ -77,6 +103,12 @@ def _classer(nouvelles: int | None, erreurs: int, mediane: float | None,
     """
     if nouvelles is None:
         return "metriques_absentes", "medium"
+    # Zéro nouvelle sur un sitemap figé : cause connue et extérieure, pas un
+    # parseur cassé. Constat gardé (une nuit sans nouvelles FazWaz reste un
+    # trou), mais ni escalade `parser_break` ni mail. La persistance sur deux
+    # runs est relevée en `high` dans run(), pas ici.
+    if nouvelles == 0 and erreurs == 0 and sitemap_fige:
+        return "sitemap_non_regenere", "medium"
     if nouvelles == 0 and erreurs == 0:
         return "parseur_casse", "high"
     if nouvelles == 0 and erreurs > 0:
@@ -111,7 +143,15 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
         bande = (ext.get("bandes") or {}).get("nouvelles")
 
         err_images = m.get("erreurs_images", 0) or 0
-        verdict, severite = _classer(nouvelles, erreurs, mediane, bande, err_images)
+        fige = _sitemap_fige(last["log_path"])
+        verdict, severite = _classer(nouvelles, erreurs, mediane, bande, err_images,
+                                     sitemap_fige=fige)
+        # Deux runs d'affilée sur un sitemap figé = le site ne publie plus son
+        # sitemap : là, c'est un vrai trou de collecte qui mérite d'être vu.
+        if verdict == "sitemap_non_regenere":
+            avant = led.recent_runs(name, 2)
+            if len(avant) >= 2 and all(_sitemap_fige(r["log_path"]) for r in avant):
+                severite = "high"
         detail.append({"source": name, "verdict": verdict, "nouvelles": nouvelles,
                        "mediane": mediane, "erreurs": erreurs,
                        "erreurs_images": err_images})
