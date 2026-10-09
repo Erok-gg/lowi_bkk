@@ -173,8 +173,18 @@ def appeler_claude(prompt: str, timeout: int = 300) -> tuple[str, float]:
 
     cwd = dossier temporaire : sans ça le CLI charge CLAUDE.md et les
     réglages du dépôt (mesuré : 64 k tokens de contexte contre 48 k)."""
+    # --strict-mcp-config : ignore les connecteurs MCP du COMPTE claude.ai.
+    # `--tools ""` ne coupe que les outils intégrés, pas les définitions
+    # d'outils des connecteurs, qui sont injectées dans chaque appel. Mesuré
+    # le 2026-10-09 sur un prompt vide : 36 907 tokens d'entrée sans le
+    # drapeau contre 242 avec, soit -99,3 %. Ce surcoût n'est pas borné — il
+    # croît avec les connecteurs que le compte gagne (Vercel en déclare ~250
+    # à lui seul) : la nuit du 2026-10-09 il a atteint ~213 k tokens et fait
+    # dépasser la limite de 200 k, perdant le lot 9 (15 posts) alors que le
+    # prompt ne pesait que 4 215 tokens. L'extraction n'utilise aucun outil.
     cmd = [_claude_bin(), "-p", "--model", MODELE, "--output-format", "json",
-           "--tools", "", "--setting-sources", "", "--system-prompt", SYSTEME]
+           "--tools", "", "--setting-sources", "", "--strict-mcp-config",
+           "--system-prompt", SYSTEME]
     with tempfile.TemporaryDirectory() as tmp:
         r = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=timeout, cwd=tmp)
