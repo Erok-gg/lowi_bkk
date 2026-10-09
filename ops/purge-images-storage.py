@@ -41,7 +41,7 @@ for _l in open(os.path.join(ROOT, "scraper", ".env"), encoding="utf-8"):
         _k, _v = _l.split("=", 1)
         os.environ.setdefault(_k.strip(), _v.strip())
 sys.path.insert(0, os.path.join(ROOT, "scraper"))
-import psycopg                                    # noqa: E402
+from store.pg import connecter  # pg8000 (Python pur) et non psycopg depuis le 2026-10-09 — voir store/pg.py
 from pipeline.storage import SupabaseStorage      # noqa: E402
 
 LOT = 400          # taille de lot pour l'API Storage (body JSON {"prefixes": [...]})
@@ -61,7 +61,7 @@ def main() -> int:
 
     # Inventaire côté serveur, lu au catalogue Storage plutôt qu'à l'API de
     # listing : l'API pagine par 100 et demanderait 400 requêtes.
-    with psycopg.connect(os.environ["SUPABASE_DB_URL"], connect_timeout=60) as pg:
+    with connecter(os.environ["SUPABASE_DB_URL"]) as pg:
         c = pg.cursor()
         c.execute("select name, (metadata->>'size')::bigint from storage.objects "
                   "where bucket_id = %s order by name", (storage.bucket,))
@@ -112,7 +112,7 @@ def main() -> int:
         faits += storage.delete_many(lot)
         print(f"  {faits}/{len(cibles)} supprimés", flush=True)
 
-    with psycopg.connect(os.environ["SUPABASE_DB_URL"], connect_timeout=60) as pg:
+    with connecter(os.environ["SUPABASE_DB_URL"]) as pg:
         c = pg.cursor()
         c.execute("select count(*), coalesce(sum((metadata->>'size')::bigint), 0) "
                   "from storage.objects where bucket_id = %s", (storage.bucket,))

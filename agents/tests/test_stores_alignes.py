@@ -56,7 +56,7 @@ verifie("sqlite_store utilise COLONNES_LISTING",
 try:
     from store.supabase_store import _COLS
     verifie("supabase_store._COLS est COLONNES_LISTING", _COLS is COLONNES_LISTING)
-except ImportError as e:                          # psycopg absent
+except ImportError as e:                          # pg8000 absent
     print(f"  NON VERIFIE supabase_store — import impossible ({e})")
     echecs.append("supabase_store non importable")
 
@@ -93,8 +93,8 @@ if not dsn:
     print("  Ce volet est le SEUL qui prouve qu'une migration a ete appliquee en ligne.")
 else:
     try:
-        import psycopg
-        with psycopg.connect(dsn, connect_timeout=15) as cx, cx.cursor() as cur:
+        from store.pg import connecter  # pg8000 (Python pur) et non psycopg depuis le 2026-10-09 — voir store/pg.py
+        with connecter(dsn) as cx, cx.cursor() as cur:
             cur.execute("select column_name from information_schema.columns "
                         "where table_schema='public' and table_name='listings'")
             reelles_pg = {r[0] for r in cur.fetchall()}

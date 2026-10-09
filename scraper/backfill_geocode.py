@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import psycopg  # noqa: E402
+from store.pg import connecter  # pg8000 (Python pur) et non psycopg depuis le 2026-10-09 — voir store/pg.py
 
 from pipeline.geocode import Geocoder, _norm  # noqa: E402
 from pipeline.geo_match import KhetMatcher  # noqa: E402
@@ -53,7 +53,7 @@ def main() -> None:
     if not dsn:
         sys.exit("SUPABASE_DB_URL manquant (scraper/.env)")
 
-    db = psycopg.connect(dsn, connect_timeout=20, autocommit=True)
+    db = connecter(dsn, autocommit=True)
     geo = Geocoder()
     matcher = KhetMatcher()
 

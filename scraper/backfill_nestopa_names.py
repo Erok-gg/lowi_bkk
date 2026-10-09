@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import psycopg  # noqa: E402
+from store.pg import connecter  # pg8000 (Python pur) et non psycopg depuis le 2026-10-09 — voir store/pg.py
 
 from adapters.nestopa import clean_condo_name  # noqa: E402
 
@@ -44,7 +44,7 @@ def main() -> None:
     args = ap.parse_args()
 
     load_env()
-    db = psycopg.connect(os.environ["SUPABASE_DB_URL"], connect_timeout=20, autocommit=True)
+    db = connecter(os.environ["SUPABASE_DB_URL"], autocommit=True)
 
     # dictionnaire de condos propres (autres sources)
     known = db.execute(

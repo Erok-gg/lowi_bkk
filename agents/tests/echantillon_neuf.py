@@ -57,9 +57,9 @@ def charger_env() -> None:
 
 def main() -> int:
     charger_env()
-    import psycopg
+    from store.pg import connecter  # pg8000 (Python pur) et non psycopg depuis le 2026-10-09 — voir store/pg.py
 
-    with psycopg.connect(os.environ["SUPABASE_DB_URL"], connect_timeout=60) as cx:
+    with connecter(os.environ["SUPABASE_DB_URL"]) as cx:
         cur = cx.execute(SQL_PAIRES)
         cols = [c.name for c in cur.description]
         paires = [dict(zip(cols, r)) for r in cur.fetchall()]

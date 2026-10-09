@@ -138,6 +138,55 @@ with pg.Connexion(brute, autocommit=True):
 assert brute.journal == ["close"] and brute.autocommit is True
 print("4. with : commit si succès, rollback si erreur, fermeture toujours : OK")
 
+# ───────── 4b. curseur nommé = DECLARE / FETCH ; executemany ; description.name
+class _CurseurJournal(_CurseurBrut):
+    def __init__(self, journal, lignes):
+        super().__init__()
+        self.journal, self.lignes = journal, lignes
+
+    def execute(self, sql, params=()):
+        self.journal.append(sql)
+
+    def fetchall(self):
+        sql = self.journal[-1]
+        if sql.startswith("fetch forward"):
+            n = int(sql.split()[2])
+            lot, self.lignes[:] = self.lignes[:n], self.lignes[n:]
+            return [list(r) for r in lot]
+        return []
+
+    def executemany(self, sql, lots):
+        self.journal.append((sql, lots))
+
+
+class _BruteJournal(_ConnexionBrute):
+    def __init__(self, lignes):
+        super().__init__()
+        self.sqls, self.lignes = [], lignes
+
+    def cursor(self):
+        return _CurseurJournal(self.sqls, self.lignes)
+
+
+brute = _BruteJournal([(i,) for i in range(5)])
+cx = pg.Connexion(brute)
+with cx.cursor(name="cur_x") as nomme:
+    nomme.execute("select id from t")
+    lots = []
+    while True:
+        lot = nomme.fetchmany(2)
+        if not lot:
+            break
+        lots.append(lot)
+assert brute.sqls[0] == 'declare "cur_x" no scroll cursor for select id from t', brute.sqls[0]
+assert lots == [[(0,), (1,)], [(2,), (3,)], [(4,)]], lots
+assert brute.sqls[-1] == 'close "cur_x"', brute.sqls[-1]
+cx.cursor().executemany("insert into t values (%s)", [[1], [2]])
+assert brute.sqls[-1] == ("insert into t values (%s)", [(1,), (2,)])
+col = pg._description((("nom", 25, None, None, None, None, None),))[0]
+assert col.name == col[0] == "nom"
+print("4b. curseur nommé (DECLARE/FETCH/CLOSE), executemany, description.name : OK")
+
 # ───────── 5. réseau réel
 if os.environ.get("LOWI_TEST_RESEAU") == "1":
     os.environ["LOWI_STORE"] = "supabase"

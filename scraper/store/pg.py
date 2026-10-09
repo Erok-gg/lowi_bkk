@@ -4,10 +4,8 @@ POURQUOI CE MODULE EXISTE
 Le 2026-10-09, Smart App Control a bloqué la DLL libpq de `psycopg_binary`
 (remontée de la nuit morte en 9 s ; jugement de RÉPUTATION, qui bascule sans
 préavis dans les deux sens). Le chemin d'écriture (`supabase_store.py`) est
-passé à pg8000 le jour même ; ce module porte la même connexion pour les
-outils manuels (`ops/verifie-synchro.py`, `ops/sync_supabase_local.py`,
-`agents/core/db.py` en LOWI_STORE=supabase), qui retombaient sinon à la
-prochaine bascule.
+passé à pg8000 le jour même, puis TOUT le dépôt : outils manuels, scripts
+ponctuels, étude en LOWI_STORE=supabase. psycopg n'est plus importé nulle part.
 
 COMPATIBILITÉ — seul le sous-ensemble de psycopg que le dépôt utilise :
 `connecter(dsn)` comme `psycopg.connect(dsn)` (transaction implicite,
@@ -15,12 +13,14 @@ COMPATIBILITÉ — seul le sous-ensemble de psycopg que le dépôt utilise :
 `conn.execute()` qui rend le curseur, `conn.cursor()`, `commit`, `rollback`,
 `close` ; curseur avec `execute` (rend le curseur), `fetchone/fetchall/
 fetchmany` qui rendent des TUPLES (pg8000 rend des listes — non hachables,
-une ligne servant de clé de set ou de dict aurait cassé), `description`,
-`rowcount`, itération.
+une ligne servant de clé de set ou de dict aurait cassé), `executemany`,
+`description` (colonnes avec `.name`), `rowcount`, itération, et
+`cursor(name=...)` en curseur serveur (DECLARE / FETCH).
 """
 from __future__ import annotations
 
 import ssl
+from collections import namedtuple
 from urllib.parse import unquote, urlsplit
 
 import pg8000.dbapi
@@ -67,6 +67,18 @@ def _requete(sql: str, params):
     return sql, params
 
 
+#: Colonne de `description` : indexable (`c[0]`) ET nommée (`c.name`), comme
+#: celle de psycopg — `study/run_study.py` et un test lisent `c.name`.
+Colonne = namedtuple("Colonne", "name type_code display_size internal_size "
+                                "precision scale null_ok")
+
+
+def _description(brute):
+    if brute is None:
+        return None
+    return [Colonne(*(tuple(d) + (None,) * 7)[:7]) for d in brute]
+
+
 class Curseur:
     def __init__(self, brut):
         self.brut = brut
@@ -76,9 +88,13 @@ class Curseur:
         self.brut.execute(sql, params)
         return self
 
+    def executemany(self, sql: str, lots) -> "Curseur":
+        self.brut.executemany(sql, [tuple(p) for p in lots])
+        return self
+
     @property
     def description(self):
-        return self.brut.description
+        return _description(self.brut.description)
 
     @property
     def rowcount(self) -> int:
@@ -108,6 +124,69 @@ class Curseur:
         self.close()
 
 
+class CurseurNomme:
+    """Curseur SERVEUR, comme `conn.cursor(name=...)` de psycopg.
+
+    pg8000 charge tout le résultat en mémoire à l'`execute`. Les scripts qui
+    balaient une table entière par `fetchmany` (`ops/rapatrie-textes.py`,
+    `ops/verifie-avant-degraissage.py` : jusqu'à 613 000 lignes) comptaient
+    sur un flux. On le rend avec DECLARE / FETCH, exactement ce que fait
+    psycopg sous le capot. Exige une transaction (connexion non autocommit,
+    le défaut de `connecter`)."""
+
+    def __init__(self, brute, nom: str):
+        self.brute = brute
+        self.nom = '"' + nom.replace('"', '""') + '"'
+        self.itersize = 2000
+        self.description = None
+        self.ouvert = False
+
+    def _fetch(self, quantite: str) -> list[tuple]:
+        cur = self.brute.cursor()
+        cur.execute(f"fetch {quantite} from {self.nom}")
+        self.description = _description(cur.description)
+        return [tuple(r) for r in cur.fetchall()]
+
+    def execute(self, sql: str, params=None) -> "CurseurNomme":
+        if self.ouvert:
+            self.close()
+        sql, params = _requete(sql, params)
+        self.brute.cursor().execute(f"declare {self.nom} no scroll cursor for {sql}", params)
+        self.ouvert = True
+        return self
+
+    def fetchone(self):
+        lignes = self._fetch("next")
+        return lignes[0] if lignes else None
+
+    def fetchmany(self, taille: int | None = None) -> list[tuple]:
+        return self._fetch(f"forward {int(taille or self.itersize)}")
+
+    def fetchall(self) -> list[tuple]:
+        return self._fetch("all")
+
+    def __iter__(self):
+        while True:
+            lot = self.fetchmany()
+            if not lot:
+                return
+            yield from lot
+
+    def close(self) -> None:
+        if self.ouvert:
+            try:
+                self.brute.cursor().execute(f"close {self.nom}")
+            except Exception:  # noqa: BLE001 — transaction déjà close : rien à fermer
+                pass
+            self.ouvert = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
 class Connexion:
     def __init__(self, brute, autocommit: bool = False):
         self.brute = brute
@@ -121,7 +200,9 @@ class Connexion:
     def autocommit(self, valeur: bool) -> None:
         self.brute.autocommit = valeur
 
-    def cursor(self) -> Curseur:
+    def cursor(self, name: str | None = None):
+        if name:
+            return CurseurNomme(self.brute, name)
         return Curseur(self.brute.cursor())
 
     def execute(self, sql: str, params=None) -> Curseur:

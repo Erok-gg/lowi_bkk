@@ -4106,3 +4106,59 @@ plafond n'est levé que sur NTFS / exFAT / ReFS ; FAT32 ou un format illisible
 le gardent. Vérifié : clé lue « FAT32 », plafond maintenu, donc rien ne change
 tant qu'elle n'est pas reformatée. Test `agents/tests/test_sauvegarde_plafond.py`.
 Le reformatage reste à faire par l'utilisateur (copies déplacées d'abord).
+
+## 2026-10-09 (fin d'après-midi) — Plus aucun psycopg dans le dépôt
+
+**Demande de l'utilisateur** : passer aussi en pg8000 les vieux scripts restés
+sur psycopg. Fichiers concernés : `ops/corriger-khet.py`,
+`purge-images-storage.py`, `rapatrie-textes.py`, `verifie-avant-degraissage.py`,
+`verifie-backup.py` ; `scraper/apply_migrations.py`, `backfill_geocode.py`,
+`backfill_nestopa_names.py`, `purge_extra_images.py`, `load_social_leads.py`
+(mode Supabase) ; `study/run_study.py` (LOWI_STORE=supabase) ;
+`agents/tests/echantillon_neuf.py` et `test_stores_alignes.py`. psycopg est
+retiré de `requirements.txt` ; seuls les tests qui le simulent bloqué le citent
+encore.
+
+**Complété dans `store/pg.py`**, parce que ces scripts s'en servaient :
+`cursor(name=...)` en **curseur serveur** (DECLARE / FETCH / CLOSE, comme
+psycopg ; sans cela pg8000 chargerait jusqu'à 613 000 lignes en mémoire),
+`executemany`, et des colonnes de `description` qui portent `.name`.
+
+**Q&A sur le vrai serveur, parité contre psycopg :**
+- `run_study.fetch_all` en mode Supabase : 114 714 actives et date de début
+  identiques ; 14 délistées identiques **en multiensemble**. Leur ordre
+  différait : la requête n'a pas d'ORDER BY, l'ordre n'est donc pas garanti,
+  quel que soit le pilote.
+- Curseur nommé sur `listing_images` : 59 318 lignes en 3 lots, `count`
+  cohérent, même volume avec les deux pilotes ; ré-`execute` du même curseur OK.
+- Fichier multi-instructions en autocommit (le cas d'`apply_migrations`),
+  `executemany` (le cas de `load_social_leads`) et itération directe sur
+  `execute()` (le cas de `verifie-backup`) : tous sur table temporaire de
+  session.
+- Lancés pour de vrai, psycopg rendu introuvable : `corriger-khet --dry-run`,
+  `test_stores_alignes`, `verifie-backup` (voir ci-dessous).
+- `backfill_nestopa_names --dry` : ses deux requêtes sont passées. Il a ensuite
+  tourné 546 s **de CPU** dans sa boucle d'expressions régulières (≈ 4 100
+  annonces × des milliers de noms). C'est le coût de l'algorithme, pas du
+  pilote. Arrêté, il n'écrivait rien.
+
+**Erreur de ma part, consignée** : j'ai pris `verifie-backup.py` pour une
+vérification en lecture seule. Il **déclenche** `sync_supabase_local.py`
+quand l'archive manque, et elle manquait sur PC2. Il a donc créé
+`archive/lowi-archive.db` (191 Mo), sans `--prune`, donc sans aucune
+suppression nulle part ; côté serveur, une lecture complète des tables.
+Effet utile : c'est une **sync complète réelle en pg8000**, et elle est juste,
+les 9 tables ont le même nombre de lignes des deux côtés (listings 180 541,
+price_history 185 631, posted_at_history 122 548…), `quick_check` ok. Le
+fichier est laissé en place : supprimer ou garder cette archive est à
+l'utilisateur.
+**Leçon** : avant de lancer un script `ops/` pour un test, lire ses effets de
+bord (`subprocess`, écritures), pas seulement son nom.
+
+**Non fait** : `apply_migrations.py`, `purge_extra_images.py`,
+`purge-images-storage.py`, `backfill_geocode.py`, `rapatrie-textes.py` et le
+mode Supabase de `load_social_leads.py` n'ont **pas** été exécutés en vrai. Ils
+écrivent ou suppriment sur le serveur, ou dépendent de colonnes déjà retirées
+(`page_text`). Leurs mécanismes ont été testés un par un, eux non.
+`verifie-avant-degraissage.py` lit `page_text`/`description`, absents du
+serveur depuis le 2026-08-25 : il échouait déjà avec psycopg.

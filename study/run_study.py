@@ -186,8 +186,8 @@ def fetch_all():
     else:
         q_actives = ACTIVES.format(fs="first_seen::text", da="delisted_at::text")
         q_delistees = DELISTEES.format(fs="first_seen::text", da="delisted_at::text", ph="%s")
-        import psycopg  # importe ici seulement : voir la note en tete de fichier
-        with psycopg.connect(os.environ["SUPABASE_DB_URL"], connect_timeout=30) as conn:
+        from store.pg import connecter  # pg8000 (Python pur) et non psycopg depuis le 2026-10-09 — voir store/pg.py
+        with connecter(os.environ["SUPABASE_DB_URL"]) as conn:
             cur = conn.execute(q_actives)
             cols = [c.name for c in cur.description]
             actives = [dict(zip(cols, r)) for r in cur.fetchall()]

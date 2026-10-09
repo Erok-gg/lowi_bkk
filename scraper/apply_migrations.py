@@ -11,7 +11,7 @@ import os
 import sys
 from pathlib import Path
 
-import psycopg
+from store.pg import connecter  # pg8000 (Python pur) et non psycopg depuis le 2026-10-09 — voir store/pg.py
 
 ROOT = Path(__file__).resolve().parent.parent
 MIG = ROOT / "supabase" / "migrations"
@@ -32,7 +32,7 @@ def db_url() -> str:
 
 def main() -> None:
     noms = sys.argv[1:] or sorted(p.name for p in MIG.glob("*.sql"))
-    with psycopg.connect(db_url(), autocommit=True) as con:
+    with connecter(db_url(), autocommit=True) as con:
         for nom in noms:
             f = MIG / nom
             if not f.exists():

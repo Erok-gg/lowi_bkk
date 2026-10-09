@@ -79,11 +79,11 @@ def _tables_supabase() -> list[str] | None:
     """Tables réellement exposées par le serveur. None si injoignable."""
     try:
         _charger_env()
-        import psycopg
+        from store.pg import connecter  # pg8000 (Python pur) et non psycopg depuis le 2026-10-09 — voir store/pg.py
         dsn = os.environ.get("SUPABASE_DB_URL")
         if not dsn:
             return None
-        with psycopg.connect(dsn, connect_timeout=10, autocommit=True) as c:
+        with connecter(dsn, autocommit=True, timeout=30) as c:
             return [r[0] for r in c.execute(
                 "select table_name from information_schema.tables "
                 "where table_schema='public' and table_type='BASE TABLE'")]
@@ -108,11 +108,11 @@ def _n_listings_supabase() -> int | None:
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip())
         sys.path.insert(0, os.path.join(ROOT, "scraper"))
-        import psycopg
+        from store.pg import connecter  # pg8000 (Python pur) et non psycopg depuis le 2026-10-09 — voir store/pg.py
         dsn = os.environ.get("SUPABASE_DB_URL")
         if not dsn:
             return None
-        with psycopg.connect(dsn, connect_timeout=10, autocommit=True) as c:
+        with connecter(dsn, autocommit=True, timeout=30) as c:
             return c.execute("select count(*) from listings").fetchone()[0]
     except Exception:                                          # noqa: BLE001
         return None

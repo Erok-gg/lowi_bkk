@@ -191,7 +191,7 @@ def charger_sqlite(rows: list[dict]) -> None:
 
 
 def charger_supabase(rows: list[dict]) -> None:
-    import psycopg  # dans le venv du scraper
+    from store.pg import connecter  # pg8000 (Python pur) et non psycopg depuis le 2026-10-09 — voir store/pg.py
 
     url = os.environ.get("SUPABASE_DB_URL")
     if not url:
@@ -203,7 +203,7 @@ def charger_supabase(rows: list[dict]) -> None:
     if not url:
         sys.exit("SUPABASE_DB_URL introuvable (scraper/.env)")
 
-    with psycopg.connect(url) as con, con.cursor() as cur:
+    with connecter(url) as con, con.cursor() as cur:
         cur.execute(MIGRATION.read_text(encoding="utf-8"))  # idempotent
         maj = ", ".join(f"{c}=excluded.{c}" for c in COLS if c != "id")
         cur.executemany(

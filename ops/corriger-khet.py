@@ -64,13 +64,13 @@ def main() -> int:
     a = ap.parse_args()
 
     charger_env()
-    import psycopg
+    from store.pg import connecter  # pg8000 (Python pur) et non psycopg depuis le 2026-10-09 — voir store/pg.py
 
     m = KhetMatcher()
     canoniques = {n for n, _ in m.khets}
     print(f"{len(canoniques)} quartiers de référence\n")
 
-    with psycopg.connect(os.environ["SUPABASE_DB_URL"], connect_timeout=30) as cx:
+    with connecter(os.environ["SUPABASE_DB_URL"]) as cx:
         lignes = cx.execute(
             "select id, khet, lat, lng from listings "
             "where khet is not null and khet <> all(%s)",

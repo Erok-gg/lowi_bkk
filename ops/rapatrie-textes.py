@@ -38,7 +38,7 @@ for _l in open(os.path.join(ROOT, "scraper", ".env"), encoding="utf-8"):
         _k, _v = _l.split("=", 1)
         os.environ.setdefault(_k.strip(), _v.strip())
 
-import psycopg  # noqa: E402
+from store.pg import connecter  # pg8000 (Python pur) et non psycopg depuis le 2026-10-09 — voir store/pg.py
 
 LOCAL = os.path.join(ROOT, "scraper", "output", "bangkok.db")
 LOT = 20000
@@ -76,7 +76,7 @@ def main() -> int:
     loc = ecriture  # meme connexion : lecture et ecriture
 
     total = 0
-    with psycopg.connect(os.environ["SUPABASE_DB_URL"]) as cx:
+    with connecter(os.environ["SUPABASE_DB_URL"]) as cx:
         for col in ("page_text", "description"):
             ids = a_rapatrier(cx, loc, col)
             print(f"{col} : {len(ids)} annonce(s) a rapatrier")

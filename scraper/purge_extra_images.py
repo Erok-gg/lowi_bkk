@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import psycopg  # noqa: E402
+from store.pg import connecter  # pg8000 (Python pur) et non psycopg depuis le 2026-10-09 — voir store/pg.py
 
 from pipeline.keepawake import prevent_sleep  # noqa: E402
 from pipeline.storage import SupabaseStorage  # noqa: E402
@@ -52,7 +52,7 @@ def main() -> None:
     if not storage:
         sys.exit("SUPABASE_URL / SUPABASE_SERVICE_KEY manquants (Storage)")
 
-    db = psycopg.connect(dsn, connect_timeout=20, autocommit=True)
+    db = connecter(dsn, autocommit=True)
     rows = db.execute(
         "select id, storage_path from listing_images where ord >= 1 order by listing_id"
     ).fetchall()
