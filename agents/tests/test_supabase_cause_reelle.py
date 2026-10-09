@@ -52,8 +52,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
 import threading                                           # noqa: E402
 import time                                                # noqa: E402
 
-import psycopg                                             # noqa: E402
+from pg8000.exceptions import DatabaseError                # noqa: E402
 from store import supabase_store as ss                     # noqa: E402
+
+# 2026-10-09 : pilote passé de psycopg à pg8000 (Smart App Control bloquait la
+# DLL libpq). Le faux pilote se branche sur `ss._ouvre` ; les échecs
+# d'ouverture remontent en `ss.ErreurConnexion`, quelle que soit leur forme.
 
 # Le watchdog doit tomber AVANT que le faux connect ne réponde : c'est tout le
 # défaut mesuré (25 s de watchdog contre 32 s de réponse réelle), transposé en
@@ -61,10 +65,13 @@ from store import supabase_store as ss                     # noqa: E402
 ss.CONNECT_HARD_TIMEOUT = 0.05
 _REPONSE_TARDIVE = 0.30
 
-VRAIE_ERREUR = ("connection failed: FATAL:  Failed to connect to database: "
-                "authentication did not complete within 15000ms\n"
-                "Multiple connection attempts failed. All failures were:\n"
-                "- host: 'aws-1-ap-southeast-1.pooler.supabase.com'")
+# Forme pg8000 de l'erreur du pooler : un dict (S, C, M), dont le message
+# peut porter plusieurs lignes — on n'en garde que la première.
+VRAIE_ERREUR = {"S": "FATAL", "C": "XX000",
+                "M": "Failed to connect to database: "
+                     "authentication did not complete within 15000ms\n"
+                     "Multiple connection attempts failed. All failures were:\n"
+                     "- host: 'aws-1-ap-southeast-1.pooler.supabase.com'"}
 
 
 def _vide_le_ramasseur():
@@ -73,15 +80,15 @@ def _vide_le_ramasseur():
 
 # ───────── 1. le message du watchdog ne NOMME plus de cause qu'il ignore
 _vide_le_ramasseur()
-_vrai_connect = psycopg.connect
-psycopg.connect = lambda *a, **k: time.sleep(_REPONSE_TARDIVE)
+_vrai_connect = ss._ouvre
+ss._ouvre = lambda *a, **k: time.sleep(_REPONSE_TARDIVE)
 try:
     ss._connect_borne("postgresql://test/fake")
     raise AssertionError("un connect qui dépasse le watchdog doit lever")
-except psycopg.OperationalError as exc:
+except ss.ErreurConnexion as exc:
     message = str(exc)
 finally:
-    psycopg.connect = _vrai_connect
+    ss._ouvre = _vrai_connect
 
 assert "DNS" not in message and "TCP" not in message, (
     "le watchdog ne doit PLUS affirmer « DNS ou TCP » : à 25 s il ne sait pas "
@@ -97,14 +104,14 @@ _vide_le_ramasseur()
 
 def _connect_lent_qui_echoue(*a, **k):
     time.sleep(_REPONSE_TARDIVE)
-    raise psycopg.OperationalError(VRAIE_ERREUR)
+    raise DatabaseError(VRAIE_ERREUR)
 
 
-psycopg.connect = _connect_lent_qui_echoue
+ss._ouvre = _connect_lent_qui_echoue
 try:
     try:
         ss._connect_borne("postgresql://test/fake")
-    except psycopg.OperationalError:
+    except ss.ErreurConnexion:
         pass
     assert len(ss._attentes_orphelines) == 1, (
         "l'attente abandonnée doit être confiée au ramasseur, sinon la vraie "
@@ -117,13 +124,13 @@ try:
     time.sleep(_REPONSE_TARDIVE * 2)
     cause = ss._ramasse_orphelines()
 finally:
-    psycopg.connect = _vrai_connect
+    ss._ouvre = _vrai_connect
 
 assert cause is not None and "authentication did not complete" in cause, (
     "la cause réelle arrivée après le watchdog doit être restituée, c'est tout "
     f"l'objet du correctif. Obtenu : {cause!r}")
 assert "Multiple connection attempts failed" not in cause, (
-    "une seule ligne : psycopg empile un bloc par IP, qui noierait le log")
+    "une seule ligne : le serveur empile un bloc par IP, qui noierait le log")
 assert not ss._attentes_orphelines, "l'attente ramassée doit être retirée"
 print("2. cause réelle tardive : restituée en une ligne : OK")
 
@@ -145,16 +152,16 @@ def _connect_lent_qui_reussit(*a, **k):
     return _ConnexionTardive()
 
 
-psycopg.connect = _connect_lent_qui_reussit
+ss._ouvre = _connect_lent_qui_reussit
 try:
     try:
         ss._connect_borne("postgresql://test/fake")
-    except psycopg.OperationalError:
+    except ss.ErreurConnexion:
         pass
     time.sleep(_REPONSE_TARDIVE * 2)
     ss._ramasse_orphelines()
 finally:
-    psycopg.connect = _vrai_connect
+    ss._ouvre = _vrai_connect
 
 assert ferme.is_set(), (
     "une connexion qui atterrit après le watchdog doit être FERMÉE : en mode "
@@ -180,16 +187,16 @@ def _connect_lent_recalcitrant(*a, **k):
     return _ConnexionRecalcitrante()
 
 
-psycopg.connect = _connect_lent_recalcitrant
+ss._ouvre = _connect_lent_recalcitrant
 try:
     try:
         ss._connect_borne("postgresql://test/fake")
-    except psycopg.OperationalError:
+    except ss.ErreurConnexion:
         pass
     time.sleep(_REPONSE_TARDIVE * 2)
     ss._ramasse_orphelines()          # ne doit pas lever
 finally:
-    psycopg.connect = _vrai_connect
+    ss._ouvre = _vrai_connect
 
 assert not ss._attentes_orphelines, (
     "une fermeture en échec doit tout de même retirer l'attente, sinon le "

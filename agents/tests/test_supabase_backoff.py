@@ -35,8 +35,11 @@ for _flux in (sys.stdout, sys.stderr):
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))), "scraper"))
 
-import psycopg                                            # noqa: E402
 from store import supabase_store as ss                    # noqa: E402
+
+# 2026-10-09 : pilote passé de psycopg à pg8000 (Smart App Control bloquait la
+# DLL libpq). Le faux pilote se branche sur `ss._ouvre` ; les échecs
+# d'ouverture remontent en `ss.ErreurConnexion`, quelle que soit leur forme.
 
 ss.OUTAGE_POLL_SECONDS = 0.02
 ss.OUTAGE_POLL_MAX = 0.08
@@ -57,7 +60,7 @@ essais = {"n": 0}
 def _connect_capricieux(dsn):
     essais["n"] += 1
     if essais["n"] < 3:
-        raise psycopg.OperationalError(
+        raise ss.ErreurConnexion(
             "connect() bloqué au-delà de 25s (DNS ou TCP) — abandon")
     return _FausseConnexion()
 
@@ -72,17 +75,17 @@ print("1. ouverture initiale : survit a 2 echecs puis reussit : OK")
 # ───────────────── 2. une coupure qui dure finit quand meme par abandonner
 essais["n"] = 0
 ss._connect_borne = lambda dsn: (_ for _ in ()).throw(
-    psycopg.OperationalError("failed to resolve host"))
+    ss.ErreurConnexion("failed to resolve host"))
 try:
     ss._connect_resilient("postgresql://test/fake")
     raise AssertionError("une coupure sans fin doit finir par lever, pas boucler")
-except psycopg.OperationalError:
+except ss.ErreurConnexion:
     pass
 print("2. coupure sans fin : abandon propre, pas de boucle infinie : OK")
 
 # ───────────────── 3. le disjoncteur du pooler recule PLUS qu'une coupure
-plat = psycopg.OperationalError("connection failed: timeout")
-disj = psycopg.OperationalError(
+plat = ss.ErreurConnexion("connection failed: timeout")
+disj = ss.ErreurConnexion(
     'FATAL:  (ECIRCUITBREAKER) failed to retrieve database credentials after '
     'multiple attempts, new connections are temporarily blocked')
 

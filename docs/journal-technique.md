@@ -3978,3 +3978,75 @@ ci-dessus. `livinginsider` laissé hors lanes.
 `agents/queue/mail/` était **déjà vide** à l'ouverture (vidée par la passe de
 09:00) ; l'alerte du plafond FAT32 a été envoyée directement, étant nouvelle et
 datée. Ticket de 03:00 UTC déplacé dans `agents/queue/done/` avec sa résolution.
+
+## 2026-10-09 (après-midi) — Remontée Supabase en pg8000 : plus aucune DLL sur le chemin d'écriture
+
+**Décision de l'utilisateur** : option 1 du mail d'alerte du matin (pilote
+Python pur), à condition d'un Q&A complet à la sortie. Les deux autres issues
+(libpq « signé » ; désactiver Smart App Control, irréversible) sont écartées.
+
+**Constat avant de toucher au code** : à 13 h, `import psycopg` **repassait**
+(impl `binary`). Smart App Control a donc rendu la DLL entre la nuit et midi,
+sans qu'on change rien. Ce n'est pas une raison de ne rien faire, c'est
+l'argument du correctif : un verdict de réputation qui bascule dans les deux
+sens sans préavis reviendra.
+
+**Ce qui change** (branche `fix/social-leads-mcp-tool-bloat-2026-10-09`, puis
+`main`) : `scraper/store/supabase_store.py` passe de psycopg à **pg8000
+1.31.5**. Le contrat public ne bouge pas : `_Connexion.execute()` rend un
+curseur, donc ni `ops/remonter-local.py` ni les 823 lignes d'appelants ne sont
+modifiés. Trois points qui ne se transposaient pas tels quels :
+- **Le tri des erreurs.** psycopg rejouait `OperationalError` ; pg8000 n'a que
+  `InterfaceError` (réseau) et `DatabaseError` (dict SQLSTATE). On rejoue
+  désormais réseau + SQLSTATE 08/53/57/58, et une erreur déterministe
+  (syntaxe, contrainte, 54) remonte tout de suite. À l'**ouverture**, toute
+  erreur est une coupure (`ErreurConnexion`) : le pooler rend son « auth did
+  not complete within 15000ms » en FATAL **XX000**, sans code 08.
+- **Le délai.** pg8000 n'a qu'un `timeout` de socket (connexion ET requêtes).
+  20 s, l'ancien `connect_timeout`, aurait coupé des requêtes légitimes (un
+  checkpoint d'un buffer à 17-22 s le 06/10). Posé à **300 s** ; la connexion
+  reste bornée à 25 s par le watchdog (la résolution DNS n'est toujours pas
+  couverte par le délai de socket).
+- **Le SSL.** Le DSN n'a pas de `sslmode`, libpq faisait donc `prefer`
+  (chiffré, non vérifié). La vérification échoue, **mesuré** : « self-signed
+  certificate in certificate chain » (CA propre à Supabase). Posture
+  inchangée : chiffré sans vérification.
+
+**Q&A — tout mesuré sur le vrai serveur :**
+1. Sonde en lecture : connexion en **0,4 s** ; `any(list)`, jsonb, `text[]`
+   avec NULL corrects ; connexion encore utilisable après une erreur serveur.
+2. **Parité en transaction ANNULÉE** : même lot réel (500 annonces +
+   300 statuts) poussé par l'ancien store (psycopg, version de `HEAD`) puis par
+   le nouveau. Compteurs identiques (1 nouvelle / 499 mises à jour / 127 prix /
+   300 statuts), **valeurs identiques colonne par colonne sur les 800 lignes**,
+   comptes avant = après ROLLBACK (176 976 / 115 677). Les deux empreintes
+   sha256 différaient : la représentation repr des valeurs, pas les valeurs
+   (déduit, non creusé — les comparaisons d'égalité passent toutes).
+3. **Remontée de production par l'orchestrateur** (`run remonter-supabase`,
+   `--delta`) : **31 s**, 3 565 nouvelles, 856 mises à jour, 183 prix,
+   439 statuts corrigés, **0 erreur**, `scan_run` écrit.
+4. **Alignement vérifié** ensemble contre ensemble : **119 105 actives en local,
+   119 105 en ligne, 0 écart** dans un sens comme dans l'autre ; delta local
+   vidé (0/0). Le serveur, en retard de 2 jours, est à jour.
+5. **Coupure réelle** : `pg_terminate_backend` sur notre propre backend depuis
+   une seconde connexion → reconnexion transparente en **1,3 s**, résultat
+   juste, nouveau backend. Une erreur de syntaxe est levée sans rejeu, et la
+   connexion reste réutilisable.
+6. **Idempotence** : second passage immédiat en **7 s**, 0 / 0 / 0.
+7. **Immunité** : 0 fichier `.pyd`/`.dll` dans pg8000, scramp, asn1crypto et
+   dateutil. Nouveau test `agents/tests/test_supabase_pg8000.py` : le store
+   s'importe et se connecte au vrai pooler avec psycopg **rendu introuvable**,
+   et le tri des erreurs est vérifié.
+8. Les 3 tests qui simulaient psycopg sont portés (backoff, cause réelle,
+   reconnexion), tous verts ; suite complète en fin d'entrée.
+
+**Défaut de test corrigé au passage** : `test_pouls_cycle_en_cours` lisait la
+**vraie** fenêtre de maintenance (nuit du 08/10) qui couvrait son faux
+battement, et échouait selon le calendrier. Isolé.
+
+**Non fait** : `ops/verifie-synchro.py`, `ops/sync_supabase_local.py`
+(`storage`, hors lanes) et `agents/core/db.py` en `LOWI_STORE=supabase`
+restent sur psycopg. Ce sont des outils manuels, mais ils retomberont si Smart
+App Control rebloque la DLL. Pas d'embarquement de la CA Supabase pour
+vérifier le certificat. `test_local_llm` échoue toujours sur PC2 (pas
+d'Ollama, attendu). Rien de changé aux seuils, budgets ou paliers de reprise.

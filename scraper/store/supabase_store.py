@@ -1,21 +1,136 @@
-"""supabase_store.py — Stockage ONLINE (Postgres Supabase) via psycopg.
+"""supabase_store.py — Stockage ONLINE (Postgres Supabase) via pg8000.
 
 Même interface que SqliteStore (BaseStore) → le pipeline ne change pas.
 Connexion Postgres directe (pooler session) → bypass RLS (utilisateur postgres).
 DSN lu depuis SUPABASE_DB_URL.
+
+POURQUOI pg8000 ET PLUS psycopg (2026-10-09)
+La nuit du 09/10, `remonter-supabase` (#752) est mort en 9 s sur
+« no pq wrapper available » : Smart App Control a bloqué la DLL libpq de
+`psycopg_binary` (journal CodeIntegrity, événement 3077 à l'instant du run),
+5 processus neufs sur 5, fichier inchangé depuis le 2026-08-21. Ce n'est pas
+la signature qui est jugée (29/29 DLL du venv non signées, lxml et Pillow
+passent) mais la RÉPUTATION, qui peut basculer sans préavis — le même jour à
+13 h l'import repassait. pg8000 est en Python pur : aucune DLL native, donc
+rien que Smart App Control puisse juger. Choix de l'utilisateur, option 1 du
+mail d'alerte (les deux autres : libpq « signé », non pertinent ; désactiver
+Smart App Control, irréversible).
 """
 from __future__ import annotations
 
+import json
 import random
+import ssl
 import threading
 import time
 from datetime import datetime, timezone
+from urllib.parse import unquote, urlsplit
 
-import psycopg
-from psycopg.types.json import Json
+import pg8000.dbapi
+from pg8000.exceptions import DatabaseError, InterfaceError
 
 from pipeline import details
 from store.base import COLONNES_LISTING, BaseStore
+
+
+def Json(valeur):
+    """Équivalent de `psycopg.types.json.Json` : sérialise pour une colonne jsonb.
+
+    pg8000 envoie une `str` en type `unknown` : Postgres la convertit lui-même
+    vers le type de la colonne cible (vérifié contre le serveur le 2026-10-09,
+    `%s::jsonb` et colonne `raw_data`)."""
+    return json.dumps(valeur, ensure_ascii=False)
+
+
+#: Classes SQLSTATE traitées comme une COUPURE (on se reconnecte et on
+#: rejoue), c'est-à-dire ce que psycopg rangeait dans `OperationalError` et que
+#: `_execute` rattrapait : 08 connexion, 53 ressources, 57 intervention
+#: (arrêt admin, statement timeout), 58 erreur système. Les autres classes
+#: (syntaxe, contrainte, 54 limite de programme…) sont déterministes : les
+#: rejouer 20 min ne changerait rien, elles remontent tout de suite, comme avant.
+SQLSTATE_COUPURE = ("08", "53", "57", "58")
+
+#: Délai de chaque opération de socket. pg8000 n'a qu'UN réglage (connexion ET
+#: requêtes), là où libpq n'avait que `connect_timeout=20`. 20 s aurait coupé
+#: des requêtes légitimes : le 2026-10-06 un checkpoint d'un buffer prenait
+#: 17 à 22 s côté serveur. 300 s borne une socket morte sans couper une requête
+#: lente — le `statement_timeout` du serveur tombe avant. La connexion, elle,
+#: reste bornée à 25 s par le watchdog (`CONNECT_HARD_TIMEOUT`).
+SOCKET_TIMEOUT = 300.0
+
+
+def _code_sqlstate(exc: BaseException) -> str | None:
+    """pg8000 porte l'erreur serveur dans un dict (`C` = SQLSTATE, `M` = message)."""
+    arg = exc.args[0] if exc.args else None
+    return arg.get("C") if isinstance(arg, dict) else None
+
+
+def _message(exc: BaseException) -> str:
+    """Message lisible d'une erreur pg8000 (le dict brut noierait le log)."""
+    arg = exc.args[0] if exc.args else None
+    if isinstance(arg, dict):
+        return f"{arg.get('S', '')} {arg.get('C', '')} {arg.get('M', '')}".strip()
+    return str(exc)
+
+
+def _est_coupure(exc: BaseException) -> bool:
+    """Faut-il se reconnecter et rejouer (cf. `SQLSTATE_COUPURE`) ?"""
+    if isinstance(exc, (InterfaceError, OSError)):
+        return True                         # réseau : socket, DNS, SSL, « network error »
+    if isinstance(exc, DatabaseError):
+        code = _code_sqlstate(exc)
+        return bool(code) and code[:2] in SQLSTATE_COUPURE
+    return False
+
+
+class ErreurConnexion(Exception):
+    """Échec d'ouverture de connexion (watchdog, ou erreur pg8000 enveloppée).
+
+    À l'OUVERTURE, toute erreur est une coupure à réessayer : le pooler rend
+    par exemple « Failed to connect to database: authentication did not
+    complete within 15000ms » en FATAL XX000, qu'aucun code 08 ne signale."""
+
+
+def _parametres(dsn: str) -> dict:
+    """DSN `postgresql://user:pwd@host:port/db` → arguments de pg8000.connect.
+
+    SSL : chiffré SANS vérification du certificat, exactement ce que faisait
+    libpq avec ce DSN (pas de `sslmode` → `prefer`). Mesuré le 2026-10-09 :
+    la vérification échoue (« self-signed certificate in certificate chain »),
+    le pooler présente un certificat de la CA propre à Supabase. Vérifier
+    exigerait d'embarquer cette CA — amélioration possible, pas une régression."""
+    u = urlsplit(dsn)
+    contexte = ssl.create_default_context()
+    contexte.check_hostname = False
+    contexte.verify_mode = ssl.CERT_NONE
+    return {"user": unquote(u.username or ""), "password": unquote(u.password or ""),
+            "host": u.hostname, "port": u.port or 5432,
+            "database": unquote(u.path.lstrip("/")) or "postgres",
+            "ssl_context": contexte, "timeout": SOCKET_TIMEOUT,
+            "application_name": "lowi-remontee"}
+
+
+class _Connexion:
+    """Fine enveloppe : `execute()` rend un curseur, comme `psycopg.Connection`.
+
+    Tout le module (et `ops/remonter-local.py`) écrit
+    `self._execute(...).fetchall()` : garder ce contrat évite de toucher aux
+    823 lignes d'appelants pour un changement de pilote."""
+
+    def __init__(self, brute):
+        self.brute = brute
+        self.brute.autocommit = True
+
+    def execute(self, sql: str, params=()):
+        cur = self.brute.cursor()
+        # Sans paramètres, pg8000 passe par le protocole simple : `%` n'y est
+        # pas interprété. Avec, le style « format » exige `%%` pour un `%`
+        # littéral — aucune requête de ce module n'en contient.
+        cur.execute(sql, tuple(params) if params else ())
+        return cur
+
+    def close(self) -> None:
+        self.brute.close()
 
 #: Meme constat, meme remede que scraper/pipeline/fetch.py (2026-09-04) :
 #: `_execute` ne faisait qu'UN reconnect avant d'abandonner, ce qui a fait
@@ -59,6 +174,8 @@ JITTER = 0.25
 #: `_execute()` ne peut compter le temps écoulé que si l'appel bloquant
 #: lui-même est borné de l'extérieur. `CONNECT_HARD_TIMEOUT` fait ce travail
 #: (thread-watchdog, pas signal.alarm — indisponible sur Windows).
+#: Toujours nécessaire avec pg8000 : `socket.create_connection` résout le nom
+#: AVANT d'appliquer son délai, la résolution reste donc non bornée.
 CONNECT_HARD_TIMEOUT = 25.0
 
 
@@ -113,7 +230,7 @@ def _ramasse_orphelines() -> str | None:
             # Première ligne seulement : psycopg empile « Multiple connection
             # attempts failed » + un bloc par IP (3 pour ce pooler), ce qui
             # noierait le log sans rien ajouter.
-            vraie_cause = str(slot["erreur"]).strip().splitlines()[0]
+            vraie_cause = _message(slot["erreur"]).strip().splitlines()[0]
         else:
             continue                 # toujours en vol — on le reverra au tour suivant
         _attentes_orphelines.remove(slot)
@@ -132,12 +249,17 @@ def _dis_la_vraie_cause() -> None:
         print(f"    ↳ cause réelle de l'attente précédente : {cause}", flush=True)
 
 
-def _connect_borne(dsn: str) -> "psycopg.Connection":
+def _ouvre(dsn: str) -> _Connexion:
+    """Point d'appel unique du pilote — c'est lui que les tests remplacent."""
+    return _Connexion(pg8000.dbapi.connect(**_parametres(dsn)))
+
+
+def _connect_borne(dsn: str) -> _Connexion:
     resultat: dict = {}
 
     def _cible() -> None:
         try:
-            resultat["db"] = psycopg.connect(dsn, connect_timeout=20, autocommit=True)
+            resultat["db"] = _ouvre(dsn)
         except BaseException as exc:  # noqa: BLE001 — remonté tel quel plus bas
             resultat["erreur"] = exc
 
@@ -154,12 +276,15 @@ def _connect_borne(dsn: str) -> "psycopg.Connection":
         # Le message ne NOMME plus de cause : à 25 s on sait seulement que
         # l'appel n'a pas rendu la main. Prétendre « DNS ou TCP » était faux
         # le 2026-10-06, et c'est ce qui a fait chercher au mauvais endroit.
-        raise psycopg.OperationalError(
+        raise ErreurConnexion(
             f"connect() n'a pas rendu la main en {CONNECT_HARD_TIMEOUT:.0f}s "
-            "(cause pas encore connue — libpq n'a pas fini de répondre) — abandon"
+            "(cause pas encore connue — le serveur n'a pas fini de répondre) — abandon"
         )
     if "erreur" in resultat:
-        raise resultat["erreur"]
+        exc = resultat["erreur"]
+        if isinstance(exc, (DatabaseError, InterfaceError, OSError)):
+            raise ErreurConnexion(_message(exc)) from exc
+        raise exc
     return resultat["db"]
 
 
@@ -189,7 +314,7 @@ def _recul(exc: BaseException, palier: float) -> tuple[float, float, str]:
 
 
 def _connect_resilient(dsn: str, plafond: float | None = None
-                       ) -> "psycopg.Connection":
+                       ) -> _Connexion:
     """Ouvre la connexion en absorbant une coupure qui DURE.
 
     POURQUOI CETTE FONCTION EXISTE — asymétrie mesurée le 2026-09-09.
@@ -213,7 +338,7 @@ def _connect_resilient(dsn: str, plafond: float | None = None
     while True:
         try:
             return _connect_borne(dsn)
-        except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
+        except ErreurConnexion as exc:
             if attente >= plafond:
                 raise
             pause, palier, motif = _recul(exc, palier)
@@ -321,14 +446,18 @@ class SupabaseStore(BaseStore):
         reconnexion elle-même, comme `Fetcher._attend_coupure` (fetch.py)."""
         try:
             return self.db.execute(sql, params)
-        except (psycopg.OperationalError, psycopg.InterfaceError):
+        except Exception as exc:  # noqa: BLE001 — trié par _est_coupure
+            if not _est_coupure(exc):
+                raise
             attente = 0.0
             palier = OUTAGE_POLL_SECONDS
             while True:
                 try:
                     self._reconnect()
                     return self.db.execute(sql, params)
-                except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
+                except Exception as exc:  # noqa: BLE001 — trié ci-dessous
+                    if not (isinstance(exc, ErreurConnexion) or _est_coupure(exc)):
+                        raise
                     if attente >= OUTAGE_MAX_WAIT_SECONDS:
                         raise
                     # Recul PROGRESSIF, et plus long encore si c'est le pooler

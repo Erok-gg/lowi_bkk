@@ -22,7 +22,7 @@ si l'appel bloquant lui-meme est borne de l'exterieur. `_connect_borne()`
 travail ; le cas 4 verifie qu'un `connect()` qui ne revient jamais est
 neanmoins abandonne au bout de `CONNECT_HARD_TIMEOUT`.
 
-Ce test ne touche a AUCUN reseau ni base reelle — `psycopg.connect` est
+Ce test ne touche a AUCUN reseau ni base reelle — le pilote (`ss._ouvre`) est
 remplace par un faux objet controle par le test.
 
 Rejeu :  scraper/.venv/Scripts/python.exe agents/tests/test_supabase_reconnect.py
@@ -51,8 +51,12 @@ for _flux in (sys.stdout, sys.stderr):
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))), "scraper"))
 
-import psycopg                                            # noqa: E402
+from pg8000.exceptions import InterfaceError              # noqa: E402
 from store import supabase_store as ss                    # noqa: E402
+
+# 2026-10-09 : pilote passé de psycopg à pg8000 (Smart App Control bloquait la
+# DLL libpq). Le faux pilote se branche sur `ss._ouvre` ; les échecs
+# d'ouverture remontent en `ss.ErreurConnexion`, quelle que soit leur forme.
 
 # Plafond tres bas pour que le test reste rapide (le code de prod utilise 20 min).
 ss.OUTAGE_POLL_SECONDS = 0.05
@@ -73,7 +77,7 @@ class _FausseConnexion:
     def execute(self, sql, params=()):
         if self._compte["echecs_restants"] > 0:
             self._compte["echecs_restants"] -= 1
-            raise psycopg.OperationalError("simulated: connection is closed")
+            raise InterfaceError("simulated: connection is closed")
         return _FauxCurseur()
 
     def close(self):
@@ -91,7 +95,7 @@ def _store_sans_vraie_connexion(compte) -> ss.SupabaseStore:
 
 # --------------------------------- 1. coupure resolue AVANT le plafond -> succes, pas d'exception
 # La 1ere execute() echoue (connexion cassee), le reconnect POSE une nouvelle
-# _FausseConnexion... mais _reconnect() appelle psycopg.connect (vrai module) —
+# _FausseConnexion... mais _reconnect() appelle ss._ouvre (vrai pilote) —
 # on le monkeypatch pour qu'il rende une connexion qui reussit desormais.
 compte = {"echecs_restants": 1}
 store = _store_sans_vraie_connexion(compte)
@@ -101,7 +105,7 @@ def _connect_qui_reussit(dsn, **kw):
     return _FausseConnexion({"echecs_restants": 0})
 
 
-psycopg.connect = _connect_qui_reussit
+ss._ouvre = _connect_qui_reussit
 r = store._execute("select 1")
 assert r.fetchone() is None, "attendu un curseur exploitable apres reconnexion"
 print("coupure resolue au 1er reconnect : succes, OK")
@@ -113,13 +117,13 @@ appels = {"n": 0}
 def _connect_qui_echoue_puis_reussit(dsn, **kw):
     appels["n"] += 1
     if appels["n"] < 3:
-        raise psycopg.OperationalError("simulated: failed to resolve host")
+        raise InterfaceError("simulated: failed to resolve host")
     return _FausseConnexion({"echecs_restants": 0})
 
 
 compte2 = {"echecs_restants": 1}
 store2 = _store_sans_vraie_connexion(compte2)
-psycopg.connect = _connect_qui_echoue_puis_reussit
+ss._ouvre = _connect_qui_echoue_puis_reussit
 r2 = store2._execute("select 1")
 assert r2.fetchone() is None
 assert appels["n"] == 3, f"attendu 3 tentatives de reconnexion avant succes, recu {appels['n']}"
@@ -128,16 +132,16 @@ print(f"coupure qui dure {appels['n']} sondes puis se resout : succes, OK "
 
 # --------------------------------- 3. coupure persistante au-dela du plafond -> leve, pas de boucle infinie
 def _connect_qui_echoue_toujours(dsn, **kw):
-    raise psycopg.OperationalError("simulated: getaddrinfo failed")
+    raise InterfaceError("simulated: getaddrinfo failed")
 
 
 compte3 = {"echecs_restants": 1}
 store3 = _store_sans_vraie_connexion(compte3)
-psycopg.connect = _connect_qui_echoue_toujours
+ss._ouvre = _connect_qui_echoue_toujours
 try:
     store3._execute("select 1")
     raise SystemExit("attendu une exception apres le plafond d'attente, rien n'a ete leve")
-except psycopg.OperationalError:
+except ss.ErreurConnexion:
     print("coupure persistante au-dela du plafond : exception propagee (pas de boucle infinie), OK")
 
 # --------------------------------- 4. connect() qui ne revient JAMAIS -> abandonne au hard-timeout, pas un hang
@@ -151,12 +155,12 @@ def _connect_qui_bloque_indefiniment(dsn, **kw):
     return _FausseConnexion({"echecs_restants": 0})
 
 
-psycopg.connect = _connect_qui_bloque_indefiniment
+ss._ouvre = _connect_qui_bloque_indefiniment
 _debut = _time.monotonic()
 try:
     ss._connect_borne("postgresql://test/fake")
-    raise SystemExit("attendu OperationalError sur connect() qui ne revient jamais")
-except psycopg.OperationalError:
+    raise SystemExit("attendu ErreurConnexion sur connect() qui ne revient jamais")
+except ss.ErreurConnexion:
     _duree = _time.monotonic() - _debut
     assert _duree < 5.0, (
         f"_connect_borne a attendu {_duree:.1f}s — le hard-timeout ({ss.CONNECT_HARD_TIMEOUT}s) "

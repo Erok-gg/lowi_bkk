@@ -64,6 +64,12 @@ def preparer(runs):
 
 
 pouls._crier = lambda motif, *a, **k: cris.append(motif)
+# Isoler aussi la fenêtre de maintenance : `verifier()` lit le vrai
+# agents/state/maintenance.json. Le 2026-10-09, la fenêtre réelle (nuit du
+# 08/10) couvrait le faux battement « il y a 26,4 h » et taisait les cas 2 et
+# 3 — le test échouait selon le calendrier, pas selon le code.
+from agents.core import maintenance                      # noqa: E402
+maintenance.fenetre = lambda *a, **k: None
 pouls._demarrage_processus = lambda pid: None    # repli sur started_at
 
 # 1. cycle en cours depuis 7 h, démarré après le battement
