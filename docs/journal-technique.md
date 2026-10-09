@@ -3659,3 +3659,134 @@ première mesure de l'effet de la maintenance.
   (aucun ré-armement manuel à oublier). La machine se réveille donc à 02:30 le
   08/10 et se rendort.
 - Pas d'outil pour poser une fenêtre en ligne de commande : le JSON s'écrit à la main.
+
+## 2026-10-07 — Réparation autonome (passe partielle)
+
+Cycle du 07/10 sain (pouls OK, 3 738 annonces, maintenance déclarée jusqu'au 09/10). Ticket remonter-supabase #722 du 06/10 laissé ouvert : run du 07/10 en succès et cause Supabase traitée par d37777f/01110cb, mais non vérifié sur le log. Constat fazwaz parseur_casse (nouvelles=0) ×3 à examiner (fausse alerte probable en mode sitemap, non mesuré). Non fait faute de quota : analyse des logs, santé bangkok.db, bilan clé USB. Détail : agents/audits/reparations-2026-10-07.md.
+
+## 2026-10-08 — Réparation autonome : la fausse alerte FazWaz « parseur_casse » étiquetée
+
+État : aucun cycle cette nuit, comme prévu par la maintenance déclarée jusqu'au 09/10 00:00. 0 escalade ouverte. `bangkok.db` : `quick_check` ok, 178 106 annonces. Clé USB du 07/10 : 3/3 essais ok. Boîte mail vide.
+
+- **Ticket #722 (`remonter-supabase`, 06/10) clos** : la cause est déjà mesurée dans l'entrée du 06/10 au soir (épuisement du budget Disk IO Supabase), et le run du 07/10 est passé en 11 min 49. Aucun code nouveau.
+- **`watch-health` : verdict `sitemap_non_regenere`** (branche `fix/watch-health-sitemap-non-regenere-2026-10-08`, `48dc427`, non mergée). Mesuré : 3 `parseur_casse` high en 5 nuits, tous faux. Les runs 702 et 733 portent `[sitemap-non-regenere]` ; 686 est antérieur à l'attente de régénération. Chaque nuit suivante a repris 130 à 278 nouvelles. Nouvelle règle : medium sans escalade ni mail, high si deux runs d'affilée. Rejeu sur 30 j du ledger : seuls 702 et 733 changent de verdict. La sévérité est une proposition, à arbitrer.
+- **Mesuré, non traité** : 516 annonces livinginsider restent `active` avec un `last_seen` au 16/09, alors que l'extracteur est suspendu depuis le 26/09 (0,4 % des actives). Les délister ou les exclure relève de la méthode, je laisse la décision.
+- `social-leads` : l'authentification `claude -p` du 30/09 est revenue (3 runs ok depuis). 11 % d'échecs d'extraction le 07/10, à surveiller.
+
+**Non fait** : merge et push ; réglage du plafond d'attente du sitemap ; action sur livinginsider ; fichiers non commités d'autres séances laissés tels quels (`agents.json`, études). Détail : agents/audits/reparations-2026-10-08.md.
+
+
+## 2026-10-09 — Réparation autonome : un lot de posts perdu une nuit sur trois, et une DLL que Windows a cessé de croire
+
+Escalade Opus déclenchée par la veille du cycle (ticket
+`2026-10-09T020015-veille-claude-cycle_probleme`, 2 problèmes signalés, tous deux
+portant sur `remonter-supabase`). **Le cycle de la nuit tournait encore** pendant
+l'audit (`social-leads` sur une seconde collecte, orchestrateur PID 20672
+vivant) — rien n'a été relancé par-dessus.
+
+**Le problème signalé n'est pas un défaut de code.** `remonter-supabase` (#752)
+meurt en 9 s sur `ImportError: no pq wrapper available` : la DLL `libpq` de
+`psycopg_binary` est **bloquée par Smart App Control**. Mesuré, non déduit —
+`VerifiedAndReputablePolicyState=1`, `UsermodeCodeIntegrityPolicyEnforcement=2`,
+et l'événement **CodeIntegrity 3077** (blocage) horodaté **08:51:27 locale**,
+soit 01:51:27 UTC : l'instant exact du run. Le fichier n'a pas changé depuis le
+**2026-08-21**.
+
+Trois hypothèses testées, **les trois fausses**, et deux étaient mes premières
+intuitions :
+
+- *« une coupure réseau comme d'habitude »* — faux : sur les **13 échecs** de cet
+  agent, les 12 précédents sont des timeouts du pooler ; **celui-ci est le premier
+  de cette nature**.
+- *« la DLL n'est pas signée »* — faux, et c'est le point important : **29 des 29**
+  DLL natives du venv sont `NotSigned`, et `lxml.etree` comme `PIL._imaging` se
+  chargent sans problème. Smart App Control juge la **réputation**, pas la
+  signature. Cela **invalide l'issue la plus naturelle** (installer un libpq signé).
+- *« un rejeu suffira »* — faux : **5 processus neufs sur 5** échouent, et une copie
+  de la DLL renommée dans un autre dossier est bloquée aussi (`WinError 4551`).
+  C'est le contenu qui est jugé. **Le cycle suivant échouera à l'identique.**
+
+Conséquence chiffrée : serveur en retard de **2 j 0 h 41** (115 677 actives en
+ligne contre **119 105** en local, **3 428 actives** absentes du site public).
+L'alerte, elle, a bien fonctionné — mail, ticket, escalade.
+
+**Non corrigé, délibérément.** Les trois issues touchent la posture de la machine
+ou le pilote du chemin d'écriture (règle 5), et l'une est irréversible (règle 7).
+Chiffrées pour que le choix se fasse sur des nombres : **A.** pilote Python pur
+`pg8000` — **mesuré viable aujourd'hui** dans un venv jetable (connexion au
+pooler **0,86 s**, lecture correcte, **zéro DLL native** donc immunisé par
+construction) mais 823 lignes de `supabase_store.py` à adapter, dont la logique
+de reprise qu'encadrent trois tests ; **B.** libpq « signé » — **à écarter**, la
+mesure ci-dessus dit que la signature n'est pas le critère ; **C.** désactiver
+Smart App Control — **irréversible** (réactivation = réinstallation de Windows),
+non fait, non recommandé. Recommandation : **A**, à traiter avec la mise en lots
+déjà ouverte au `CLAUDE.md` puisque le pilote serait touché de toute façon.
+
+**Le défaut que la veille ne voyait pas, lui, est corrigé.** En dépouillant les
+journaux : `social-leads` perd un **lot entier de 15 posts** sur
+`Prompt is too long · ~217620 tokens (limit 200000)`. Le message porte sa propre
+cause — **le prompt ne pesait que 4 215 tokens**, le reste était des
+**définitions d'outils** : celles des connecteurs MCP du **compte** claude.ai.
+Ce ne sont pas les posts : le fichier de collecte entier pèse 126 ko (~35 k
+tokens) et le prompt du lot fait 10 873 caractères.
+
+Le piège : **`--tools ""` était déjà passé et ne suffit pas** — il ne coupe que
+les outils *intégrés*. Les connecteurs viennent du compte, pas des réglages du
+dépôt. Seul `--strict-mcp-config` les écarte. Mesuré le 2026-10-09 sur un prompt
+vide : **36 907 tokens d'entrée sans le drapeau contre 242 avec** (−99,3 %).
+
+**Ce n'était pas un incident isolé, et le correctif était déjà connu.** Trois
+cycles touchés — **01/10** (lot 4/6, ~209 735 tokens), **06/10** (lot 8/9),
+**08/10** (lot 9/10, ~217 620 tokens) : **45 posts perdus**. C'est très
+probablement la cause des « 11 % d'échecs d'extraction le 07/10, à surveiller »
+notés sans explication au journal du 08/10. Et le chiffre qui démontre le
+mécanisme : la requête est passée de ~209 735 à ~217 620 tokens en sept jours,
+**+7 885 sans une seule modification du dépôt** — le surcoût croît avec les
+connecteurs que le compte gagne, d'où une panne qui oscille autour de la limite
+et frappe une nuit sur trois. Or `ops/veille-cycle.py` **porte ce correctif
+depuis le 2026-10-04**, avec la même mesure (36 331 → 236 tokens, soit 2 % de
+mon relevé indépendant) : il n'avait pas été propagé au second appelant de
+`claude -p`. Cinq jours plus tard, l'oubli coûtait 45 posts. Un test verrouille
+mieux qu'une relecture.
+
+Branche `fix/social-leads-mcp-tool-bloat-2026-10-09`, commit `0ef7220`. **Vérifié
+en production** : le **lot 9 exact** qui avait échoué ré-extrait **15/15**.
+Garde-fou `agents/tests/test_social_leads_mcp_isole.py`, et conformément à la
+règle 2 j'ai vérifié qu'il **échoue** quand on retire le drapeau et repasse quand
+on le remet ; il évite aussi de crier au loup (il n'interdit pas `--mcp-config`,
+seulement un `--mcp-config` qui *déclare* des serveurs — la variante de
+`veille-cycle.py` est mesurée équivalente).
+
+**Le reste du système est sain, vérifié et non supposé** : `bangkok.db`
+`quick_check` **ok**, **181 670** annonces / **119 105** actives, les 4 sources
+de la lane fraîches de la nuit ; **zéro** `[erreur]` et **zéro** `SONDE-ECHEC`
+dans les journaux d'extracteurs, **un seul Traceback dans tout le cycle** (celui
+de libpq) ; sauvegarde du 07/10 sur clé **4,0 Go, 3 essais de relecture sur 3**,
+rotation après les essais. Les 3 constats `parseur_casse` de FazWaz sont
+antérieurs au correctif `48dc427` du 08/10 et **ne sont pas réapparus**
+(`watch-health` rend `ok`, 1 592 nouvelles).
+
+**Deux pièges de lecture consignés parce que je m'y suis laissé prendre.**
+(1) `orchestrator status` affichait `report`, `backup-apres-cycle` et `overseer`
+en « DÛ » : ce n'est pas une panne, le cycle ne les avait pas encore atteints —
+les croire manquants aurait conduit à lancer une lane par-dessus un cycle vivant.
+(2) Les horodatages du ledger sont en **UTC** et l'heure locale est **UTC+7** :
+lu en local, `social-leads` paraissait figé depuis **7 h** alors qu'il tournait
+depuis **12 min**. Même piège de fuseau que le 2026-08-16 sur `Get-WinEvent`.
+
+**Ce qui n'a PAS été fait** : aucune écriture sur `main` — le correctif attend une
+fusion, et **tant qu'il n'est pas fusionné le cycle suivant tourne avec l'ancien
+code** et peut reperdre un lot ; aucun changement de posture Smart App Control
+(irréversible) ; aucun remplacement de psycopg (arbitrage) ; **les 45 posts
+perdus non récupérés** — la reprise exige la fusion d'abord, sinon le rejeu
+reperd un lot, et un cycle écrivait encore dans `social-leads.db` (procédure de
+reprise consignée au rapport) ; **aucun garde-fou de fraîcheur du serveur** —
+`fraicheur` ne surveille que la base locale, mais fixer le seuil est une décision
+de méthode ; `scan_runs` toujours figé au 2026-08-22 (signalé, sans conséquence,
+la fraîcheur se lit sur `last_seen`) ; les 516 annonces `livinginsider` actives
+au `last_seen` du 16/09 restent en l'état comme le 08/10 ; consommation Vercel
+non mesurée (règle 9, hors périmètre de cette astreinte). L'échec de
+`test_social_leads.py` en console `cp1252` **n'est pas une régression** : identique
+sur `HEAD` (vérifié par `git stash`), il passe sous `PYTHONIOENCODING=utf-8`.
+
+Détail, mesures et décisions attendues : `agents/audits/reparations-2026-10-09.md`.
