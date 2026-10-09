@@ -3790,3 +3790,61 @@ non mesurée (règle 9, hors périmètre de cette astreinte). L'échec de
 sur `HEAD` (vérifié par `git stash`), il passe sous `PYTHONIOENCODING=utf-8`.
 
 Détail, mesures et décisions attendues : `agents/audits/reparations-2026-10-09.md`.
+
+### Suite du 2026-10-09, pendant la rédaction : `report` tué par un import mort
+
+À 02:27:56 UTC, le cycle a atteint `report`, mort **code 1 en moins d'une
+seconde** — sur la **même DLL** que `remonter-supabase`, mais pour une raison
+différente et, celle-là, **corrigible** :
+
+    File "C:/Lowi_bkk/study/run_study.py", line 36, in <module>
+        import psycopg
+    ImportError: no pq wrapper available.
+
+Conséquence : **pas d'étude ni d'instantané pour le 09/10**.
+
+**Le défaut n'est pas la DLL, c'est l'import.** `study/run_study.py` lit la base
+**SQLite locale** — la référence depuis le 2026-08-23, et `store()` rend
+`"sqlite"` **par défaut**. `psycopg` n'y sert qu'à **un seul appel** (ligne 178),
+dans la branche `LOWI_STORE=supabase`, **jamais prise sur ce poste**. L'étude est
+donc tombée sur une dépendance qu'elle n'utilise pas : un blocage qui ne
+concernait que la remontée vers le serveur a emporté le rapport avec lui, pour un
+import mort placé en tête de fichier.
+
+**Ce qui rend le diagnostic solide** : `agents/core/db.py` fait déjà ce qu'il faut
+— import **à l'intérieur de la fonction, après le retour anticipé SQLite**
+(ligne 145). C'est précisément pourquoi `fraicheur`, `analyze-sale`,
+`analyze-rent` et `organize` ont tourné **normalement la même nuit**, avec la
+même DLL bloquée. `run_study.py` était le **seul** à importer en tête : le bon
+motif existait déjà dans le dépôt, il n'avait pas été appliqué là. Même forme
+d'oubli que pour `--strict-mcp-config` ci-dessus — un correctif connu, non
+propagé.
+
+Branche **`fix/study-import-psycopg-paresseux-2026-10-09`**, commit **`3ae72e0`**,
+branchée sur `48dc427` donc **indépendante** de l'autre correctif et fusionnable
+séparément. **Vérifié dans la condition de panne réelle** : psycopg étant
+toujours bloqué sur la machine à l'instant du test, le module s'importe en
+**0,13 s**, `store()` rend `"sqlite"`, la base locale est trouvée ; sur le **même
+interpréteur**, la version d'avant échoue exactement comme en production (A/B par
+`git stash`). Garde-fou `agents/tests/test_study_sans_psycopg.py` : il rend
+psycopg indisponible **de force** (`sys.meta_path`) plutôt que de se fier à
+l'état de la machine du jour — donc valable aussi sur **PC1** où la DLL
+fonctionne — et il **vérifie d'abord que son propre blocage mord** avant de
+conclure (règle 2). Vérifié qu'il échoue sans le correctif.
+
+**Ce que cela change pour la décision sur le pilote** : ce correctif **réduit la
+portée** du blocage, il ne le supprime pas. Après fusion, une DLL bloquée
+n'emportera plus que la remontée vers Supabase ; l'étude, le rapport et les
+instantanés tourneront. L'arbitrage de l'option A reste entier.
+
+**Non fait sur ce point** : l'étude du 09/10 **n'a pas été rejouée**. Le
+correctif la rend possible, mais lancer une édition hors cycle écrirait un
+instantané et un fichier daté en production — et le code avertit lui-même qu'une
+édition peut écraser la précédente (défaut mesuré le 2026-09-28, 5 éditions sur
+26 datées de la veille). À laisser au cycle suivant, après fusion.
+
+**Deuxième alerte envoyée** (message `1a11e82003106217`), `agents/queue/mail/`
+de nouveau vidée. À la clôture : `backup-apres-cycle` tournait encore (copie de
+4 Go), `overseer` restait à venir — le cycle n'était pas terminé, et le témoin
+`pouls.json` porte donc encore la date du 07/10 sans que cela signale un cycle
+manquant.
