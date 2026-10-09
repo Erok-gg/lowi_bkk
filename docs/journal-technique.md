@@ -3848,3 +3848,133 @@ de nouveau vidée. À la clôture : `backup-apres-cycle` tournait encore (copie 
 4 Go), `overseer` restait à venir — le cycle n'était pas terminé, et le témoin
 `pouls.json` porte donc encore la date du 07/10 sans que cela signale un cycle
 manquant.
+
+---
+
+## 2026-10-09 — suite 2 : la sauvegarde USB arrive au plafond FAT32 (102 Mo de marge, +70 Mo par cycle)
+
+Seconde passe autonome du jour (escalade `e61f348947`, ticket de 03:00 UTC),
+lancée 23 min après la fin de la première (escalade `38fa9ba6f6`, PID 25532
+confirmé mort avant de commencer — aucun Opus en parallèle). Le ticket portait
+les mêmes 4 problèmes que le précédent ; cette passe ne les a pas re-diagnostiqués.
+Elle a **vérifié** les deux correctifs de la passe précédente et trouvé **un
+défaut qu'aucune des deux veilles ne surveille**. Détail complet :
+[`agents/audits/reparations-2026-10-09.md`](../agents/audits/reparations-2026-10-09.md),
+section « Suite — seconde passe autonome ».
+
+### Le défaut : la chaîne de sauvegarde a une date de péremption, et personne ne la surveillait
+
+`ops/sauvegarde-cle.py` refuse la copie au-delà de `PLAFOND_FAT32 = 3,9 GiB`,
+et la clé est **effectivement en FAT32** (`Get-Volume -DriveLetter D` →
+`FileSystemType: FAT32`, 58,7 GiB, 32,2 GiB libres). Au-delà de 4 GiB − 1, FAT32
+tronquerait le fichier **en silence** : le garde-fou est juste, ce n'est pas lui
+le défaut.
+
+**Mesuré** : `bangkok.db` = **4 085 047 296 o = 3,804 GiB**, soit **97,6 % du
+plafond** et **102,5 Mo de marge**. Croissance relevée sur les **12 derniers
+cycles** (champ `mo` des runs `backup-apres-cycle` du ledger, 25/09 → 07/10) :
+**+69,6 Mo par cycle en moyenne, min 62,9, max 80,1**. Donc le **prochain**
+cycle passe à peu près à pile ou face, et **celui d'après échoue à coup sûr** :
+échéance **2026-10-10 au 2026-10-12**.
+
+**Le mode de panne est bénin, et c'est vérifié par lecture du code** : le
+contrôle de taille se fait **avant** la copie et **avant** la rotation
+(`sauvegarder()` l.106-110, rotation l.155-174). Au déclenchement, rien n'est
+écrit et **aucune génération n'est supprimée** ; `main()` rend **1**, le run
+passe `failed`, l'alerte et la veille Haiku parlent. La dernière bonne copie
+survit. Règle 8 tenue — mais la protection **se périme** : plus aucune
+sauvegarde fraîche à partir de l'échéance.
+
+**L'option la moins chère est morte à la mesure** : `VACUUM` (ou `VACUUM INTO`
+à la place de `src.backup(dst)`) ne récupérerait **rien** — `freelist_count = 4`
+pages sur 997 326, soit **0,00 %**. La base n'est pas fragmentée, elle est
+pleine. Il n'existe donc aucun moyen de gagner du temps par le logiciel.
+
+**Laissé à l'arbitrage** (règle 5 — support de sauvegarde et posture de
+protection de la donnée ; et l'option recommandée comporte une étape
+destructrice) : **A.** reformater la clé en exFAT après avoir déplacé les 8,1 Go
+de copies existantes sur `C:` (890,8 Go libres, vérifié), ~1 h, aucune perte si
+fait dans cet ordre, les copies restant sur `C:` pendant l'opération — c'est le
+chemin de retour ; **B.** seconde clé exFAT, l'actuelle figée en lecture seule,
+sans étape destructrice ; **C.** compresser la copie — **à écarter**, les 3
+essais ouvrent la copie avec `sqlite3` pour la **prouver**, une archive
+compressée n'est plus prouvable et ça détruirait précisément le garde-fou qui
+fait la valeur de la chaîne ; **D.** ne rien faire, et perdre la fraîcheur de la
+sauvegarde dans 1 à 2 nuits. **Non fait : ni reformatage, ni relèvement de
+`PLAFOND_FAT32`** — relever la constante serait le pire choix, elle protège
+d'une troncature silencieuse.
+
+### Le retard du serveur mesuré sans libpq
+
+`psycopg` reste bloqué par la stratégie de contrôle d'application. Le retard a
+donc été relevé **par le connecteur MCP Supabase** (HTTPS, pas de libpq) :
+serveur **176 976 / 115 677 actives**, `max(last_seen)` **2026-10-07 01:31 UTC**
+contre **181 670 / 119 105** et **2026-10-09 01:49 UTC** en local → **retard de
+2 j 00 h 18, 4 694 annonces absentes dont 3 428 actives**. Confirme le 3 428 de
+la passe précédente et ajoute le total.
+
+Recoupement qui tranche une ambiguïté : les 115 677 actives du serveur sont
+**exactement** le compte relevé en local par les essais de la sauvegarde du
+07/10 (`178106 annonces, 115677 actives`). La remontée faisait donc son travail
+correctement jusqu'à l'échec — c'est un blocage de DLL, **pas** une dérive de
+périmètre.
+
+**Ce chemin ne remplace pas la remontée** : le connecteur MCP est authentifié de
+façon interactive (absent d'une exécution planifiée) et ne sait pas faire
+l'`INSERT ON CONFLICT` par lots de `upsert_listings_bulk`. **Il mesure, il ne
+remonte pas.** L'arbitrage `pg8000` / Smart App Control reste entier.
+
+### Un piège de mesure, consigné parce qu'il forme une famille
+
+**Le ledger horodate en UTC ; les dates de création de processus Windows et les
+`mtime` de fichiers sont en heure locale (UTC+7).** En comparant les deux, le
+run #760 semblait avoir attendu **exactement 7 h 00 m 00 s** avant de lancer son
+sous-processus — un écart si rond qu'il ressemblait à un délai d'attente. Trois
+causes cherchées et écartées par la mesure avant de comprendre : la veille
+moderne (`Kernel-Power 42/107` — **aucune** mise en veille entre le 08/10 16:26
+et l'instant du constat), un délai dans l'orchestrateur (il n'y en a pas :
+`start_run()` est immédiatement suivi de `shell.run()`), et les deux requêtes de
+référence lues avant la copie (**1,7 s** mesuré). **Il n'y avait pas de panne :
+02:27:56 UTC = 09:27:56 local.** Le cycle se déroulait normalement.
+
+C'est la **troisième** fois que le fuseau fabrique une fausse panne sur ce
+dépôt : `Get-WinEvent` en heure locale et non UTC (2026-08-16), l'ordinal UTC de
+la lane `weekly` du widget (2026-08-10), et celle-ci. Règle 1 : c'est la mesure,
+pas le système mesuré, qui était en cause — pour la huitième fois depuis août.
+
+### Ce qui a été vérifié sain
+
+`pragma quick_check` **ok** (228 s sur 4 Go), 181 670 annonces / 119 105
+actives, 4 sources fraîches sur 5 (`livinginsider` à 16 j, hors lanes depuis
+toujours — point connu, pas une régression). Sauvegarde du 07/10 : 4 012,6 Mo,
+**3/3 essais** concordants, rotation propre. Journaux du cycle : 11 fichiers,
+**0 `[erreur]`**, **0 `SONDE-ECHEC`**, **2 `Traceback`** de la **même** cause
+(libpq). Les 3 constats `parseur_casse` de sévérité haute sont tous antérieurs
+au correctif `48dc427`, aucune récidive. Escalades ouvertes : 0.
+
+Le correctif `report` de la passe précédente **re-vérifié indépendamment** :
+`study/run_study.py` s'importe en **0,09 s** alors que `import psycopg` échoue
+toujours. Le run #759 avait échoué à 09:27:56 local, **avant** la fusion de
+09:37 — échec antérieur au correctif, pas une récidive.
+
+### Non fait
+
+**Aucun code modifié, aucune branche créée** : le seul défaut nouveau se règle
+par une décision de support, pas par du code. `main` intact ; la branche
+`fix/social-leads-mcp-tool-bloat-2026-10-09` laissée dans l'arbre de travail,
+c'est elle qui tourne cette nuit. **`report` non rejoué** malgré son correctif
+vérifié et son statut « DÛ » : le cycle tournait encore (verrou d'instance), et
+une édition hors cycle peut écraser la précédente — défaut déjà mesuré le
+2026-09-28 (5 éditions sur 26 datées de la veille). **Conséquence assumée :
+pas d'étude pour le 09/10, la série saute le 08 et le 09.** **Rien relancé en
+pleine journée.** **Aucune écriture dans le ledger** : le cycle tournait et son
+`overseer` relit l'ensemble en fin de course ; y injecter un constat à la main
+lui ferait signaler un agent qui n'a rien fait de mal. Les **60** posts
+`social-leads` perdus (45 des 01/06/08-10, plus les 15 du lot #758 de cette
+nuit, antérieur au correctif) non repris. Pas de garde-fou de fraîcheur du
+serveur — son seuil est une décision de méthode ; la mesure pour la prendre est
+ci-dessus. `livinginsider` laissé hors lanes.
+
+`agents/queue/mail/` était **déjà vide** à l'ouverture (vidée par la passe de
+09:00) ; l'alerte du plafond FAT32 a été envoyée directement, étant nouvelle et
+datée. Ticket de 03:00 UTC déplacé dans `agents/queue/done/` avec sa résolution.
