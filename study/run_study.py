@@ -33,8 +33,19 @@ for line in open(os.path.join(ROOT, "scraper", ".env"), encoding="utf-8"):
         k, v = line.split("=", 1)
         os.environ.setdefault(k.strip(), v.strip())
 sys.path.insert(0, os.path.join(ROOT, "scraper"))
-import psycopg  # noqa: E402
 import sqlite3  # noqa: E402
+
+# `psycopg` n'est PAS importe ici : il ne sert qu'au chemin `LOWI_STORE=supabase`
+# (un seul appel, plus bas), alors que la reference est locale depuis le
+# 2026-08-23 et que `store()` rend "sqlite" par defaut. Un import de tete rendait
+# l'etude tributaire d'une dependance qu'elle n'utilise pas.
+#
+# Ce n'est pas theorique : la nuit du 2026-10-09, `report` est mort code 1 sur
+# `ImportError: no pq wrapper available` — Smart App Control (Windows) a cesse de
+# faire confiance a la DLL libpq de psycopg_binary et la bloque (evenement
+# CodeIntegrity 3077). L'etude lisait SQLite et n'avait aucun besoin de psycopg :
+# elle est tombee sur un import mort. Import repousse dans la branche qui s'en
+# sert, pour que le blocage de la DLL n'emporte que la remontee vers le serveur.
 
 # Date LOCALE (Bangkok), pas UTC. Le cycle part à 01:00 et `report` finit vers
 # 06:00-09:00 : avant 07:00 locale on est encore la VEILLE en UTC. Mesuré le
@@ -175,6 +186,7 @@ def fetch_all():
     else:
         q_actives = ACTIVES.format(fs="first_seen::text", da="delisted_at::text")
         q_delistees = DELISTEES.format(fs="first_seen::text", da="delisted_at::text", ph="%s")
+        import psycopg  # importe ici seulement : voir la note en tete de fichier
         with psycopg.connect(os.environ["SUPABASE_DB_URL"], connect_timeout=30) as conn:
             cur = conn.execute(q_actives)
             cols = [c.name for c in cur.description]
