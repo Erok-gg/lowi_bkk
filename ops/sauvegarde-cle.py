@@ -23,9 +23,10 @@ LA CLÉ N'EST PAS DÉSIGNÉE PAR SA LETTRE. Elle est reconnue au dossier repère
 `++SCRAP DB++` posé à sa racine : brancher la clé sur un autre port, ou sur
 l'autre poste, ne casse rien. Aucune lettre de lecteur en dur, nulle part.
 
-⚠ FAT32 : la clé actuelle est en FAT32, plafonnée à 4 Go par fichier. La base
-pèse ~1 Go le 2026-08-25 et grossit d'environ 25 Mo par cycle. Le script refuse
-la copie au-delà de 3,9 Go plutôt que de produire un fichier tronqué.
+⚠ FAT32 : plafonné à 4 Go par fichier. Sur un volume FAT32 (ou de format
+illisible), le script refuse la copie au-delà de 3,9 Go plutôt que de produire
+un fichier tronqué. Le plafond est levé sur NTFS / exFAT / ReFS (format lu au
+volume à chaque run). La base pesait 3,80 Go le 2026-10-09, +~70 Mo par cycle.
 
 Usage :
     scraper/.venv/Scripts/python.exe ops/sauvegarde-cle.py
@@ -55,6 +56,34 @@ SOURCE = Path(os.environ.get("LOWI_DB") or (
 
 #: Plafond FAT32, moins une marge. Au-delà, la copie serait tronquée en silence.
 PLAFOND_FAT32 = 3.9 * 1024 ** 3
+
+#: Systèmes de fichiers SANS plafond de 4 Go par fichier. Le plafond n'est levé
+#: que pour eux ; tout le reste — FAT32, FAT, ou un format illisible — le garde.
+#: 2026-10-09 : le contrôle s'appliquait quel que soit le format de la clé, si
+#: bien que la reformater en exFAT ou NTFS (le remède qu'il recommandait
+#: lui-même) n'aurait rien changé — refus à 3,9 Go quand même, la base pesant
+#: 3,80 Go et grossissant de ~70 Mo par cycle.
+SANS_PLAFOND = frozenset({"NTFS", "EXFAT", "REFS"})
+
+
+def systeme_fichiers(dossier: Path) -> str | None:
+    """Format du volume qui porte `dossier` (« FAT32 », « exFAT », « NTFS »…).
+
+    None si illisible : l'appelant garde alors le plafond (prudence par défaut)."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    racine = str(Path(dossier).resolve().anchor)
+    nom = ctypes.create_unicode_buffer(64)
+    ok = ctypes.windll.kernel32.GetVolumeInformationW(
+        ctypes.c_wchar_p(racine), None, 0, None, None, None, nom, len(nom))
+    return nom.value if ok and nom.value else None
+
+
+def plafond(dossier: Path) -> float | None:
+    """Taille maximale d'une copie sur ce volume (None = pas de plafond)."""
+    fs = systeme_fichiers(dossier)
+    return None if fs and fs.upper() in SANS_PLAFOND else PLAFOND_FAT32
 
 
 def trouver_cle() -> Path | None:
@@ -102,10 +131,13 @@ def sauvegarder(essais: int, garder: int) -> dict:
     bilan["destination"] = str(dossier)
 
     taille = SOURCE.stat().st_size
-    if taille > PLAFOND_FAT32:
+    bilan["systeme_fichiers"] = systeme_fichiers(dossier)
+    maxi = plafond(dossier)
+    if maxi is not None and taille > maxi:
         return {**bilan, "ok": False,
                 "raison": f"base de {taille / 1024**3:.2f} Go : au-delà du plafond FAT32 "
-                          f"de 4 Go. Reformater la clé en exFAT ou NTFS."}
+                          f"de 4 Go (volume : {bilan['systeme_fichiers'] or 'format illisible'}). "
+                          f"Reformater la clé en NTFS ou exFAT."}
 
     libre = os.statvfs(dossier).f_bavail * os.statvfs(dossier).f_frsize \
         if hasattr(os, "statvfs") else __import__("shutil").disk_usage(dossier).free

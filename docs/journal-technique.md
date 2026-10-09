@@ -4050,3 +4050,59 @@ restent sur psycopg. Ce sont des outils manuels, mais ils retomberont si Smart
 App Control rebloque la DLL. Pas d'embarquement de la CA Supabase pour
 vérifier le certificat. `test_local_llm` échoue toujours sur PC2 (pas
 d'Ollama, attendu). Rien de changé aux seuils, budgets ou paliers de reprise.
+
+## 2026-10-09 (13:21) — Réparation autonome : passe de contrôle, `report` rejoué
+
+Aucun ticket, aucun mail en attente. Les deux pannes du cycle de la nuit sont closes : `remonter-supabase` ok en pg8000 (runs #762/#763), et `report` — DÛ depuis #759 faute d'avoir été rejoué après le correctif d'import paresseux — relancé à la main, code 0, étude du 09/10 produite. Base : 119 105 actives / 181 670, cohérent avec la sauvegarde USB. **Non fait** : pas de commit (travail pg8000 d'une autre session non commité sur la branche, pas embarqué à sa place) ; plafond FAT32 de la clé toujours à arbitrer par l'utilisateur. Détail : `agents/audits/reparations-2026-10-09.md`, dernière section.
+
+## 2026-10-09 (après-midi, suite) — Les outils manuels Supabase passent aussi en pg8000
+
+**Demande de l'utilisateur**, après la bascule du chemin d'écriture : y faire
+passer aussi les trois outils manuels restés sur psycopg.
+
+**Ce qui change.** Nouveau module `scraper/store/pg.py`, exemplaire unique de
+la connexion : DSN, SSL, délai de socket, enveloppe « à la psycopg ».
+`supabase_store.py` s'y branche : son `_parametres` et son `_Connexion` en
+double sont supprimés. `ops/verifie-synchro.py`, `ops/sync_supabase_local.py`
+et `agents/core/db.py` (`LOWI_STORE=supabase`) appellent `connecter()` en lieu
+et place de `psycopg.connect()`. Deux écarts de pg8000 comblés dans
+l'enveloppe, parce qu'ils casseraient sans bruit :
+- les lignes sont des **listes** chez pg8000 : non hachables, une ligne
+  utilisée comme clé de set ou de dict lèverait. Le curseur rend des tuples ;
+- psycopg interprète `%%` dès que `params` n'est pas None, même vide ; pg8000
+  seulement s'il y a un paramètre. `db.query` passe `()` par défaut : aligné.
+
+**Q&A, lecture seule sur le vrai serveur, parité contre psycopg (encore
+chargeable à l'instant) :**
+- `db.py` : 4 requêtes réelles (médiane par deal_type sur `listings_sane`,
+  agrégat paramétré, `scalar`, `definition_vue`) → **résultats identiques**.
+- `sync_supabase_local` : `condos`, `khet_snapshots`, `scan_runs` vers deux
+  archives temporaires, une par pilote → **18 432 lignes identiques**, même
+  schéma. `prune --dry-run` : le garde-fou **annule** bien la purge quand
+  l'archive est incomplète (4 955 candidates absentes), et n'écrit rien.
+- Types : 300 lignes de **chacune des 11 tables** passées par `adapt()` →
+  identiques (jsonb, booléens, numeric, horodatages).
+- `verifie-synchro.py` lancé de bout en bout avec **psycopg rendu introuvable**
+  → rapport complet, section serveur juste (119 105 actives), psycopg jamais
+  chargé.
+- Nouveau test `agents/tests/test_pg_outils.py` : outils sans psycopg, tuples,
+  `%%`, `with` (commit / rollback / fermeture), et `db.query` sur le vrai
+  serveur quand `LOWI_TEST_RESEAU=1`.
+
+**Non fait** : la **purge réelle** (`--prune`) n'a pas été exercée, puisqu'elle
+supprime des données côté serveur ; seul son garde-fou l'a été. Une sync
+complète de l'archive n'a pas été lancée non plus : elle tire toutes les tables
+du serveur, budget IO compris. Restent sur psycopg les vieux scripts ponctuels
+(`scraper/apply_migrations.py`, `backfill_*`, `purge_extra_images.py`,
+`load_social_leads.py` en mode Supabase, `ops/corriger-khet.py`). Le
+correctif est le même, une ligne chacun, mais on ne me l'a pas demandé.
+
+**Ajout du même après-midi, sauvegarde USB** : en préparant la réponse sur le
+format de la clé, j'ai trouvé que `ops/sauvegarde-cle.py` appliquait le plafond
+de 3,9 Go **quel que soit le système de fichiers**. La reformater en NTFS ou
+exFAT, le remède qu'il recommandait lui-même, n'aurait donc rien changé.
+Désormais le format est lu au volume à chaque run (`GetVolumeInformationW`). Le
+plafond n'est levé que sur NTFS / exFAT / ReFS ; FAT32 ou un format illisible
+le gardent. Vérifié : clé lue « FAT32 », plafond maintenu, donc rien ne change
+tant qu'elle n'est pas reformatée. Test `agents/tests/test_sauvegarde_plafond.py`.
+Le reformatage reste à faire par l'utilisateur (copies déplacées d'abord).

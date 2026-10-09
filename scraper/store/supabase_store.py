@@ -20,16 +20,14 @@ from __future__ import annotations
 
 import json
 import random
-import ssl
 import threading
 import time
 from datetime import datetime, timezone
-from urllib.parse import unquote, urlsplit
 
-import pg8000.dbapi
 from pg8000.exceptions import DatabaseError, InterfaceError
 
 from pipeline import details
+from store import pg
 from store.base import COLONNES_LISTING, BaseStore
 
 
@@ -50,13 +48,9 @@ def Json(valeur):
 #: rejouer 20 min ne changerait rien, elles remontent tout de suite, comme avant.
 SQLSTATE_COUPURE = ("08", "53", "57", "58")
 
-#: Délai de chaque opération de socket. pg8000 n'a qu'UN réglage (connexion ET
-#: requêtes), là où libpq n'avait que `connect_timeout=20`. 20 s aurait coupé
-#: des requêtes légitimes : le 2026-10-06 un checkpoint d'un buffer prenait
-#: 17 à 22 s côté serveur. 300 s borne une socket morte sans couper une requête
-#: lente — le `statement_timeout` du serveur tombe avant. La connexion, elle,
-#: reste bornée à 25 s par le watchdog (`CONNECT_HARD_TIMEOUT`).
-SOCKET_TIMEOUT = 300.0
+#: Délai de socket : voir store/pg.py. La connexion, elle, reste bornée à 25 s
+#: par le watchdog (`CONNECT_HARD_TIMEOUT`).
+SOCKET_TIMEOUT = pg.SOCKET_TIMEOUT
 
 
 def _code_sqlstate(exc: BaseException) -> str | None:
@@ -91,46 +85,11 @@ class ErreurConnexion(Exception):
     complete within 15000ms » en FATAL XX000, qu'aucun code 08 ne signale."""
 
 
-def _parametres(dsn: str) -> dict:
-    """DSN `postgresql://user:pwd@host:port/db` → arguments de pg8000.connect.
+#: Paramètres de connexion et enveloppe « à la psycopg » : exemplaire unique
+#: dans store/pg.py, partagé avec les outils manuels (2026-10-09). Alias
+#: conservés : les tests et `_ouvre` les nomment ainsi.
+_parametres = pg.parametres
 
-    SSL : chiffré SANS vérification du certificat, exactement ce que faisait
-    libpq avec ce DSN (pas de `sslmode` → `prefer`). Mesuré le 2026-10-09 :
-    la vérification échoue (« self-signed certificate in certificate chain »),
-    le pooler présente un certificat de la CA propre à Supabase. Vérifier
-    exigerait d'embarquer cette CA — amélioration possible, pas une régression."""
-    u = urlsplit(dsn)
-    contexte = ssl.create_default_context()
-    contexte.check_hostname = False
-    contexte.verify_mode = ssl.CERT_NONE
-    return {"user": unquote(u.username or ""), "password": unquote(u.password or ""),
-            "host": u.hostname, "port": u.port or 5432,
-            "database": unquote(u.path.lstrip("/")) or "postgres",
-            "ssl_context": contexte, "timeout": SOCKET_TIMEOUT,
-            "application_name": "lowi-remontee"}
-
-
-class _Connexion:
-    """Fine enveloppe : `execute()` rend un curseur, comme `psycopg.Connection`.
-
-    Tout le module (et `ops/remonter-local.py`) écrit
-    `self._execute(...).fetchall()` : garder ce contrat évite de toucher aux
-    823 lignes d'appelants pour un changement de pilote."""
-
-    def __init__(self, brute):
-        self.brute = brute
-        self.brute.autocommit = True
-
-    def execute(self, sql: str, params=()):
-        cur = self.brute.cursor()
-        # Sans paramètres, pg8000 passe par le protocole simple : `%` n'y est
-        # pas interprété. Avec, le style « format » exige `%%` pour un `%`
-        # littéral — aucune requête de ce module n'en contient.
-        cur.execute(sql, tuple(params) if params else ())
-        return cur
-
-    def close(self) -> None:
-        self.brute.close()
 
 #: Meme constat, meme remede que scraper/pipeline/fetch.py (2026-09-04) :
 #: `_execute` ne faisait qu'UN reconnect avant d'abandonner, ce qui a fait
@@ -249,12 +208,12 @@ def _dis_la_vraie_cause() -> None:
         print(f"    ↳ cause réelle de l'attente précédente : {cause}", flush=True)
 
 
-def _ouvre(dsn: str) -> _Connexion:
+def _ouvre(dsn: str) -> pg.Connexion:
     """Point d'appel unique du pilote — c'est lui que les tests remplacent."""
-    return _Connexion(pg8000.dbapi.connect(**_parametres(dsn)))
+    return pg.connecter(dsn, autocommit=True, application_name="lowi-remontee")
 
 
-def _connect_borne(dsn: str) -> _Connexion:
+def _connect_borne(dsn: str) -> pg.Connexion:
     resultat: dict = {}
 
     def _cible() -> None:
@@ -314,7 +273,7 @@ def _recul(exc: BaseException, palier: float) -> tuple[float, float, str]:
 
 
 def _connect_resilient(dsn: str, plafond: float | None = None
-                       ) -> _Connexion:
+                       ) -> pg.Connexion:
     """Ouvre la connexion en absorbant une coupure qui DURE.
 
     POURQUOI CETTE FONCTION EXISTE — asymétrie mesurée le 2026-09-09.

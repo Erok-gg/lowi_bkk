@@ -42,7 +42,9 @@ for line in open(os.path.join(ROOT, "scraper", ".env"), encoding="utf-8"):
         k, v = line.split("=", 1)
         os.environ.setdefault(k.strip(), v.strip())
 sys.path.insert(0, os.path.join(ROOT, "scraper"))
-import psycopg  # noqa: E402
+# pg8000 et non psycopg (2026-10-09) : Smart App Control a bloqué la DLL libpq
+# de psycopg_binary ; store/pg.py est en Python pur. Voir son en-tête.
+from store.pg import connecter  # noqa: E402
 
 
 def log(msg: str) -> None:
@@ -189,7 +191,7 @@ def main() -> None:
     os.makedirs(os.path.dirname(ARCHIVE), exist_ok=True)
     log(f"▶ sync Supabase → {ARCHIVE}")
     db = sqlite3.connect(ARCHIVE)
-    with psycopg.connect(os.environ["SUPABASE_DB_URL"], connect_timeout=30) as pg:
+    with connecter(os.environ["SUPABASE_DB_URL"]) as pg:
         stats = sync(pg, db)
         # Le garde-fou ne portait que sur `listings` : une table mal répliquée
         # ailleurs laissait la purge s'exécuter. Il porte maintenant sur TOUTES

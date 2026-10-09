@@ -54,7 +54,9 @@ for _l in open(os.path.join(ROOT, "scraper", ".env"), encoding="utf-8"):
         _k, _v = _l.split("=", 1)
         os.environ.setdefault(_k.strip(), _v.strip())
 sys.path.insert(0, os.path.join(ROOT, "scraper"))
-import psycopg  # noqa: E402
+# pg8000 et non psycopg (2026-10-09) : Smart App Control a bloqué la DLL libpq
+# de psycopg_binary ; store/pg.py est en Python pur. Voir son en-tête.
+from store.pg import connecter  # noqa: E402
 
 OK, ALERTE, INFO = "  [ok] ", "  [!!] ", "  [--] "
 anomalies: list[str] = []
@@ -132,7 +134,7 @@ def main() -> int:
     titre("2. Serveur Supabase")
     scans = []
     try:
-        with psycopg.connect(os.environ["SUPABASE_DB_URL"], connect_timeout=30) as pg:
+        with connecter(os.environ["SUPABASE_DB_URL"]) as pg:
             c = pg.cursor()
             c.execute("select source, started_at, finished_at, scanned_count, new_count, "
                       "removed_count, changed_count from scan_runs where started_at >= %s "

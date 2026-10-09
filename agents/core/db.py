@@ -142,11 +142,13 @@ def connect():
         conn.create_aggregate("mediane", 1, _Mediane)
         conn.create_function("cle_texte", 1, _cle_texte, deterministic=True)
         return conn
-    import psycopg  # importé après load_env pour bénéficier du sys.path
+    # pg8000 (Python pur) et non psycopg depuis le 2026-10-09 : Smart App
+    # Control bloquait la DLL libpq. Importé après load_env pour le sys.path.
+    from store.pg import connecter
     url = os.environ.get("SUPABASE_DB_URL")
     if not url:
         raise RuntimeError("SUPABASE_DB_URL absent de scraper/.env et .env.local")
-    return psycopg.connect(url)
+    return connecter(url)
 
 
 def query(sql: str, params: tuple = ()) -> list[dict]:

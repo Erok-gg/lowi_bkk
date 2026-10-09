@@ -14,11 +14,12 @@ Pillow>=10.2
 curl_cffi>=0.16.1
 scrapling>=0.4.15
 # partie online (Supabase via Postgres direct) :
-#   - pg8000 : pilote du chemin d'ecriture (store/supabase_store.py) depuis le
-#     2026-10-09. Python pur, aucune DLL : Smart App Control avait bloque la
-#     libpq de psycopg_binary (remontee du 09/10 morte en 9 s).
-#   - psycopg : reste pour les outils manuels (ops/verifie-synchro.py,
-#     ops/sync_supabase_local.py, agents/core/db.py en LOWI_STORE=supabase).
+#   - pg8000 : pilote Supabase depuis le 2026-10-09 (store/pg.py, partage par
+#     store/supabase_store.py, ops/verifie-synchro.py, ops/sync_supabase_local.py
+#     et agents/core/db.py). Python pur, aucune DLL : Smart App Control avait
+#     bloque la libpq de psycopg_binary (remontee du 09/10 morte en 9 s).
+#   - psycopg : ne sert plus qu'aux vieux scripts ponctuels (apply_migrations,
+#     backfill_*, purge_extra_images, load_social_leads --supabase, corriger-khet).
 pg8000>=1.31
 psycopg[binary]>=3.1
 openpyxl>=3.1  # exports xlsx de l'etude (study/run_study.py)
