@@ -53,6 +53,42 @@ def aplatir(metrics: dict) -> dict:
         # report, verifie-backup, backup-apres-cycle et storage.
         plat.update({k: v for k, v in etapes[0].items() if k != "etape"})
     else:
+        # IDEMPOTENCE : repartir de ZÉRO sur les champs sommables que les étapes
+        # portent, au lieu de cumuler par-dessus la valeur déjà à la racine.
+        #
+        # Défaut mesuré le 2026-10-16. `aplatir` est appliquée DEUX fois sur le
+        # même dict : à l'écriture (orchestrator.py, `metrics = aplatir(metrics)`
+        # avant `end_run`) puis à chaque lecture (watch_health, overseer,
+        # fraicheur, ops/pouls, ops/mesure-cadence — c'est le choix assumé du
+        # docstring ci-dessus, pour que la médiane des 10 derniers runs voie
+        # aussi les runs déjà en base). Comme `plat` était amorcé avec la racine
+        # — qui contient DÉJÀ l'agrégat — la somme des étapes s'y ajoutait une
+        # seconde fois : ×2 exactement, et ×3 à la troisième lecture.
+        #
+        # Rejeu du ledger sur 30 j (2026-09-16 → 10-16) : 51 runs sur 391
+        # touchés, tous ×2.00 — extract-fazwaz 26 runs, extract-ddproperty 25,
+        # les deux seuls agents qui chaînent plusieurs étapes. 8 champs chacun
+        # (scannees, nouvelles, changees, retirees, inchangees, dedup,
+        # lignes_log, erreurs_http/images). Exemple : run 859, scannees stocké
+        # 85 811 → lu 171 622. Le journal d'audit du 2026-10-15 porte les deux
+        # chiffres côte à côte, le récit à 171 622 et son propre tableau à
+        # 85 811.
+        #
+        # Ce que ça faussait : les volumes annoncés dans `agents/audits/*.md` et
+        # dans le mail d'alerte, `annonces_ecrites` de `pouls.json`, et la
+        # comparaison aux `bandes` d'agents.json (bornes absolues, calibrées sur
+        # des valeurs vraies) — donc le verdict `volume_anormal`. Les verdicts
+        # fondés sur un RATIO (`derive`, à 0,25 × médiane) ou sur zéro
+        # (`parseur_casse`, `sitemap_non_regenere`) étaient insensibles :
+        # numérateur et médiane étaient gonflés du même facteur.
+        #
+        # On ne vide QUE les champs qu'au moins une étape porte : un sommable
+        # présent à la seule racine (aucune étape ne le déclare) resterait sinon
+        # perdu.
+        portes = {c for e in etapes for c in e if c in SOMMABLES}
+        for cle in portes:
+            plat.pop(cle, None)
+
         for etape in etapes:
             for cle, val in etape.items():
                 if cle in ("etape", "exit"):
