@@ -117,3 +117,14 @@ Contraintes mesurées, à afficher plutôt qu'à cacher :
 - La maille « 2 chambres ±15 % dans un district » sera souvent **sous le minimum** (30 actives, 10 retraits nets) : afficher « données insuffisantes » avec l'effectif, jamais un chiffre nu.
 - La courbe de Bangkok a besoin d'un **point par semaine**, recalculé à date. Ce n'est pas stocké aujourd'hui, et il faut l'ajouter aux snapshots d'étude (`study/run_study.py`).
 **Non fait** : aucun calcul de ces trois niveaux (la maquette porte des chiffres d'exemple) ; série hebdomadaire non construite.
+
+## 2026-10-17 (suite 3) — « buyer's / seller's market » dépliable par une flèche (version rapport)
+Demande de l'utilisateur : la jauge garde les libellés **buyer's market / balanced / seller's market**, et une **flèche** déplie le bloc pour **expliquer pourquoi**.
+Le dépliage reprend les quatre signaux de l'indice de tension existant (`docs/methodes-calculs.md` §7), chacun affiché avec sa valeur, sa référence Bangkok, son sens (vers acheteur ou vers vendeur) et son effectif :
+1. **Écoulement** : mois de stock, net de republications, face à la médiane de Bangkok.
+2. **Pression vendeuse** : vendeurs actifs par immeuble.
+3. **Tendance du stock** sur 3 mois.
+4. **Momentum prix** : pente du prix/m² médian, et part des annonces qui ont baissé leur prix.
+Une phrase de synthèse conclut (« 3 signals of 4 point to buyers »).
+⚠ **Écart avec la proposition du même jour** (libellés relatifs) : en seuils absolus, 35 districts sur 36 seraient « buyer's market ». Les libellés sont donc à lire **par rapport à Bangkok**, et l'explication dépliée doit le dire (« slower than 80 % of Bangkok districts »), sinon le libellé promet plus que ce que la donnée mesure. Arbitrage laissé à l'utilisateur (règle 5).
+**Non fait** : signaux non calculés à la maille de l'annonce ; seuils non fixés.
