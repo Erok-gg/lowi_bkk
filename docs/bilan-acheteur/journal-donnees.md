@@ -91,3 +91,11 @@ est autorisé.
 **Avant de l'afficher** : (1) délistage DDproperty réparé ; (2) mesure refaite sur une seconde fenêtre de 28 jours, avec une corrélation de rang ≥ 0,6 entre les deux ; (3) « données insuffisantes » sous 30 actives ou 10 retraits nets (Bueng Kum, Rat Burana, Thung Khru, Bang Khun Thian aujourd'hui).
 
 **Non fait** : aucune validation externe (REIC, rapports CBRE, Knight Frank) ; fenêtre de republication (−3 / +21 j) non calibrée ; pas de version par cohorte pour le stock (des annonces en double gonflent encore le numérateur).
+
+## 2026-10-17 (suite 2) — premier run réel des scores (fenêtre au 12/10)
+**Santé des sources, mesurée** : au 12/10, DDproperty et PropertyScout sont gardés ; FazWaz est écarté (stock 7 498 → 12 970, +73 %, rattrapage du sitemap) ; LivingInsider et Nestopa sont écartés. Au 15/10, DDproperty est écarté (5 jours sans retrait) et FazWaz gardé. **Aucune fenêtre n'a encore ses deux grandes sources saines.**
+**Tension, tous lots** : Bangkok 47 [44–50] balanced (8 892 cohortes, 693 sorties) ; CBD 35 [32–39] leaning buyer's ; 22 districts notés. Le classement recoupe celui des mois de stock nets : CBD lent (Sathon 26, Ratchathewi 31, Vadhana 34), nord et ouest plus rapides (Bang Phlat 70, Wang Thonglang 69).
+**Annonce test** (The Lumpini 24, 2 ch., 55 m²) : tension 2 ch. Khlong Toei 43 [33–54] ; prix/m² **−13 % face à l'immeuble** (moins cher que 91 % des 11 lots), aligné à 1 km (−1 %, 14 lots), +29 % face au district à mêmes chambres et même surface (76 lots).
+**Liquidité : pas publiable en l'état.** Le filtre « prix du marché » garde environ la moitié des cohortes, et 4 semaines de sorties ne suffisent pas : fourchettes de 30 à 80 points. La courbe d'âge est vide (aucune tranche ne dépasse 9 sorties), et la projection est donc refusée par le code, comme prévu. Il faudra environ 3 mois de données propres, ou une fenêtre plus longue réservée à la liquidité.
+**Défaut corrigé le jour même** : la « profondeur » faisait monter la liquidité avec la taille de la maille (Bangkok à 83, « easy to resell »). Elle est passée hors score, poids 0, et reste affichée comme contexte.
+**Performance** : bilan complet d'une annonce, de plus de 15 min (coupé) à **1 min 30**, en calculant une médiane par groupe au lieu d'une par cohorte. Calcul **mensuel** retenu par l'utilisateur.

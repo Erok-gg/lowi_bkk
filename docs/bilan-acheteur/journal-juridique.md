@@ -28,3 +28,7 @@
 
 ### Non fait
 Aucun avocat consulté.
+
+## 2026-10-17 (suite) — projections de prix et barèmes fiscaux
+7. **Scénarios de prix à 2, 3, 5 ans** dans un rapport payant vendu à un particulier : risque d'être assimilé à du conseil en investissement (SEC Thailand). À faire valider avant toute mise en ligne : formulation en scénarios conditionnels avec hypothèses affichées, aucune recommandation d'achat, avertissement.
+8. **Hidden costs** : taux de taxe foncière, impôt sur les loyers et différences étranger/Thaï, résidence principale ou non, à faire valider par un fiscaliste. Aucun barème n'entre dans le code sans source datée.
