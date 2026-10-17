@@ -135,3 +135,8 @@ Une phrase de synthèse conclut (« 3 signals of 4 point to buyers »).
 **La rue est remplacée par un rayon de 1 km** (mesuré sur les ventes actives dans les bornes) : 71 % des annonces ont une rue, mais la médiane est de **4 groupes de lots par rue** et seulement **1 %** des rues en ont au moins 30 (9 sur 596 dans le CBD) ; les libellés sont sales (« 93 Soi Sukhumvit 24 », un nom de district pris pour une rue). Khet : médiane de 35 groupes, 55 % des khets au-dessus de 30. Immeuble : médiane de 2.
 **Référence chiffrée** (sorties nettes, du 14/09 au 12/10) : Bangkok **6,7 %** du stock part par mois, le CBD **5,8 %**, hors CBD 7,5 %.
 **Non fait** : aucun calcul du score ; table des zones non créée ; rayon non implémenté (coordonnées médianes d'immeuble disponibles dans `recensement-unites`).
+
+## 2026-10-17 (suite 5) — sélecteurs de comparaison en haut de page
+**Web** : une barre de sélecteurs, **en haut et toujours visible au défilement**, avec trois choix indépendants : *Where* (building / within 1 km / khet / CBD / Bangkok), *Bedrooms* (same / any), *Size* (±15 % / any). **Tous les blocs** se recalculent. Chaque changement affiche l'écart avec la sélection précédente (« 30 → 24 (−6) ») et le nouvel effectif ; chaque option du menu porte son effectif ; sous 30 groupes, l'option reste choisissable mais affiche « not enough data » avec la consigne d'élargir. À l'ouverture, la maille par défaut est la plus fine qui a assez de données.
+**Rapport envoyé** : pas de menu. Une **matrice** niveau × (chambres, surface) reprend toutes les combinaisons, chacune avec son effectif.
+**Non fait** : maquette avec chiffres d'exemple seulement ; aucun calcul.
