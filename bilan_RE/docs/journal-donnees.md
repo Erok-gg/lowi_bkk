@@ -2,7 +2,7 @@
 
 > D'où vient chaque chiffre du bilan, ce qui manque, et le recensement des
 > unités. Ajout seul. Retour au projet : [README](README.md).
-> Le flux général du système reste décrit dans [docs/pipeline.md](../pipeline.md).
+> Le flux général du système reste décrit dans [docs/pipeline.md](../../docs/pipeline.md).
 
 ## 2026-10-17 — état des lieux et recensement des unités
 

@@ -1,6 +1,6 @@
 """rapport.py — le bilan d'UNE annonce, en JSON, pour la page beta et le PDF.
 
-    scraper/.venv/Scripts/python.exe -m study.tension.rapport --url <URL d'annonce> [--out dossier]
+    scraper/.venv/Scripts/python.exe -m bilan_RE.tension.rapport --url <URL d'annonce> [--out dossier]
 
 POURQUOI SÉPARÉ DE `bilan()`. Le bilan complet recalcule tout (1 min 30). Le
 calcul par cohorte est désormais MENSUEL (décision de l'utilisateur) : la tension
@@ -9,7 +9,7 @@ et la liquidité viennent du fichier `scores-latest.json` produit par l'agent
 l'annonce elle-même — son histoire, son prix face aux comparables, ses
 drapeaux — soit quelques requêtes SQL : quelques secondes.
 
-Format de sortie : docs/bilan-acheteur/regles-construction-ui.md (« Contrat du
+Format de sortie : bilan_RE/docs/regles-construction-ui.md (« Contrat du
 rapport JSON »). Lecture seule de la base.
 """
 from __future__ import annotations
@@ -38,12 +38,17 @@ from pipeline.normalize import _norm_condo  # noqa: E402
 def _noms(c, condo: str, khet: str) -> list[str]:
     """Toutes les graphies d'un même immeuble dans la base. FazWaz écrit « Noble
     Ploenchit », DDproperty « Noble Ploenchit, Bangkok » : comparer les noms bruts
-    perdait l'immeuble d'un portail à l'autre (trouvé en démo le 2026-10-17 :
-    tension et année introuvables). Même normalisation que `unit_key`."""
+    perdait l'immeuble d'un portail à l'autre (démo du 2026-10-17). Lu par l'index
+    `idx_listings_condo_norm` (18 ms) au lieu d'un parcours de la table (1,5 s).
+    La colonne est tenue à jour après chaque scrap par repertorier-annonces.py."""
     cle = _norm_condo(condo)
-    return sorted({n for (n,) in c.execute(
-        "select distinct trim(condo_name) from listings where khet = ? and condo_name is not null", (khet,))
-        if _norm_condo(n) == cle} | {condo})
+    try:
+        noms = {n for (n,) in c.execute("select distinct trim(condo_name) from listings "
+                                        "where condo_norm = ?", (cle,))}
+    except sqlite3.OperationalError as e:
+        raise SystemExit("colonne condo_norm absente : lancer "
+                         "bilan_RE/ops/repertorier-annonces.py sur cette base") from e
+    return sorted(noms | {condo})
 
 
 def _in(noms: list[str]) -> str:
@@ -243,8 +248,8 @@ def _drapeaux(c, ann: dict, comp: list[dict]) -> list[dict]:
         out.append({"niveau": "medium", "texte": "Quota not stated on the listing: ask whether "
                     "the unit is in the foreign quota."})
     annees = {r[0] for r in c.execute("select distinct d_annee_construction from listings where "
-                                      + _in(ann["noms"]) + " and d_annee_construction between 1970 and 2035",
-                                      ann["noms"])}
+                                      "condo_norm = ? and d_annee_construction between 1970 and 2035",
+                                      (ann["cle"],))}
     if len(annees) > 1:
         out.append({"niveau": "low", "texte": f"Sources disagree on the completion year "
                     f"({', '.join(str(a) for a in sorted(annees))})."})
@@ -272,20 +277,27 @@ def construire(url: str, db: str = DB) -> dict:
            "active": statut == "active", "titre": titre}
     # coordonnées de l'IMMEUBLE (médiane de ses annonces) : le rayon se centre sur le bâtiment
     ann["noms"] = _noms(c, ann["condo"], khet)
-    pts = c.execute("select lat, lng from listings where " + _in(ann["noms"]) + " and lat is not null",
-                    ann["noms"]).fetchall()
+    ann["cle"] = _norm_condo(ann["condo"])
+    pts = c.execute("select lat, lng from listings where condo_norm = ? and lat is not null",
+                    (ann["cle"],)).fetchall()
     if pts:
         ann["lat"] = statistics.median(p[0] for p in pts)
         ann["lng"] = statistics.median(p[1] for p in pts)
-    jour = c.execute("select max(substr(last_seen,1,10)) from listings").fetchone()[0]
-    aujourdhui = date.fromisoformat(jour) if jour else date.today()
+    # max(last_seen) se lit en bout d'index (0,1 ms) ; avec substr() SQLite
+    # parcourait toute la colonne (1,6 s, mesuré)
+    jour = c.execute("select max(last_seen) from listings").fetchone()[0]
+    aujourdhui = date.fromisoformat(jour[:10]) if jour else date.today()
     hist = _histoire(c, i, uk, aujourdhui)
     comp = _comparables(c, ann, cfg, set(hist.pop("ids")))
     sc = _scores(ann["condo"], ch, db)
     # lots distincts en vente (copies multi-portails comptées une fois), pas annonces
     en_vente = len({(r[0], round(r[1] or 0), r[2], round(r[3] or 0, -4)) for r in c.execute(
-        "select bedrooms, area_sqm, d_etage, price from listings where " + _in(ann["noms"])
-        + " and deal_type = 'sale' and status = 'active'", ann["noms"])})
+        # INDEXED BY : sans statistiques (jamais d'ANALYZE sur cette base), SQLite
+        # prenait l'index (deal_type, status) et parcourait les ~60 000 ventes
+        # actives — 2,7 s mesurées, contre quelques ms par l'immeuble. Pas
+        # d'ANALYZE global : il changerait les plans de toutes les requêtes du scraper.
+        "select bedrooms, area_sqm, d_etage, price from listings indexed by idx_listings_condo_norm "
+        "where condo_norm = ? and deal_type = 'sale' and status = 'active'", (ann["cle"],))})
     imm = (sc or {}).get("immeuble") or {}
     tension = liquidite = None
     if sc and sc.get("immeuble"):
@@ -293,7 +305,7 @@ def construire(url: str, db: str = DB) -> dict:
         tension = {"chaine": bloc.get("tension"), "retenu": _niveau_retenu(bloc.get("tension"))}
         liquidite = {"chaine": bloc.get("liquidite"), "retenu": _niveau_retenu(bloc.get("liquidite"))}
     return {**base, "statut": "ok", "donnees_du": aujourdhui.isoformat(),
-            "annonce": {k: v for k, v in ann.items() if k not in ("unit_key", "noms")},
+            "annonce": {k: v for k, v in ann.items() if k not in ("unit_key", "noms", "cle")},
             "histoire": hist, "prix": comp,
             "immeuble": {"lots_en_vente": en_vente, "annee": imm.get("annee"),
                          "charges_thb_m2": imm.get("charges_thb_m2")},

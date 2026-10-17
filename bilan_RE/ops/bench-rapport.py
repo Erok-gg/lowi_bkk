@@ -1,6 +1,6 @@
 """bench-rapport.py — combien de temps prend un bilan sur CETTE machine ?
 
-    python ops/etudes/bench-rapport.py --db <chemin>/bangkok.db
+    python bilan_RE/ops/bench-rapport.py --db <chemin>/bangkok.db
 
 Lance les mêmes 10 annonces que la mesure de référence de PC2 (2026-10-17),
 d'abord une par une, puis par 3 et par 6 en parallèle, et affiche la machine.
@@ -58,7 +58,7 @@ def machine() -> str:
 
 def un_rapport(url: str, db: str, out: str) -> float:
     t = time.perf_counter()
-    r = subprocess.run([sys.executable, "-m", "study.tension.rapport", "--url", url, "--db", db, "--out", out],
+    r = subprocess.run([sys.executable, "-m", "bilan_RE.tension.rapport", "--url", url, "--db", db, "--out", out],
                        cwd=RACINE, capture_output=True, text=True)
     if r.returncode:
         raise RuntimeError(r.stderr[-800:])

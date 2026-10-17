@@ -25,9 +25,9 @@ GRANDES_SOURCES = ("ddproperty", "fazwaz")
 
 def run(led, run_id: int, lane: str, spec: dict) -> dict:
     # import tardif : ne charger le moteur (et la base) que si l'agent tourne
-    from study.tension import lot
-    from study.tension.__main__ import _fin_par_defaut
-    from study.tension.donnees import DB, config
+    from bilan_RE.tension import lot
+    from bilan_RE.tension.__main__ import _fin_par_defaut
+    from bilan_RE.tension.donnees import DB, config
 
     t1 = _fin_par_defaut(DB)
     # `limite` (facultatif dans la spec) sert aux essais : jamais posé en production

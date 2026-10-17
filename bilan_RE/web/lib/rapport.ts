@@ -1,7 +1,7 @@
 /**
  * rapport.ts — génération et lecture des rapports beta (côté serveur uniquement).
  *
- * Le calcul vit en Python (`study/tension/rapport.py`) parce qu'il lit la base de
+ * Le calcul vit en Python (`bilan_RE/tension/rapport.py`) parce qu'il lit la base de
  * référence SQLite de PC2 et le fichier mensuel des scores. Next se contente de
  * lancer ce calcul et de lire le JSON produit.
  *
@@ -67,9 +67,11 @@ const erreur = (id: string) => path.join(DOSSIER, `${id}.error`);
  * chargement le signale (état « unknown »). */
 export const MAX_PARALLELE = 6;
 
-/** Durée d'un calcul quand k tournent en parallèle, ajustée sur les 3 mesures :
- *  t(k) ≈ 6,5 + 3,6·k secondes (10,1 / 17,3 / 28,1 s pour k = 1 / 3 / 6). */
-export const dureeEstimee = (k: number) => 6.5 + 3.6 * Math.max(1, k);
+/** Durée d'un calcul quand k tournent en parallèle, ajustée sur les mesures du
+ *  banc d'essai APRÈS les index (bilan_RE/migrations, 2026-10-17) :
+ *  1,4 / 1,5 / 2,5 s pour k = 1 / 3 / 6 → t(k) ≈ 1,1 + 0,23·k s.
+ *  (Avant les index : 10,1 / 18,5 / 28,1 s, soit 6,5 + 3,6·k.) */
+export const dureeEstimee = (k: number) => 1.1 + 0.23 * Math.max(1, k);
 
 type Tache = { id: string; url: string; recu: number; debut?: number };
 type FileEtat = { enCours: Map<string, Tache>; attente: Tache[] };
@@ -166,7 +168,7 @@ function demarrer(t: Tache): void {
   writeFileSync(marqueur(t.id), new Date().toISOString());
   const p = spawn(
     PYTHON,
-    ["-m", "study.tension.rapport", "--url", t.url, "--db", DB, "--out", DOSSIER],
+    ["-m", "bilan_RE.tension.rapport", "--url", t.url, "--db", DB, "--out", DOSSIER],
     { cwd: RACINE, windowsHide: true },
   );
   let sortie = "";

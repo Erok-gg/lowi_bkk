@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAuthed } from "@/lib/auth";
-import { disponible, lancer, suivi, urlAcceptee } from "@/lib/beta/rapport";
+import { disponible, lancer, suivi, urlAcceptee } from "@/bilan_RE/web/lib/rapport";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

@@ -6,10 +6,10 @@
  *   · PC (≥ 1024 px, pensé pour 1920 × 1080) : colonne gauche collante
  *     (identité, verdict, chiffres clés, bouton PDF), blocs en deux colonnes ;
  *   · PDF (mode="pdf") : fond clair, tout déplié, explications imprimées.
- * Règles : docs/bilan-acheteur/regles-construction-ui.md.
+ * Règles : bilan_RE/docs/regles-construction-ui.md.
  */
 import { useState } from "react";
-import type { Chaine, Comparaison, Niveau, Rapport } from "@/lib/beta/types";
+import type { Chaine, Comparaison, Niveau, Rapport } from "@/bilan_RE/web/lib/types";
 import { EXPLICATIONS } from "./explications";
 
 type Mode = "web" | "pdf";

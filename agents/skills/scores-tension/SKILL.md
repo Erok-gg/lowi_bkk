@@ -11,10 +11,10 @@ calcul complet d'une annonce prend 1 min 30. Le lot partage les niveaux larges
 (Bangkok, zone, district) entre tous les immeubles.
 
 ## Étage
-**T0.** Entièrement déterministe (`study/tension/`) : aucune IA, aucun ticket.
+**T0.** Entièrement déterministe (`bilan_RE/tension/`) : aucune IA, aucun ticket.
 
 ## Entrées
-`scraper/output/bangkok.db` (lecture seule) · `study/tension/config.json`
+`scraper/output/bangkok.db` (lecture seule) · `bilan_RE/tension/config.json`
 (versionnée, méthode `docs/methodes-calculs.md` §12).
 
 ## Procédure
@@ -49,5 +49,5 @@ Aucune vers Claude. Constats : `source_ecartee` (bas, informatif),
 - Tant qu'aucune fenêtre n'a DDproperty et FazWaz sains en même temps, la
   composition du score change d'un mois à l'autre : comparer deux mois demande
   de regarder `sources` dans le fichier.
-- Ne jamais modifier `study/tension/config.json` sans incrémenter
+- Ne jamais modifier `bilan_RE/tension/config.json` sans incrémenter
   `config_version`.

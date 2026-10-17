@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { isAuthed } from "@/lib/auth";
-import AnalyseForm from "@/components/beta/AnalyseForm";
+import AnalyseForm from "@/bilan_RE/web/components/AnalyseForm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

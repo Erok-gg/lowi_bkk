@@ -1,5 +1,5 @@
 /**
- * types.ts — contrat du rapport JSON produit par `study/tension/rapport.py`.
+ * types.ts — contrat du rapport JSON produit par `bilan_RE/tension/rapport.py`.
  * Toute modification du Python se reporte ici (et dans regles-construction-ui.md §4).
  */
 export type Niveau = {

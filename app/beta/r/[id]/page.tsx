@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { isAuthed } from "@/lib/auth";
-import { lire } from "@/lib/beta/rapport";
-import Report from "@/components/beta/Report";
+import { lire } from "@/bilan_RE/web/lib/rapport";
+import Report from "@/bilan_RE/web/components/Report";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

@@ -2,7 +2,7 @@
 
 POURQUOI CE DÉCOUPAGE. Le score doit tenir sans IA et sans relecture humaine :
 tout ce qui décide d'un chiffre vit ici, en fonctions pures, testables sur des
-données synthétiques (study/tests/test_tension_score.py). Le chargement depuis
+données synthétiques (bilan_RE/tests/test_tension_score.py). Le chargement depuis
 SQLite et le filtre de santé des sources sont dans donnees.py.
 
 LE CHEMIN D'UN CHIFFRE
