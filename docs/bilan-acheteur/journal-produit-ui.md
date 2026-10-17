@@ -96,3 +96,12 @@ mesure à faire : il décide si le produit tient.
   4 et 6 ne sont **pas** calculables en ligne aujourd'hui. Le choix
   d'architecture (calcul sur PC2 puis remontée, ou élargissement de la
   fenêtre Supabase) n'est pas fait.
+
+## 2026-10-17 (suite) — bloc « Market tension » ajouté, maquette passée en anglais
+Demande de l'utilisateur : la tension du **district**, puis une comparaison **condo ↔ annonce** du temps passé sur le marché. Nouveau bloc, placé après la réglette de prix :
+- **District** : jauge à trois niveaux (seller's / balanced / buyer's market), mois de stock (stock actif ÷ retraits mensuels), variation du stock sur 3 mois. Source : `cohort_tension` (cohortes `unit_key`), déjà calculée en local.
+- **Jours sur le marché, même nombre de chambres** : trois barres, cette annonce / médiane de l'immeuble / médiane du district, et une phrase (« 2.3× the building median »). Médiane de l'immeuble : à écrire à partir de `first_seen` et de la date de retrait, par cohorte.
+- **Pastille** « indicative · delistings, not sales » : un retrait d'annonce n'est pas une vente confirmée.
+- Le verdict de tête intègre désormais la tension.
+L'interface est en **anglais uniquement**, comme le reste du site (`CLAUDE.md`, « Interface & navigation »).
+**Non fait** : seuils de la jauge (mois de stock pour basculer d'un niveau à l'autre) non fixés, à trancher par l'utilisateur (règle 5). Les médianes par immeuble seront souvent fondées sur trop peu de lots : un seuil minimal reste à mesurer, faute de quoi la barre « building » sera masquée.
