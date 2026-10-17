@@ -105,3 +105,15 @@ Demande de l'utilisateur : la tension du **district**, puis une comparaison **co
 - Le verdict de tête intègre désormais la tension.
 L'interface est en **anglais uniquement**, comme le reste du site (`CLAUDE.md`, « Interface & navigation »).
 **Non fait** : seuils de la jauge (mois de stock pour basculer d'un niveau à l'autre) non fixés, à trancher par l'utilisateur (règle 5). Les médianes par immeuble seront souvent fondées sur trop peu de lots : un seuil minimal reste à mesurer, faute de quoi la barre « building » sera masquée.
+
+## 2026-10-17 (suite 2) — tension : effectifs visibles et infobulle dépliable (demande pour la version rapport)
+Demande de l'utilisateur pour le **rapport livrable** : chaque mesure de tension affiche **son nombre d'échantillons** (stock et retraits nets), et une **infobulle** se déplie en trois niveaux :
+1. **Même chambres, même surface à ±15 %** dans le district : la tension au plus près de l'annonce.
+2. **Même chambres, depuis début 2026** : la tendance de fond.
+3. **Tout Bangkok, mois écoulé**, avec une **petite courbe de l'évolution sur une échelle logarithmique**, pour qu'on lise les variations relatives (passer de 6 à 12 mois pèse autant que de 12 à 24).
+
+Contraintes mesurées, à afficher plutôt qu'à cacher :
+- **« Depuis 2026 » n'existe pas vraiment** : les retraits ne sont fiables que depuis le 2026-07-28 (correctif de délistage), et sur toutes les sources seulement depuis le 2026-09-14. Libellé honnête : « depuis le 14 sept. 2026 », jusqu'à ce que l'historique s'allonge.
+- La maille « 2 chambres ±15 % dans un district » sera souvent **sous le minimum** (30 actives, 10 retraits nets) : afficher « données insuffisantes » avec l'effectif, jamais un chiffre nu.
+- La courbe de Bangkok a besoin d'un **point par semaine**, recalculé à date. Ce n'est pas stocké aujourd'hui, et il faut l'ajouter aux snapshots d'étude (`study/run_study.py`).
+**Non fait** : aucun calcul de ces trois niveaux (la maquette porte des chiffres d'exemple) ; série hebdomadaire non construite.
