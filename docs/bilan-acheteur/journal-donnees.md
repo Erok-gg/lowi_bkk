@@ -66,3 +66,28 @@ est autorisé.
 - Les fiches projet FazWaz et DDproperty ne sont pas collectées en masse. Les
   10 du benchmark l'ont été à la main.
 - `condos` n'est pas mis à jour ; rien n'est remonté sur Supabase.
+
+## 2026-10-17 (suite) — mois de stock par district : mesure et proposition de seuils
+**Définition** : stock vente actif au milieu de la fenêtre ÷ retraits mensualisés. Périmètre : bornes de plausibilité (800 k–100 M, 15–500 m²), sources DDproperty, FazWaz et PropertyScout, fenêtre **2026-09-14 → 2026-10-12** (28 j). Script : `ops/etudes/mois-de-stock.py`.
+
+**Pourquoi cette fenêtre** (mesuré) : les retraits suivent nos changements de pipeline. DDproperty en compte **0 en août** et **12 982 en septembre** (recensement), puis le délistage est **à l'arrêt depuis le 13/10** ; Nestopa n'en a **aucun** pour 2 074 actives ; LivingInsider est cassé depuis le 16/09. FazWaz ne délistait de façon fiable qu'à partir du mode sitemap (14/09).
+
+**Mesuré**
+| | Stock | Retraits | Mois de stock |
+|---|---|---|---|
+| Brut, toutes sources | 49 669 | 11 021 | **4,2** |
+| Net de republications¹ | 49 669 | 3 116 | **14,9** |
+| DDproperty seul, brut | 36 504 | 10 088 | 3,4 (de 2,9 à 4,2 dans **presque tous** les districts) |
+| FazWaz seul, brut | 12 438 | 476 | 24,4 |
+
+¹ Un retrait ne compte pas si une annonce de la même cohorte `unit_key` apparaît entre 3 jours avant et 21 jours après. **72 % des retraits DDproperty sont des republications.**
+
+- **Le brut ne mesure pas le marché.** Il est uniforme sur DDproperty, ce qui est la signature d'un artefact (cf. le time-on-market de 6,9 j du 2026-07-28). Sur 10 districts communs, la corrélation de rang DDproperty / FazWaz vaut **0,02**.
+- **Le net** va de 5,7 à 28,9 mois (36 districts publiables, ≥ 30 actives et ≥ 10 retraits nets). Terciles : **10,8 et 14,9**, médiane 13,0. Le classement met la périphérie ouest et nord en tête (Bang Phlat 5,7, Bangkok Noi 6,3) et le CBD en queue (Ratchathewi 20,4, Pathum Wan 19,4, Sathon 18,9, Khlong Toei 18,0).
+- **Stabilité** : refait sur deux demi-fenêtres (14–27/09 et 28/09–12/10), le classement net a une corrélation de rang de **0,70** (0,66 sur les districts ≥ 500 actives). Il est stable, mais les deux moitiés partagent les mêmes biais de source : **stable ne veut pas dire juste**.
+
+**Proposition de seuils (non décidée, règle 5)** : terciles du net, arrondis, **< 11 · 11–15 · > 15 mois**, avec des libellés **relatifs** (« faster / typical / slower than most Bangkok districts ») et non « seller's / buyer's market ». En seuils absolus (repère classique : < 4 mois pour un marché vendeur, > 6 pour un marché acheteur, établi sur des **ventes**), 36 districts sur 36 seraient « buyer's market » : la jauge ne dirait rien.
+
+**Avant de l'afficher** : (1) délistage DDproperty réparé ; (2) mesure refaite sur une seconde fenêtre de 28 jours, avec une corrélation de rang ≥ 0,6 entre les deux ; (3) « données insuffisantes » sous 30 actives ou 10 retraits nets (Bueng Kum, Rat Burana, Thung Khru, Bang Khun Thian aujourd'hui).
+
+**Non fait** : aucune validation externe (REIC, rapports CBRE, Knight Frank) ; fenêtre de republication (−3 / +21 j) non calibrée ; pas de version par cohorte pour le stock (des annonces en double gonflent encore le numérateur).
