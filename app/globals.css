@@ -117,3 +117,13 @@ body {
 .maplibregl-ctrl-group button + button {
   border-top-color: theme("colors.violet-soft");
 }
+
+/* Bilan acheteur — impression en PDF : A4, marges fines, couleurs conservées,
+   aucun conteneur à hauteur fixe (sinon une seule page est imprimée). */
+@media print {
+  @page { size: A4; margin: 10mm; }
+  html, body { height: auto !important; background: #fff !important; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .h-full { height: auto !important; }
+  .overflow-y-auto { overflow: visible !important; }
+}

@@ -1,0 +1,67 @@
+# Règles de construction — bilan acheteur (beta)
+
+> Tenu **au fil de la construction** (demande de l'utilisateur, 2026-10-17).
+> Une règle qui change se corrige ici, avec la date et le pourquoi.
+> Retour au projet : [README](README.md) · Contenu du bilan : [journal-produit-ui](journal-produit-ui.md).
+
+## 1. Parcours
+1. **`/beta`** : landing avec un seul champ, « paste the link of a listing ».
+2. Envoi → **chargement** : les éléments calculés défilent pendant que le rapport se génère.
+3. **`/beta/r/<id>`** : le bilan. **Même URL sur mobile et sur PC**, la disposition change avec la largeur d'écran.
+4. **Gros bouton « Get the full PDF report »** → `/beta/r/<id>/pdf` : tous les blocs dépliés, toutes les explications, mise en page A4, impression en PDF.
+
+## 2. Mise en page
+| Écran | Largeur | Disposition |
+|---|---|---|
+| Mobile | < 1024 px | une colonne ; blocs repliables (les barres de signaux n'apparaissent **qu'au dépliage**) ; bouton PDF **collé en bas d'écran** |
+| PC | ≥ 1024 px, pensé pour **1920 × 1080** | grille 12 colonnes : colonne gauche (4) collante avec identification, verdict et chiffres clés ; zone droite (8) en deux colonnes de blocs, tous dépliés ; bouton PDF dans l'en-tête de la colonne gauche |
+| PDF | A4 portrait | tout déplié, aucun bouton, explications « How is this computed? » imprimées sous chaque bloc |
+
+## 3. Données affichées
+- **Anglais uniquement** (règle du site).
+- **Chaque chiffre porte son effectif** (« n = 27 ») et chaque score sa **fourchette**.
+- Mentions obligatoires : « Asking prices, not sold prices » ; « Monthly calculation · data as of <date> » ; « Lowi takes nothing from the seller ».
+- Un niveau sans assez de données s'affiche **« not enough data »**, jamais un chiffre nu.
+- **Aucun lien vers les annonces comparables** (choix juridique et produit).
+
+## 4. Génération
+- `study/tension/rapport.py --url <URL> --db <base> --out <dossier>` écrit `<id>.json`. Identifiant = 16 premiers caractères du SHA-256 de l'URL : même URL, même rapport.
+- **Tension et liquidité** viennent du fichier mensuel `scores-tension/scores-latest.json`, situé à côté de la base. Seuls l'historique de l'annonce, le prix face aux comparables et les drapeaux sont calculés à la demande (environ 10 s, mesuré).
+- **Historique de l'annonce** : la cohorte n'est pas le lot. Mesuré : 97 annonces dans « The Lumpini 24, 2 ch., 55 m² ». Deux annonces sont le même lot si elles ont le même étage (quand il est connu), la même surface à ±1 m² et le même prix à ±5 %, et se recouvrent ou se suivent à moins de 14 jours.
+- **Comparables** : au niveau de l'annonce, en dédoublonnant les copies (même immeuble, chambres, surface arrondie, étage, prix à 10 000 THB près), en excluant les copies de l'annonce visée.
+
+## 5. Chargement
+- Il fait défiler **les 8 calculs réellement faits** (portails, historique, comparables, prix/m², tension, revente, vendeurs dans l'immeuble, drapeaux) : il explique ce qu'on obtient, il ne fait pas patienter avec du vide.
+- Il dure **au moins un tour lisible** (6,5 s) et s'arrête dès que le rapport est prêt. Au-delà de deux tours : « Taking longer than usual ». Au-delà de 5 min, le serveur déclare le calcul mort (mesuré : ~10 s).
+- Appels : `POST /api/beta/analyse {url}` → `{id, etat}` ; `GET /api/beta/analyse?id=` toutes les 0,9 s.
+
+## 6. PDF
+- **Bouton or, pleine largeur, 56 px de haut, halo** : le seul élément doré de la page. Collé en bas d'écran sur mobile, dans la colonne gauche sur PC.
+- `/beta/r/<id>/pdf` ouvre la boîte d'impression ; le PDF est produit par « Save as PDF » du navigateur. **Pas de rendu serveur** (Puppeteer) pendant la beta : aucune dépendance lourde, et Vercel n'a de toute façon pas les données.
+- Règles d'impression (`globals.css`, `@media print`) : A4, marges de 10 mm, couleurs conservées, et **aucun conteneur à hauteur fixe**, sinon une seule page sort. Le header du site est masqué (`print:hidden`).
+
+## 7. Disposition PC — détails
+- Conteneur `max-w-[1880px]` (1920 moins 2 × 20 px), colonne gauche **collante**, blocs en deux colonnes à partir de 1280 px (`xl`), une seule entre 1024 et 1280.
+- Entre 1024 et 1280 px, blocs pleine largeur : jamais de bloc plus étroit que ~420 px (la réglette de prix devient illisible en dessous).
+
+## 8. Mobile — détails
+- Testé dans un vrai cadre de 390 px. ⚠ Chrome sans interface impose ~500 px de largeur minimale : une capture `--window-size=390` montre un faux débordement.
+- La navigation du site défile horizontalement sur mobile (sinon elle élargissait tout le document).
+- Le bloc prix est ouvert par défaut ; les autres sont repliés, avec leur résumé (score, première vue) visible.
+
+## 9. Données et accès pendant la beta
+- **Ne fonctionne que sur PC2** : Next lance Python (`LOWI_PYTHON`, défaut `scraper/.venv`) sur la base `LOWI_SQLITE_DB`, et écrit les rapports dans `<dossier de la base>/rapports` (ou `LOWI_RAPPORTS_DIR`). Sur Vercel, l'API répond 503 avec un message clair.
+- L'URL collée n'est jamais passée à un shell : arguments en tableau, portails autorisés en liste blanche.
+- Pages derrière le mot de passe du site (`isAuthed`), comme le reste.
+
+## 10. Défauts trouvés en construisant (et corrigés)
+- Historique : la cohorte agrégeait 97 annonces de lots distincts → règle du « même lot » (§4).
+- Comparables « même immeuble, même surface » à 0 : ils étaient dans la cohorte de l'annonce, qu'on excluait → comparaison au niveau de l'annonce.
+- Mobile : débordement causé par la nav du site ; champ URL écrasé en hauteur dans la colonne flex.
+- « Price change » affichait +1 % malgré une baisse : la première observation venait d'un autre portail, à un autre prix. Libellé corrigé en « Since first seen ». La variation reste multi-portails, à revoir.
+
+## 11. Pas encore fait
+- Paiement, compte, envoi du PDF par mail : la beta montre tout, sans verrou.
+- Niveaux « même surface » de la tension (uniquement dans le bilan complet en ligne de commande).
+- Sections payantes spécifiées mais non construites : perspectives patrimoniales, hidden costs, location et simulateurs.
+- Texte SVG trop grand dans le PDF (les réglettes s'élargissent à 190 mm) : hauteur à fixer.

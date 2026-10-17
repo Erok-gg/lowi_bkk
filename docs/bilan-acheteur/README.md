@@ -46,6 +46,8 @@ Le journal technique du dépôt ([docs/journal-technique.md](../journal-techniqu
 garde les entrées qui touchent au système (scripts, bases, agents).
 
 ## Code et données livrés
+- **Beta en ligne sur PC2** : `/beta` (landing), `/beta/r/<id>` (bilan mobile + PC 1920×1080), `/beta/r/<id>/pdf` (version imprimable). Règles : [regles-construction-ui](regles-construction-ui.md).
+- `study/tension/` : scores (tension, liquidité, prix/m²), lot mensuel, `rapport.py` (bilan d'une annonce en JSON, ~10 s).
 - `ops/recensement-unites.py` : liste de travail du recensement des unités
   (lecture seule de `bangkok.db`). La sortie
   `study/referentiel/recensement-unites.csv` est **hors dépôt** (dépôt
@@ -59,7 +61,7 @@ garde les entrées qui touchent au système (scripts, bases, agents).
 | Recensement des unités | 🟡 liste prête, 1 251 / 4 876 amorcés, aucun relevé manuel |
 | Test de disposition à payer | ⬜ |
 | Avis juridique | ⬜ |
-| Interface | ⬜ |
+| Interface | 🟡 beta : landing, chargement, bilan mobile/PC, PDF par impression (2026-10-17) |
 
 ## Questions ouvertes, à trancher par l'utilisateur
 1. Collecter CondoMaps (source officielle) automatiquement, ou à la main ?
