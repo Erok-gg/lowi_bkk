@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAuthed } from "@/lib/auth";
-import { disponible, etat, lancer, urlAcceptee } from "@/lib/beta/rapport";
+import { disponible, lancer, suivi, urlAcceptee } from "@/lib/beta/rapport";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,13 +18,13 @@ export async function POST(req: Request) {
       { status: 503 },
     );
   const id = lancer(url);
-  return NextResponse.json({ id, etat: etat(id) });
+  return NextResponse.json(suivi(id));
 }
 
-/** GET ?id= → état du calcul, interrogé par l'écran de chargement. */
+/** GET ?id= → état, rang dans la file, compteurs et temps restant estimé. */
 export async function GET(req: Request) {
   if (!(await isAuthed())) return NextResponse.json({ erreur: "Not signed in." }, { status: 401 });
   const id = new URL(req.url).searchParams.get("id") ?? "";
-  return NextResponse.json({ id, etat: etat(id) });
+  return NextResponse.json(suivi(id));
 }
 

@@ -7,9 +7,9 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import AnalysisLoader from "./AnalysisLoader";
+import AnalysisLoader, { type Suivi } from "./AnalysisLoader";
 
-type Phase = { t: "idle" } | { t: "loading"; id: string } | { t: "error"; msg: string };
+type Phase = { t: "idle" } | { t: "loading"; id: string; s?: Suivi } | { t: "error"; msg: string };
 
 export default function AnalyseForm() {
   const [url, setUrl] = useState("");
@@ -29,7 +29,7 @@ export default function AnalyseForm() {
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) return setPhase({ t: "error", msg: j.erreur ?? "Something went wrong. Try again." });
-    setPhase({ t: "loading", id: j.id });
+    setPhase({ t: "loading", id: j.id, s: j });
   }
 
   useEffect(() => {
@@ -38,6 +38,7 @@ export default function AnalyseForm() {
     const tick = async () => {
       const j = await fetch(`/api/beta/analyse?id=${phase.id}`).then((r) => r.json()).catch(() => null);
       if (fini || !j) return;
+      setPhase((p) => (p.t === "loading" ? { ...p, s: j } : p));
       const assez = Date.now() - debut.current > 6500; // un tour de défilement lisible
       if ((j.etat === "ready" || j.etat === "not_found") && assez) {
         fini = true;
@@ -45,6 +46,10 @@ export default function AnalyseForm() {
       } else if (j.etat === "error") {
         fini = true;
         setPhase({ t: "error", msg: "The analysis failed on our side. Try again in a minute." });
+      } else if (j.etat === "unknown" && Date.now() - debut.current > 15000) {
+        // la file vit en mémoire : un redémarrage du serveur la perd
+        fini = true;
+        setPhase({ t: "error", msg: "The server restarted and lost your request. Please submit it again." });
       }
     };
     const h = setInterval(tick, 900);
@@ -52,9 +57,9 @@ export default function AnalyseForm() {
       fini = true;
       clearInterval(h);
     };
-  }, [phase, router]);
+  }, [phase.t === "loading" ? phase.id : "", router]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (phase.t === "loading") return <AnalysisLoader />;
+  if (phase.t === "loading") return <AnalysisLoader s={phase.s} />;
 
   return (
     <form onSubmit={envoyer} className="w-full">

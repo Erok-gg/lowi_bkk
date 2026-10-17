@@ -88,4 +88,10 @@ Pas de file d'attente : chaque nouvelle URL lance son propre processus Python, e
 | 3 | 18,5 s |
 | 6 | 28,1 s |
 Tout passe, mais chaque demande ralentit les autres : les processus se partagent les cœurs et relisent chacun le fichier mensuel de 9,3 Mo et la base. **Aucune limite n'existe** : 30 demandes d'un coup lanceraient 30 processus, y compris pendant le cycle de nuit.
-**À faire avant une ouverture plus large (non décidé)** : plafonner à N calculs parallèles avec une file (position affichée dans le chargement) ; un processus de calcul permanent qui garde les scores en mémoire au lieu de les relire à chaque demande.
+**Fait le même jour** : plafond à 6 et file (§15). **Reste** : un processus de calcul permanent qui garde les scores en mémoire au lieu de les relire à chaque demande.
+
+## 15. File d'attente (décision de l'utilisateur, 2026-10-17)
+- **Au plus 6 calculs en parallèle** (`MAX_PARALLELE`, `lib/beta/rapport.ts`) ; au-delà, file en mémoire du serveur Next, servie dans l'ordre d'arrivée. Une URL déjà calculée, en cours ou en file ne relance rien.
+- **Affiché pendant le chargement** : rang dans la file (« 2 of 3 »), calculs en cours (« 6 / 6 »), rapports traités (total et du jour, comptés sur les fichiers produits), temps restant estimé ; recalculés à chaque interrogation (0,9 s). En file, le défilement des calculs est en pause (« Waiting for a free slot »).
+- **Estimation** : t(k) = 6,5 + 3,6·k s pour k calculs simultanés, ajustée sur les mesures (10,4 / 18,5 / 28,1 s pour 1 / 3 / 6). En file : temps jusqu'à la libération de **sa** place, plus son propre calcul avec ceux qui partent en même temps. Une première version par débit moyen annonçait 33 s pour 52 s réelles. **Essai à 9 demandes simultanées** : 6 prêtes à 26–28 s, 3 en file prêtes à 45–46 s, annoncées 35 à 42 s au moment du dépôt.
+- **Limite connue** : la file est perdue si le serveur redémarre ; le chargement le dit au bout de 15 s (« The server restarted… submit it again »). La file n'est **pas** partagée entre plusieurs instances du serveur (sans objet tant que tout tourne sur PC2).

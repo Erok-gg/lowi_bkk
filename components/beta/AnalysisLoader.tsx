@@ -6,6 +6,21 @@
  */
 import { useEffect, useState } from "react";
 
+/** Ce que renvoie /api/beta/analyse (miroir de `Suivi` dans lib/beta/rapport.ts). */
+export type Suivi = {
+  id: string;
+  etat: string;
+  position: number | null;
+  en_cours: number;
+  en_attente: number;
+  max_parallele: number;
+  traites_total: number;
+  traites_aujourdhui: number;
+  restant_s: number | null;
+};
+
+const duree = (s: number) => (s < 60 ? `~${s} s` : `~${Math.round(s / 60)} min`);
+
 const ETAPES = [
   { t: "Finding the listing in 5 portals", d: "DDproperty · FazWaz · PropertyScout · Nestopa · LivingInsider" },
   { t: "Rebuilding the listing's history", d: "first seen, reposts, price cuts across portals" },
@@ -17,12 +32,15 @@ const ETAPES = [
   { t: "Looking for red flags", d: "quota, outlier price, conflicting building facts" },
 ];
 
-export default function AnalysisLoader() {
+export default function AnalysisLoader({ s }: { s?: Suivi }) {
   const [i, setI] = useState(0);
+  const enFile = s?.etat === "queued";
   useEffect(() => {
+    // en file, rien n'est encore calculé : le défilement attend son tour
+    if (enFile) return;
     const h = setInterval(() => setI((x) => x + 1), 800);
     return () => clearInterval(h);
-  }, []);
+  }, [enFile]);
   const courant = i % ETAPES.length;
   const tours = Math.floor(i / ETAPES.length);
   return (
@@ -31,8 +49,36 @@ export default function AnalysisLoader() {
         <span className="font-logo text-2xl text-gold">
           l<span className="logo-spin-o">o</span>wi
         </span>
-        <span className="text-sm text-text-muted">Analysing the listing…</span>
+        <span className="text-sm text-text-muted">
+          {enFile ? "Waiting for a free slot…" : "Analysing the listing…"}
+        </span>
+        {s?.restant_s != null && (
+          <span className="ml-auto text-sm font-semibold tabular-nums text-text">{duree(s.restant_s)} left</span>
+        )}
       </div>
+      {s && (
+        <div className="mb-4 grid grid-cols-3 gap-2 text-center">
+          <div className="rounded-lg bg-anthracite p-2">
+            <p className="text-[11px] text-text-faint">{enFile ? "Your place in line" : "Status"}</p>
+            <p className="text-sm font-semibold tabular-nums text-text">
+              {enFile ? `${s.position} of ${s.en_attente}` : "computing"}
+            </p>
+          </div>
+          <div className="rounded-lg bg-anthracite p-2">
+            <p className="text-[11px] text-text-faint">Reports running</p>
+            <p className="text-sm font-semibold tabular-nums text-text">
+              {s.en_cours} / {s.max_parallele}
+            </p>
+          </div>
+          <div className="rounded-lg bg-anthracite p-2">
+            <p className="text-[11px] text-text-faint">Reports processed</p>
+            <p className="text-sm font-semibold tabular-nums text-text">
+              {s.traites_total.toLocaleString("en-US")}
+              <span className="font-normal text-text-faint"> · {s.traites_aujourdhui} today</span>
+            </p>
+          </div>
+        </div>
+      )}
       <div className="h-1 w-full overflow-hidden rounded bg-anthracite">
         <div
           className="h-1 bg-violet-fluo transition-all duration-700"
