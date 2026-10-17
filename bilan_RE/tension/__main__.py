@@ -1,7 +1,7 @@
 """Ligne de commande du score de tension. Lecture seule.
 
-    scraper/.venv/Scripts/python.exe -m study.tension --khets
-    scraper/.venv/Scripts/python.exe -m study.tension --annonce <id> [--json sortie.json]
+    scraper/.venv/Scripts/python.exe -m bilan_RE.tension --khets
+    scraper/.venv/Scripts/python.exe -m bilan_RE.tension --annonce <id> [--json sortie.json]
     options : --fin AAAA-MM-JJ (fin de fenêtre, défaut : dernier jour de retrait connu)
               --db <chemin>     (défaut : scraper/output/bangkok.db)
 """

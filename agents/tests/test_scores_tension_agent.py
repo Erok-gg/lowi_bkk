@@ -22,7 +22,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 from agents.bots import scores_tension          # noqa: E402
 from agents.bots.overseer import contrat_de     # noqa: E402
-from study.tension import donnees, lot          # noqa: E402
+from bilan_RE.tension import donnees, lot          # noqa: E402
 
 # la base de référence vit dans le checkout principal (un worktree n'en a pas)
 for cand in (donnees.DB, r"C:\Lowi_bkk\scraper\output\bangkok.db"):

@@ -13,7 +13,7 @@ fausse sur ce dépôt :
   · deux exécutions sur les mêmes données donnent le même intervalle.
 Données synthétiques uniquement : aucune base, aucun réseau.
 
-Rejeu :  scraper/.venv/Scripts/python.exe study/tests/test_tension_score.py
+Rejeu :  scraper/.venv/Scripts/python.exe bilan_RE/tests/test_tension_score.py
 """
 import copy
 import os
@@ -23,8 +23,8 @@ from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from study.tension import coeur, liquidite, prix   # noqa: E402
-from study.tension.donnees import Calcul, config, sante   # noqa: E402
+from bilan_RE.tension import coeur, liquidite, prix   # noqa: E402
+from bilan_RE.tension.donnees import Calcul, config, sante   # noqa: E402
 
 essais = 0
 sys.stdout.reconfigure(encoding="utf-8")   # console Windows en cp1252

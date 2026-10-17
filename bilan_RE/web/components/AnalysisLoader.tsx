@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from "react";
 
-/** Ce que renvoie /api/beta/analyse (miroir de `Suivi` dans lib/beta/rapport.ts). */
+/** Ce que renvoie /api/beta/analyse (miroir de `Suivi` dans bilan_RE/web/lib/rapport.ts). */
 export type Suivi = {
   id: string;
   etat: string;
@@ -19,7 +19,7 @@ export type Suivi = {
   restant_s: number | null;
 };
 
-const duree = (s: number) => (s < 60 ? `~${s} s` : `~${Math.round(s / 60)} min`);
+const duree = (s: number) => (s < 1 ? "<1 s" : s < 60 ? `~${s} s` : `~${Math.round(s / 60)} min`);
 
 const ETAPES = [
   { t: "Finding the listing in 5 portals", d: "DDproperty · FazWaz · PropertyScout · Nestopa · LivingInsider" },

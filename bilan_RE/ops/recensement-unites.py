@@ -25,8 +25,8 @@ reste dans le fichier (statut conservé, `n_actives` = 0).
 Rien n'est écrit dans la base : lecture seule (`mode=ro`).
 
 Usage :
-    scraper/.venv/Scripts/python.exe ops/recensement-unites.py
-    scraper/.venv/Scripts/python.exe ops/recensement-unites.py --db <chemin> --out <csv>
+    scraper/.venv/Scripts/python.exe bilan_RE/ops/recensement-unites.py
+    scraper/.venv/Scripts/python.exe bilan_RE/ops/recensement-unites.py --db <chemin> --out <csv>
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ import statistics
 import sys
 import zlib
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scraper"))
 
@@ -48,7 +48,7 @@ from agents.tests.test_prose_ddproperty import AMBIGU, regex_extrait  # noqa: E4
 from pipeline.normalize import _norm_condo  # noqa: E402
 
 DB = os.path.join(ROOT, "scraper", "output", "bangkok.db")
-OUT = os.path.join(ROOT, "study", "referentiel", "recensement-unites.csv")
+OUT = os.path.join(ROOT, "bilan_RE", "referentiel", "recensement-unites.csv")
 
 AUTO = ["cle", "nom", "khet", "lat", "lng", "n_actives", "n_vente", "n_location",
         "sources", "url_ddproperty", "url_fazwaz", "url_autre",

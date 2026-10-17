@@ -1,7 +1,7 @@
 """mois-de-stock.py — mois de stock (vente) par district, mesure exploratoire du 2026-10-17, lecture seule.
 
-Usage : scraper/.venv/Scripts/python.exe ops/etudes/mois-de-stock.py <sortie.json>
-Résultats et limites : docs/bilan-acheteur/journal-donnees.md (2026-10-17, suite).
+Usage : scraper/.venv/Scripts/python.exe bilan_RE/ops/mois-de-stock.py <sortie.json>
+Résultats et limites : bilan_RE/docs/journal-donnees.md (2026-10-17, suite).
 """
 import sqlite3, collections, statistics, json, sys
 from datetime import datetime, timedelta

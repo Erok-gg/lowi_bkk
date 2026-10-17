@@ -93,4 +93,4 @@ scraper/social/diag/*.json
 scraper/social/diag/*.png
 
 # Liste de travail du recensement des unités : URL d annonces, dépôt public
-study/referentiel/recensement-unites.csv
+bilan_RE/referentiel/recensement-unites.csv

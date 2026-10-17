@@ -1,6 +1,6 @@
 """lot.py — calcul MENSUEL des scores pour tous les immeubles à annonce active.
 
-    scraper/.venv/Scripts/python.exe -m study.tension.lot [--fin AAAA-MM-JJ] [--limite N]
+    scraper/.venv/Scripts/python.exe -m bilan_RE.tension.lot [--fin AAAA-MM-JJ] [--limite N]
 
 POURQUOI UN LOT ET PAS N BILANS. Le bilan d'une annonce prend 1 min 30 (mesuré le
 2026-10-17), presque tout dans les niveaux larges (Bangkok, zone, district), qui

@@ -25,7 +25,7 @@
 - **Aucun lien vers les annonces comparables** (choix juridique et produit).
 
 ## 4. Génération
-- `study/tension/rapport.py --url <URL> --db <base> --out <dossier>` écrit `<id>.json`. Identifiant = 16 premiers caractères du SHA-256 de l'URL : même URL, même rapport.
+- `bilan_RE/tension/rapport.py --url <URL> --db <base> --out <dossier>` écrit `<id>.json`. Identifiant = 16 premiers caractères du SHA-256 de l'URL : même URL, même rapport.
 - **Tension et liquidité** viennent du fichier mensuel `scores-tension/scores-latest.json`, situé à côté de la base. Seuls l'historique de l'annonce, le prix face aux comparables et les drapeaux sont calculés à la demande (environ 10 s, mesuré).
 - **Historique de l'annonce** : la cohorte n'est pas le lot. Mesuré : 97 annonces dans « The Lumpini 24, 2 ch., 55 m² ». Deux annonces sont le même lot si elles ont le même étage (quand il est connu), la même surface à ±1 m² et le même prix à ±5 %, et se recouvrent ou se suivent à moins de 14 jours.
 - **Comparables** : au niveau de l'annonce, en dédoublonnant les copies (même immeuble, chambres, surface arrondie, étage, prix à 10 000 THB près), en excluant les copies de l'annonce visée.
@@ -91,7 +91,19 @@ Tout passe, mais chaque demande ralentit les autres : les processus se partagent
 **Fait le même jour** : plafond à 6 et file (§15). **Reste** : un processus de calcul permanent qui garde les scores en mémoire au lieu de les relire à chaque demande.
 
 ## 15. File d'attente (décision de l'utilisateur, 2026-10-17)
-- **Au plus 6 calculs en parallèle** (`MAX_PARALLELE`, `lib/beta/rapport.ts`) ; au-delà, file en mémoire du serveur Next, servie dans l'ordre d'arrivée. Une URL déjà calculée, en cours ou en file ne relance rien.
+- **Au plus 6 calculs en parallèle** (`MAX_PARALLELE`, `bilan_RE/web/lib/rapport.ts`) ; au-delà, file en mémoire du serveur Next, servie dans l'ordre d'arrivée. Une URL déjà calculée, en cours ou en file ne relance rien.
 - **Affiché pendant le chargement** : rang dans la file (« 2 of 3 »), calculs en cours (« 6 / 6 »), rapports traités (total et du jour, comptés sur les fichiers produits), temps restant estimé ; recalculés à chaque interrogation (0,9 s). En file, le défilement des calculs est en pause (« Waiting for a free slot »).
 - **Estimation** : t(k) = 6,5 + 3,6·k s pour k calculs simultanés, ajustée sur les mesures (10,4 / 18,5 / 28,1 s pour 1 / 3 / 6). En file : temps jusqu'à la libération de **sa** place, plus son propre calcul avec ceux qui partent en même temps. Une première version par débit moyen annonçait 33 s pour 52 s réelles. **Essai à 9 demandes simultanées** : 6 prêtes à 26–28 s, 3 en file prêtes à 45–46 s, annoncées 35 à 42 s au moment du dépôt.
 - **Limite connue** : la file est perdue si le serveur redémarre ; le chargement le dit au bout de 15 s (« The server restarted… submit it again »). La file n'est **pas** partagée entre plusieurs instances du serveur (sans objet tant que tout tourne sur PC2).
+
+## 16. Index et vitesse (2026-10-17)
+- Le temps d'un bilan partait à ~90 % dans des lectures complètes de `listings` (195 832 lignes, 4,6 Go). Deux lots d'index (`bilan_RE/migrations/`, rollbacks à côté) : `condo_norm` (nom normalisé, rempli après chaque scrap par l'agent `repertorier-annonces`), `(deal_type, status, khet)`, `last_seen`, `(deal_type, status, lat)`, `price_history(listing_id)`.
+- Une requête forcée par `INDEXED BY` : sans statistiques, SQLite choisissait l'index (deal_type, status) et parcourait 60 000 lignes (2,7 s). Pas d'`ANALYZE` global, qui changerait les plans de toutes les requêtes du scraper.
+- **Banc d'essai** (`bilan_RE/ops/bench-rapport.py`, mêmes 10 annonces) :
+
+| | Avant | Index lot 1 | + lot 2 | + `INDEXED BY` |
+|---|---|---|---|---|
+| 1 rapport | 10,1 s | 6,0 s | 4,1 s | **1,4 s** |
+| 3 en parallèle | 18,5 s | 10,2 s | 7,1 s | **1,5 s** |
+| 6 en parallèle | 28,1 s | 15,1 s | 11,8 s | **2,5 s** |
+- L'estimation du chargement suit : t(k) = 1,1 + 0,23·k s. Le chargement dure toujours au moins un tour lisible (6,5 s, §5) : c'est désormais lui, et non le calcul, qui fixe l'attente. Le raccourcir est une décision produit.

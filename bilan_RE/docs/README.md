@@ -42,13 +42,24 @@ Détail et risques : [journal-business-model](journal-business-model.md).
 | [journal-donnees](journal-donnees.md) | Origine de chaque chiffre ; trous ; recensement des unités |
 | [journal-juridique](journal-juridique.md) | Points à faire valider par un avocat thaï |
 
-Le journal technique du dépôt ([docs/journal-technique.md](../journal-technique.md))
+Le journal technique du dépôt ([docs/journal-technique.md](../../docs/journal-technique.md))
 garde les entrées qui touchent au système (scripts, bases, agents).
+
+## Où est quoi (`bilan_RE/`, regroupé le 2026-10-17)
+| Dossier | Contenu |
+|---|---|
+| `bilan_RE/tension/` | moteur Python : scores (tension, liquidité, prix/m²), lot mensuel, rapport d'une annonce |
+| `bilan_RE/web/` | composants et logique serveur de la beta (les **routes** restent dans `app/beta` et `app/api/beta` : Next l'impose) |
+| `bilan_RE/ops/` | scripts : recensement des unités, mois de stock, banc d'essai, `repertorier-annonces.py` |
+| `bilan_RE/migrations/` | index SQLite du bilan + leurs rollbacks |
+| `bilan_RE/tests/` | essais du moteur |
+| `bilan_RE/docs/` | ce master, les journaux, les règles de construction |
+Restent dans `agents/` (le cadre des agents l'impose) : `scores-tension` (mensuel) et `repertorier-annonces` (après chaque scrap). Méthode des scores : `docs/methodes-calculs.md` §12.
 
 ## Code et données livrés
 - **Beta en ligne sur PC2** : `/beta` (landing), `/beta/r/<id>` (bilan mobile + PC 1920×1080), `/beta/r/<id>/pdf` (version imprimable). Règles : [regles-construction-ui](regles-construction-ui.md).
-- `study/tension/` : scores (tension, liquidité, prix/m²), lot mensuel, `rapport.py` (bilan d'une annonce en JSON, ~10 s).
-- `ops/recensement-unites.py` : liste de travail du recensement des unités
+- `bilan_RE/tension/` : scores (tension, liquidité, prix/m²), lot mensuel, `rapport.py` (bilan d'une annonce en JSON, ~10 s).
+- `bilan_RE/ops/recensement-unites.py` : liste de travail du recensement des unités
   (lecture seule de `bangkok.db`). La sortie
   `study/referentiel/recensement-unites.csv` est **hors dépôt** (dépôt
   public, le fichier contient des URL d'annonces).

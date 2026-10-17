@@ -1,7 +1,7 @@
 /**
  * explications — le « How is this computed? » de chaque bloc, en anglais (règle du
  * site). Repliées à l'écran, imprimées en entier dans le PDF. Elles décrivent ce
- * que fait réellement le code (study/tension/, methodes-calculs.md §12) : toute
+ * que fait réellement le code (bilan_RE/tension/, methodes-calculs.md §12) : toute
  * modification de méthode se reporte ici.
  */
 export const EXPLICATIONS = {

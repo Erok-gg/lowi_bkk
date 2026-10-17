@@ -422,7 +422,7 @@ un seuil.
 
 ## 12. Scores de tension et de liquidité sur 100 — bilan acheteur (ajouté le 2026-10-17)
 
-Code : `study/tension/` (`coeur.py` pur et testé, `donnees.py` lecture SQLite, `liquidite.py`, `prix.py`). Config versionnée à part : `study/tension/config.json` (`config_version` 1). Tests : `study/tests/test_tension_score.py` (38 essais, données synthétiques). **Calcul mensuel** (décision utilisateur) : le rapport l'affiche, avec la date de fin de fenêtre.
+Code : `bilan_RE/tension/` (`coeur.py` pur et testé, `donnees.py` lecture SQLite, `liquidite.py`, `prix.py`). Config versionnée à part : `bilan_RE/tension/config.json` (`config_version` 1). Tests : `bilan_RE/tests/test_tension_score.py` (38 essais, données synthétiques). **Calcul mensuel** (décision utilisateur) : le rapport l'affiche, avec la date de fin de fenêtre.
 
 ### Pourquoi un score, et pas des « mois de stock »
 Un nombre de mois de stock ne parle pas à un acheteur. En seuils absolus, il classerait de plus 35 districts sur 36 en « buyer's market » (mesuré le 2026-10-17). Le score se lit sur 100, avec **50 = un district typique de Bangkok sur 12 mois glissants**.

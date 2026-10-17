@@ -8,6 +8,7 @@ const config: Config = {
     "./app/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}",
     "./config/**/*.{ts,tsx}",
+    "./bilan_RE/web/**/*.{ts,tsx}",
   ],
   theme: {
     extend: {
