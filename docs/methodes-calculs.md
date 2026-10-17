@@ -417,3 +417,41 @@ par fiche) et une **grille de sensibilité** des deux tolérances. Ces données
 sont dans la table `calibration_runs` et dans
 `scraper/output/social/calibrage/`. C'est là qu'on relit avant de changer
 un seuil.
+
+---
+
+## 12. Scores de tension et de liquidité sur 100 — bilan acheteur (ajouté le 2026-10-17)
+
+Code : `study/tension/` (`coeur.py` pur et testé, `donnees.py` lecture SQLite, `liquidite.py`, `prix.py`). Config versionnée à part : `study/tension/config.json` (`config_version` 1). Tests : `study/tests/test_tension_score.py` (38 essais, données synthétiques). **Calcul mensuel** (décision utilisateur) : le rapport l'affiche, avec la date de fin de fenêtre.
+
+### Pourquoi un score, et pas des « mois de stock »
+Un nombre de mois de stock ne parle pas à un acheteur. En seuils absolus, il classerait de plus 35 districts sur 36 en « buyer's market » (mesuré le 2026-10-17). Le score se lit sur 100, avec **50 = un district typique de Bangkok sur 12 mois glissants**.
+
+### L'unité : la cohorte
+Groupe `unit_key` = même immeuble × chambres × tranche de 5 m² × type. Une cohorte **sort** quand elle est active en début de fenêtre, vide en fin de fenêtre, et que personne ne la repeuple dans les 14 jours suivants. Une republication devient invisible par construction : **72 % des retraits DDproperty sont des republications** (mesuré).
+
+### Santé des sources, recalculée à chaque fenêtre
+Une source est écartée si elle ne retire rien alors qu'elle a au moins 200 actives, si elle reste 5 jours ou plus sans retrait en fin de fenêtre, si son stock gonfle de plus de 50 % (recensement), ou par exclusion manuelle datée (LivingInsider depuis le 16/09, Nestopa). **Constat au 2026-10-17 : aucune fenêtre n'a ses deux grandes sources saines.** Au 12/10, FazWaz est écarté (stock +73 %, rattrapage du sitemap) ; au 15/10, c'est DDproperty (5 jours sans retrait). Tant que ça dure, la composition du score change d'une semaine à l'autre et la série n'est pas comparable.
+
+### Tension : 6 signaux bruts, 5 familles pondérées
+| Famille | Signal | Sens (+ = vendeur) | Poids |
+|---|---|---|---|
+| Écoulement | sorties ÷ cohortes à risque, par mois | + | 0,35 |
+| Durée | âge médian de sortie, **Kaplan-Meier avec censure et troncature à gauche** | − | 0,20 |
+| Offre | −ln(stock t ÷ stock t−90 j) | + | 0,15 |
+| Prix | part des cohortes avec une baisse sur 30 j (−) et prix/m² à panier constant sur 90 j (+), moyennés | ± | 0,15 |
+| Vendeurs | cohortes actives par immeuble | − | 0,15 |
+
+### Liquidité : facilité de revente au prix du marché
+Postulat de l'utilisateur : **on revend à la valeur de marché**. Seules comptent donc les cohortes affichées à ±10 % du prix/m² de leurs **pairs** (même immeuble et mêmes chambres, sinon mêmes chambres dans la maille). Comparer à tout l'immeuble mélangeait studios et grands lots, et écartait des lots normaux : défaut trouvé par un test le jour même. Signaux : vitesse (KM, −) 0,6 ; probabilité de partir en 90 j (+) 0,4. La profondeur, ln(1 + sorties/mois), est calculée et affichée **hors score** : elle grandit avec la taille de la maille (Bangkok ressortait à 83 face à une référence de districts). **Âge** : vitesse remesurée par tranche d'âge d'immeuble (0-5, 5-10, 10-15, 15-20, 20-30, 30+ ans) sur Bangkok à mêmes chambres. La projection à +5 / +10 ans applique le rapport « tranche future ÷ tranche actuelle ». **Jalons de travaux : liste vide à dessein**, à renseigner avec une source ; ils s'affichent sans modifier le score.
+
+### Normalisation, petits échantillons, incertitude
+- z robuste = (x − médiane) ÷ (1,4826 × MAD) face à la **distribution des districts publiables** (mêmes filtres, poolée sur les fenêtres de 28 j des 12 derniers mois), borné à ±3, puis **100 × Φ(z)**. Pas de rang : un rang est à somme nulle. Repli de la référence (mêmes chambres, puis tout le stock) quand les filtres laissent moins de la moitié des signaux ; la référence utilisée est affichée.
+- Retour vers la moyenne hiérarchique : ŝ = (n·s + 20·parent) ÷ (n + 20), le long de Bangkok → zone → district → 1 km → immeuble.
+- Bootstrap de 200 tirages sur les cohortes, graine fixe. Score = médiane, fourchette p10–p90. Le libellé n'est affirmé que si la fourchette reste d'un côté du seuil (35 / 65), sinon « leaning » ; fourchette de plus de 30 points → « not enough data ». Minimum : 30 cohortes et 10 sorties.
+
+### Prix/m² face aux comparables
+Stock actif en fin de fenêtre : immeuble tous lots, immeuble mêmes chambres et ±15 % de surface, puis 1 km et district. Médiane, p25–p75, part des comparables moins chers, verdict. Sous 5 comparables : pas de verdict.
+
+### Ce que ces scores ne disent pas
+Ce sont des **prix affichés** et des **retraits d'annonces**, pas des ventes. Les poids sont des hypothèses de départ, à recalibrer par validation prédictive (le score à t annonce-t-il les baisses et les délais à t + 1 mois ?) dès 3 mois d'historique.

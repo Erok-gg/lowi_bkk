@@ -1,0 +1,102 @@
+{
+  "_comment": "Score de tension acheteur/vendeur (0-100). Méthode : docs/methodes-calculs.md §12. Changer une valeur = incrémenter config_version : le score d'une version n'est pas comparable à celui d'une autre.",
+  "config_version": 1,
+  "fenetre_jours": 28,
+  "_fenetre": "28 j : assez pour ~3 100 sorties nettes sur Bangkok (mesuré 2026-09-14 → 10-12), assez court pour suivre l'évolution semaine par semaine.",
+  "fiable_depuis": "2026-09-14",
+  "_fiable_depuis": "Avant : FazWaz hors sitemap, DDproperty sans délistage (0 retrait en août). Aucune fenêtre ne commence avant cette date.",
+  "grace_repost_jours": 14,
+  "_grace": "Une cohorte vidée puis repeuplée dans les 14 j suivant la fin de fenêtre n'est pas comptée comme sortie. Pour la fenêtre courante, l'avenir est inconnu : sortie provisoire.",
+  "recul_offre_jours": 90,
+  "recul_prix_jours": 90,
+  "fenetre_baisses_jours": 30,
+  "bornes": {
+    "prix_min": 800000,
+    "prix_max": 100000000,
+    "surface_min": 15,
+    "surface_max": 500,
+    "_bornes": "Alignées sur lib/market-bounds.ts et la vue listings_sane — ne pas diverger."
+  },
+  "minimum": {
+    "cohortes": 30,
+    "sorties": 10,
+    "_minimum": "Sous ces seuils le niveau est affiché sans score. 30/10 = seuils du relevé du 2026-10-17 (36 districts sur 40 publiables)."
+  },
+  "retour_moyenne_k": 20,
+  "_retour_moyenne_k": "Repris de SHRINK_K (lib/tension.ts). Poids du parent = k/(n+k) : 20 cohortes pèsent autant que le parent.",
+  "z_borne": 3.0,
+  "poids": {
+    "ecoulement": 0.35,
+    "duree": 0.2,
+    "offre": 0.15,
+    "prix": 0.15,
+    "vendeurs": 0.15,
+    "_poids": "Poids de départ (indice existant + durée). À recalibrer par validation prédictive dès 3 mois d'historique."
+  },
+  "seuils_libelle": {
+    "acheteur": 35,
+    "vendeur": 65
+  },
+  "intervalle_max_points": 30,
+  "bootstrap": {
+    "tirages": 200,
+    "graine": 20261017
+  },
+  "sante_sources": {
+    "stock_min": 200,
+    "jours_sans_retrait_max": 5,
+    "croissance_stock_max": 0.5,
+    "_sante": "Une source est écartée d'une fenêtre si : aucun retrait alors qu'elle a >= 200 actives ; >= 5 jours consécutifs sans retrait en fin de fenêtre (DDproperty à l'arrêt depuis le 13/10) ; stock en hausse de plus de 50 % sur la fenêtre (recensement, pas marché).",
+    "exclusions_manuelles": [
+      {
+        "source": "livinginsider",
+        "depuis": "2026-09-16",
+        "raison": "AWS WAF : plus aucune fiche lue"
+      },
+      {
+        "source": "nestopa",
+        "depuis": "2026-06-01",
+        "raison": "aucun délistage jamais enregistré (list_urls bloqué par robots.txt)"
+      }
+    ]
+  },
+  "zones": {
+    "CBD": [
+      "Pathum Wan District",
+      "Bang Rak District",
+      "Sathon District",
+      "Vadhana District",
+      "Khlong Toei District",
+      "Ratchathewi District"
+    ]
+  },
+  "rayon_km": 1.0,
+  "liquidite": {
+    "_liquidite": "Facilité de revente AU PRIX DU MARCHÉ (postulat utilisateur), et son évolution avec l'âge de l'immeuble. Méthode : docs/methodes-calculs.md §12.",
+    "tolerance_prix": 0.1,
+    "_tolerance_prix": "Seules les cohortes affichées à ±10 % de la médiane de leur immeuble mesurent la vitesse : une annonce surévaluée traîne à cause de son prix, pas du marché.",
+    "poids": {
+      "vitesse": 0.6,
+      "vente90": 0.4,
+      "profondeur": 0.0,
+      "_poids": "profondeur à 0 depuis le 2026-10-17 : le nombre de sorties grandit avec la taille de la maille (Bangkok ressortait à 83, « easy to resell », face à une référence de districts ; un rayon de 1 km sortirait toujours bas). Elle reste calculée et affichée comme contexte, hors score. Vitesse et vente90 renormalisés 0,6 / 0,4."
+    },
+    "tranches_age": [
+      0,
+      5,
+      10,
+      15,
+      20,
+      30
+    ],
+    "_tranches_age": "Au 2026-10-17, actives vente avec année connue : 0-5 ans 6 496, 5-10 6 126, 10-15 5 411, 15-20 4 316, 20-25 898, 25-30 560, 30+ 979. Au-delà de 20 ans les tranches sont regroupées faute d'effectif.",
+    "horizons_ans": [
+      5,
+      10
+    ],
+    "jalons_travaux": [],
+    "_jalons_travaux": "VIDE À DESSEIN. Format : {\"age\": 15, \"libelle\": \"...\", \"source\": \"...\"}. Les âges typiques de gros entretien (façade, ascenseurs, étanchéité) ne sont pas mesurés ici : à renseigner par l'utilisateur avec une source. Ils s'affichent sur la projection, ils ne modifient PAS le score."
+  },
+  "frequence_calcul": "mensuelle",
+  "_frequence_calcul": "Décision utilisateur 2026-10-17 : le travail par cohorte se fait une fois par mois, faute de puissance de calcul pour le refaire à chaque demande. Le rapport affiche « monthly calculation » et la date de fin de fenêtre ; il ne se présente jamais comme du temps réel."
+}

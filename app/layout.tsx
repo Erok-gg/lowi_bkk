@@ -18,9 +18,9 @@ export default function RootLayout({
     <html lang="en">
       <body className="bg-anthracite-deep text-text antialiased">
         <SearchProvider>
-          <div className="flex h-screen flex-col overflow-hidden">
+          <div className="flex h-screen flex-col overflow-hidden print:block print:h-auto print:overflow-visible">
             <LowiHeader />
-            <main className="relative min-h-0 flex-1">{children}</main>
+            <main className="relative min-h-0 flex-1 print:overflow-visible">{children}</main>
           </div>
         </SearchProvider>
       </body>

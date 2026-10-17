@@ -18,6 +18,7 @@ const LINKS: { href: string; label: string; match?: string[] }[] = [
   { href: "/yields-map", label: "Yields", match: ["/yields-map", "/rendements"] },
   { href: "/tension", label: "Tension", match: ["/tension", "/tension-table"] },
   { href: "/deals", label: "Deals" },
+  { href: "/beta", label: "Buyer report", match: ["/beta"] },
 ];
 
 const DEALS: { value: DealFilter; label: string }[] = [
@@ -104,7 +105,7 @@ export default function LowiHeader() {
   const pathname = usePathname();
 
   return (
-    <header className="relative z-30 flex h-14 shrink-0 items-center justify-between border-b border-violet-soft bg-anthracite-deep px-4">
+    <header className="relative z-30 flex h-14 shrink-0 print:hidden items-center justify-between border-b border-violet-soft bg-anthracite-deep px-4">
       <Link href="/" className="font-logo text-2xl text-text">
         <span className="text-gold">lowi</span>
         <span className="ml-1 align-middle text-[10px] uppercase tracking-widest text-text-faint">bkk</span>
@@ -115,14 +116,16 @@ export default function LowiHeader() {
         <MapSearch />
       </div>
 
-      <nav className="flex items-center gap-1">
+      {/* Défilable sur mobile : sinon la nav élargit tout le document et la page
+          déborde à droite (constaté sur le bilan acheteur à 390 px, 2026-10-17). */}
+      <nav className="ml-3 flex min-w-0 items-center gap-1 overflow-x-auto whitespace-nowrap">
         {LINKS.map((l) => {
-          const active = (l.match ?? [l.href]).includes(pathname);
+          const active = (l.match ?? [l.href]).some((m) => pathname === m || pathname.startsWith(m + "/"));
           return (
             <Link
               key={l.href}
               href={l.href}
-              className={`rounded-md px-3 py-1.5 text-sm transition ${
+              className={`shrink-0 rounded-md px-3 py-1.5 text-sm transition ${
                 active ? "bg-surface text-gold" : "text-text-muted hover:text-text"
               }`}
             >
