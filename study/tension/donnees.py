@@ -17,7 +17,10 @@ from . import coeur, liquidite, prix as prix_mod
 
 ICI = os.path.dirname(os.path.abspath(__file__))
 RACINE = os.path.dirname(os.path.dirname(ICI))
-DB = os.path.join(RACINE, "scraper", "output", "bangkok.db")
+# LOWI_OUTPUT_DIR : même convention que l'orchestrateur en mode --local (base de
+# test), sinon la base de référence de PC2.
+SORTIES = os.environ.get("LOWI_OUTPUT_DIR") or os.path.join(RACINE, "scraper", "output")
+DB = os.path.join(SORTIES, "bangkok.db")
 
 
 def config(chemin: str | None = None) -> dict:

@@ -435,6 +435,23 @@
       "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté."
     },
     {
+      "name": "scores-tension",
+      "famille": "Analyse",
+      "tier": "T0",
+      "lanes": [
+        "daily"
+      ],
+      "every_days": 30,
+      "module": "agents.bots.scores_tension",
+      "_pourquoi": "Ajouté le 2026-10-17 (bilan acheteur). Mensuel par décision de l'utilisateur : ~50 min pour ~4 000 immeubles (2 min 15 fixes + 0,7 s/immeuble, mesuré). Lit bangkok.db en lecture seule, écrit scraper/output/scores-tension/, aucune remontée Supabase. Placé après report pour lire la base une fois le cycle d'extraction terminé.",
+      "bandes": {
+        "erreurs": [
+          0,
+          0
+        ]
+      }
+    },
+    {
       "name": "backup-apres-cycle",
       "famille": "Data reporting",
       "tier": "T0",
