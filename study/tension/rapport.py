@@ -26,8 +26,28 @@ import sys
 from collections import defaultdict
 from datetime import date, timedelta
 
+import sys as _sys
+
 from . import coeur
-from .donnees import DB, SORTIES, config
+from .donnees import DB, RACINE, SORTIES, config
+
+_sys.path.insert(0, os.path.join(RACINE, "scraper"))
+from pipeline.normalize import _norm_condo  # noqa: E402
+
+
+def _noms(c, condo: str, khet: str) -> list[str]:
+    """Toutes les graphies d'un même immeuble dans la base. FazWaz écrit « Noble
+    Ploenchit », DDproperty « Noble Ploenchit, Bangkok » : comparer les noms bruts
+    perdait l'immeuble d'un portail à l'autre (trouvé en démo le 2026-10-17 :
+    tension et année introuvables). Même normalisation que `unit_key`."""
+    cle = _norm_condo(condo)
+    return sorted({n for (n,) in c.execute(
+        "select distinct trim(condo_name) from listings where khet = ? and condo_name is not null", (khet,))
+        if _norm_condo(n) == cle} | {condo})
+
+
+def _in(noms: list[str]) -> str:
+    return "trim(condo_name) in (" + ",".join("?" * len(noms)) + ")"
 
 RAPPORTS = os.path.join(SORTIES, "rapports")
 TOL_SURFACE = 0.15
@@ -151,12 +171,13 @@ def _comparables(c, ann: dict, cfg: dict, exclure: set) -> list[dict]:
         cle = ((condo or "").strip(), ch, round(surf), et, round(p, -4))
         uniques.setdefault(cle, (p / surf, (condo or "").strip(), khet, ch, surf, la, ln))
     coh = list(uniques.values())
-    surf, ch, condo = ann["surface"], ann["chambres"], ann["condo"]
+    surf, ch = ann["surface"], ann["chambres"]
+    noms = set(ann["noms"])
     meme = lambda x: x[3] == ch and abs(x[4] - surf) <= TOL_SURFACE * surf
     proche = lambda x: (ann["lat"] is not None and x[5] is not None
                         and coeur.distance_km(ann["lat"], ann["lng"], x[5], x[6]) <= cfg["rayon_km"])
-    mailles = [("building", "The building, all units", lambda x: x[1] == condo),
-               ("building_same", "The building, same beds & size", lambda x: x[1] == condo and meme(x)),
+    mailles = [("building", "The building, all units", lambda x: x[1] in noms),
+               ("building_same", "The building, same beds & size", lambda x: x[1] in noms and meme(x)),
                ("radius_same", f"Within {cfg['rayon_km']:g} km, same beds & size", lambda x: proche(x) and meme(x)),
                ("khet_same", f"{ann['khet'].replace(' District', '')}, same beds & size",
                 lambda x: x[2] == ann["khet"] and meme(x))]
@@ -186,7 +207,8 @@ def _scores(condo: str, chambres, db: str) -> dict | None:
         return None
     with open(chemin, encoding="utf-8") as f:
         s = json.load(f)
-    imm = next((x for x in s["immeubles"] if x["immeuble"] == condo), None)
+    cle = _norm_condo(condo)
+    imm = next((x for x in s["immeubles"] if x.get("cle", _norm_condo(x["immeuble"])) == cle), None)
     entete = {k: s.get(k) for k in ("fin_fenetre", "calcule_le", "frequence_calcul", "config_version")}
     entete["sources_gardees"] = sorted(k for k, v in s["sources"].items() if v["gardee"])
     if not imm:
@@ -221,8 +243,8 @@ def _drapeaux(c, ann: dict, comp: list[dict]) -> list[dict]:
         out.append({"niveau": "medium", "texte": "Quota not stated on the listing: ask whether "
                     "the unit is in the foreign quota."})
     annees = {r[0] for r in c.execute("select distinct d_annee_construction from listings where "
-                                      "trim(condo_name) = ? and d_annee_construction between 1970 and 2035",
-                                      (ann["condo"],))}
+                                      + _in(ann["noms"]) + " and d_annee_construction between 1970 and 2035",
+                                      ann["noms"])}
     if len(annees) > 1:
         out.append({"niveau": "low", "texte": f"Sources disagree on the completion year "
                     f"({', '.join(str(a) for a in sorted(annees))})."})
@@ -249,8 +271,9 @@ def construire(url: str, db: str = DB) -> dict:
            "unit_key": uk, "quota": quota, "etage": etage, "meuble": meuble,
            "active": statut == "active", "titre": titre}
     # coordonnées de l'IMMEUBLE (médiane de ses annonces) : le rayon se centre sur le bâtiment
-    pts = c.execute("select lat, lng from listings where trim(condo_name) = ? and lat is not null",
-                    (ann["condo"],)).fetchall()
+    ann["noms"] = _noms(c, ann["condo"], khet)
+    pts = c.execute("select lat, lng from listings where " + _in(ann["noms"]) + " and lat is not null",
+                    ann["noms"]).fetchall()
     if pts:
         ann["lat"] = statistics.median(p[0] for p in pts)
         ann["lng"] = statistics.median(p[1] for p in pts)
@@ -261,8 +284,8 @@ def construire(url: str, db: str = DB) -> dict:
     sc = _scores(ann["condo"], ch, db)
     # lots distincts en vente (copies multi-portails comptées une fois), pas annonces
     en_vente = len({(r[0], round(r[1] or 0), r[2], round(r[3] or 0, -4)) for r in c.execute(
-        "select bedrooms, area_sqm, d_etage, price from listings where trim(condo_name) = ? "
-        "and deal_type = 'sale' and status = 'active'", (ann["condo"],))})
+        "select bedrooms, area_sqm, d_etage, price from listings where " + _in(ann["noms"])
+        + " and deal_type = 'sale' and status = 'active'", ann["noms"])})
     imm = (sc or {}).get("immeuble") or {}
     tension = liquidite = None
     if sc and sc.get("immeuble"):
@@ -270,7 +293,7 @@ def construire(url: str, db: str = DB) -> dict:
         tension = {"chaine": bloc.get("tension"), "retenu": _niveau_retenu(bloc.get("tension"))}
         liquidite = {"chaine": bloc.get("liquidite"), "retenu": _niveau_retenu(bloc.get("liquidite"))}
     return {**base, "statut": "ok", "donnees_du": aujourdhui.isoformat(),
-            "annonce": {k: v for k, v in ann.items() if k not in ("unit_key",)},
+            "annonce": {k: v for k, v in ann.items() if k not in ("unit_key", "noms")},
             "histoire": hist, "prix": comp,
             "immeuble": {"lots_en_vente": en_vente, "annee": imm.get("annee"),
                          "charges_thb_m2": imm.get("charges_thb_m2")},

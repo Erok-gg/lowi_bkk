@@ -69,3 +69,13 @@
 
 ## 12. Premier lot mensuel réel (2026-10-17, fenêtre au 12/10)
 2 896 immeubles en **19 min** (mesuré ; estimation précédente : ~50 min), 0 erreur, fichier de 9,3 Mo. Bilan test : tension 43 « balanced » à 1 km (n = 126 groupes, 11 sorties), 41 à Bangkok, 36 dans le CBD ; liquidité non publiée, comme prévu.
+- **Noms d'immeubles** : rapprochés par nom normalisé (`_norm_condo`, la règle de `unit_key`), jamais par nom brut. FazWaz « Noble Ploenchit » et DDproperty « Noble Ploenchit, Bangkok » se perdaient : comparables de l'immeuble 32 au lieu de 206, tension et année introuvables (démo du 2026-10-17). Corrigé dans le rapport et dans le lot mensuel (champ `cle`).
+
+## 13. Délai de livraison mesuré (démo du 2026-10-17, PC2, serveur de dev)
+| Étape | Temps |
+|---|---|
+| Envoi de l'URL → réponse de l'API | 0,26 s |
+| Rapport calculé (nouvelle URL) | **10,4 s** |
+| Écran de chargement (durée minimale volontaire) | 6,5 s, donc masquée par le calcul |
+| Affichage du bilan | 0,3 s (1re visite), 0,2 s ensuite |
+| Même URL redemandée | 0,2 s (rapport déjà calculé, rien n'est recalculé) |

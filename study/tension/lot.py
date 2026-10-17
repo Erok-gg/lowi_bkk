@@ -70,9 +70,19 @@ def calculer(t1: date, cfg: dict, db: str = DB, limite: int | None = None, journ
     gardees = [s for s, v in calc.sante.items() if v["gardee"]]
     journal(f"fenêtre au {t1} · sources gardées : {', '.join(gardees)} · {len(calc.cohortes)} cohortes")
 
+    # Regroupement par nom NORMALISÉ (même règle que unit_key) : FazWaz écrit
+    # « Noble Ploenchit », DDproperty « Noble Ploenchit, Bangkok ». Par nom brut,
+    # un même immeuble se scindait en plusieurs entrées (trouvé en démo, 2026-10-17).
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "scraper"))
+    from pipeline.normalize import _norm_condo
     par_immeuble = defaultdict(list)
+    libelles = defaultdict(lambda: defaultdict(int))
     for c in calc.cohortes:
-        par_immeuble[c.condo].append(c)
+        k = _norm_condo(c.condo)
+        par_immeuble[k].append(c)
+        libelles[k][c.condo] += 1
     grille = Grille(calc.cohortes)
     fx = calc.faits(t1)
     fs_de = lambda cs: [fx[c.cle] for c in cs if c.cle in fx]
@@ -107,7 +117,7 @@ def calculer(t1: date, cfg: dict, db: str = DB, limite: int | None = None, journ
             voisins = list(grille.autour(lat, lng, cfg["rayon_km"])) if lat is not None else []
             annee = next((c.annee for c in cs_imm if c.annee), None)
             charges = next((a.charges for c in cs_imm for a in c.annonces if a.charges), None)
-            ligne = {"immeuble": condo, "khet": khet, "lat": lat, "lng": lng, "annee": annee,
+            ligne = {"immeuble": max(libelles[condo], key=libelles[condo].get), "cle": condo, "khet": khet, "lat": lat, "lng": lng, "annee": annee,
                      "charges_thb_m2": charges, "par_chambres": {}}
             for ch in [None] + chambres_presentes:
                 cle_ch = "all" if ch is None else str(ch)
