@@ -201,7 +201,9 @@ def _niveau_retenu(chaine: dict | None) -> dict | None:
     if not chaine:
         return None
     for nom in reversed(list(chaine)):
-        if chaine[nom]["score"] is not None:
+        # un score dont la fourchette est trop large porte « not enough data » :
+        # il ne s'affiche pas en tête (mesuré : liquidité 89, fourchette 10–100)
+        if chaine[nom]["score"] is not None and chaine[nom]["libelle"] != "not enough data":
             return {"niveau": nom, **chaine[nom]}
     return None
 

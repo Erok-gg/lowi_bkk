@@ -65,3 +65,7 @@
 - Niveaux « même surface » de la tension (uniquement dans le bilan complet en ligne de commande).
 - Sections payantes spécifiées mais non construites : perspectives patrimoniales, hidden costs, location et simulateurs.
 - Texte SVG trop grand dans le PDF (les réglettes s'élargissent à 190 mm) : hauteur à fixer.
+- Un score dont la fourchette est trop large (« not enough data ») s'affichait quand même (liquidité 89, fourchette 10–100) : **un score n'est montré que s'il a un libellé**, en tête comme dans les comparaisons par niveau.
+
+## 12. Premier lot mensuel réel (2026-10-17, fenêtre au 12/10)
+2 896 immeubles en **19 min** (mesuré ; estimation précédente : ~50 min), 0 erreur, fichier de 9,3 Mo. Bilan test : tension 43 « balanced » à 1 km (n = 126 groupes, 11 sorties), 41 à Bangkok, 36 dans le CBD ; liquidité non publiée, comme prévu.

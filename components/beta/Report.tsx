@@ -116,7 +116,10 @@ function Chaines({ chaine, mode }: { chaine: Chaine | null | undefined; mode: Mo
   return (
     <div className="mt-4 space-y-2">
       <p className={`text-xs ${P.doux}`}>Compared at every level</p>
-      {Object.entries(chaine).map(([nom, v]) => (
+      {Object.entries(chaine).map(([nom, brut]) => {
+        // fourchette trop large = pas de chiffre affiché, même si le calcul en a un
+        const v = brut.libelle === "not enough data" ? { ...brut, score: null } : brut;
+        return (
         <div key={nom} className="grid grid-cols-[minmax(0,9rem)_1fr_2.5rem] items-center gap-2 text-xs">
           <span className="truncate">{nom.replace(", Bangkok", "").replace(" District", "")}</span>
           <div className="h-2 rounded" style={{ background: P.piste }}>
@@ -129,7 +132,8 @@ function Chaines({ chaine, mode }: { chaine: Chaine | null | undefined; mode: Mo
             {v.score === null ? "not enough data · " : `${v.libelle} · `}n = {v.n_cohortes}
           </span>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
