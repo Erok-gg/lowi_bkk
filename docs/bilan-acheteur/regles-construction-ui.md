@@ -79,3 +79,13 @@
 | Écran de chargement (durée minimale volontaire) | 6,5 s, donc masquée par le calcul |
 | Affichage du bilan | 0,3 s (1re visite), 0,2 s ensuite |
 | Même URL redemandée | 0,2 s (rapport déjà calculé, rien n'est recalculé) |
+
+## 14. Demandes simultanées (mesuré le 2026-10-17, PC2, 8 cœurs, serveur de dev)
+Pas de file d'attente : chaque nouvelle URL lance son propre processus Python, en parallèle des autres. Une même URL demandée deux fois ne lance qu'un calcul (marqueur `.pending`).
+| Demandes simultanées | Dernier rapport prêt |
+|---|---|
+| 1 | 10,4 s |
+| 3 | 18,5 s |
+| 6 | 28,1 s |
+Tout passe, mais chaque demande ralentit les autres : les processus se partagent les cœurs et relisent chacun le fichier mensuel de 9,3 Mo et la base. **Aucune limite n'existe** : 30 demandes d'un coup lanceraient 30 processus, y compris pendant le cycle de nuit.
+**À faire avant une ouverture plus large (non décidé)** : plafonner à N calculs parallèles avec une file (position affichée dans le chargement) ; un processus de calcul permanent qui garde les scores en mémoire au lieu de les relire à chaque demande.
