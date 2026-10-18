@@ -303,12 +303,52 @@ class FazwazAdapter(BaseAdapter):
         stubs.sort(key=lambda s: s["lastmod"] or "", reverse=True)
         print(f"  sitemap : {len(stubs)} annonces dans le périmètre "
               f"({', '.join(sorted(self._deal_types()))}), triées par lastmod", flush=True)
+        deja = {s["source_url"] for s in stubs}
         for i, stub in enumerate(stubs, 1):
             if limit and i > limit:
                 return
             if i % 10000 == 0:
                 print(f"  ── sitemap : {i}/{len(stubs)} parcourues", flush=True)
             yield stub
+        if not limit:
+            yield from self._complement_liste(fetcher, deja)
+
+    def _complement_liste(self, fetcher: Fetcher, deja: set[str]) -> Iterator[dict]:
+        """Filet contre un sitemap figé : pages de liste Bangkok, tri par défaut
+        (aucun `order_by`, interdit par robots.txt), seules les annonces ABSENTES
+        du sitemap sont émises.
+
+        Pourquoi : le sitemap n'est plus republié depuis le 2026-10-14 (≥ 4 nuits,
+        lastmod d'index inchangé alors que /sitemap.xml, lui, est daté du jour) ;
+        0 nouvelle annonce par nuit au lieu d'une médiane de ~280. Mesuré le
+        2026-10-18 : 25 pages × 2 deal_types (~2 min) ramènent 195 + 186 annonces
+        inconnues de la base, dont 123 + 147 d'id > max connu (donc créées depuis
+        le gel) et 13 + 34 délistées à tort. Le site plafonne la pagination à
+        25 pages × 30 = 750 par chemin (page 26 → 404, mesuré) : ce n'est donc
+        qu'un filet, pas un remplaçant. Le stub sans `lastmod` suit le chemin
+        « prix lu en liste » de run.py (inconnue → fiche ouverte)."""
+        pages = int(self.config.get("list_complement_max_pages", 0))
+        if pages <= 0:
+            return
+        base = self.config["base_url"]
+        param = self.config.get("page_param", "page")
+        filtre = self._sitemap_filter()
+        n = 0
+        for search in self.config["searches"]:
+            chemin = urljoin(base + "/", search["path"].lstrip("/"))
+            for page in range(1, pages + 1):
+                html = fetcher.get_text(chemin if page == 1 else f"{chemin}?{param}={page}")
+                stubs = self._parse_list_page(html) if html else []
+                if not stubs:
+                    break
+                for stub in stubs:
+                    url = stub["source_url"]
+                    if url in deja or not filtre.search(url):
+                        continue
+                    deja.add(url)
+                    n += 1
+                    yield stub
+        print(f"  complément liste : {n} annonces absentes du sitemap", flush=True)
 
     # ───────────────────────── liste ─────────────────────────
     def list_urls(self, fetcher: Fetcher, limit: int | None = None) -> Iterator[dict]:
