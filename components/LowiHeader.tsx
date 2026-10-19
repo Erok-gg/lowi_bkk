@@ -4,11 +4,20 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { useSearch, type DealFilter } from "@/components/SearchProvider";
+import PublicNav from "@/bilan_RE/web/components/PublicNav";
+import type { Langue } from "@/bilan_RE/web/i18n";
 
 /**
  * LowiHeader — header Lowi sombre. Logo « lowi » (police MCTen) + accent or.
- * Nav inline en anglais, sans sélecteur de langue ni menu hamburger.
- * Barre de recherche centrée (uniquement sur la carte) : filtre les pins.
+ *
+ * DEUX NAVS, une seule barre (2026-10-19).
+ *   · Pages internes (carte, tableaux, rendements, tension, deals) : la nav
+ *     complète en anglais, derrière le mot de passe partagé. C'est l'outil.
+ *   · Pages du produit (`/beta…`) : `PublicNav` — connexion, inscription,
+ *     langue, et rien qui mène à la carte. Demande explicite : « la landpage ne
+ *     donne pas accès à la map ou autres infos ».
+ * Le partage se fait sur l'URL, pas sur un drapeau passé à la main : une page
+ * ajoutée sous /beta hérite automatiquement de la bonne nav.
  */
 const LINKS: { href: string; label: string; match?: string[] }[] = [
   { href: "/", label: "The map" },
@@ -101,8 +110,26 @@ function MapSearch() {
   );
 }
 
-export default function LowiHeader() {
+export default function LowiHeader({
+  langue = "en",
+  email = null,
+}: {
+  langue?: Langue;
+  email?: string | null;
+}) {
   const pathname = usePathname();
+  const produit = pathname === "/beta" || pathname.startsWith("/beta/");
+
+  if (produit)
+    return (
+      <header className="relative z-30 flex h-14 shrink-0 items-center justify-between border-b border-violet-soft bg-anthracite-deep px-4 print:hidden">
+        {/* Le logo renvoie à la landing du produit, pas à la carte. */}
+        <Link href="/beta" className="font-logo text-2xl text-text">
+          <span className="text-gold">lowi</span>
+        </Link>
+        <PublicNav langue={langue} email={email} />
+      </header>
+    );
 
   return (
     <header className="relative z-30 flex h-14 shrink-0 print:hidden items-center justify-between border-b border-violet-soft bg-anthracite-deep px-4">

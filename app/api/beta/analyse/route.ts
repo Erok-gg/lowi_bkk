@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isAuthed } from "@/lib/auth";
+import { accesProduit } from "@/bilan_RE/web/lib/acces";
 import { disponible, lancer, suivi, urlAcceptee } from "@/bilan_RE/web/lib/rapport";
 
 export const runtime = "nodejs";
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 /** POST { url } → lance (ou retrouve) le rapport. Réponse : { id, etat } ou { erreur }. */
 export async function POST(req: Request) {
-  if (!(await isAuthed())) return NextResponse.json({ erreur: "Not signed in." }, { status: 401 });
+  if (!(await accesProduit())) return NextResponse.json({ erreur: "Not signed in." }, { status: 401 });
   const { url } = (await req.json().catch(() => ({}))) as { url?: string };
   if (!url) return NextResponse.json({ erreur: "Paste the link of a listing." }, { status: 400 });
   const ok = urlAcceptee(url);
@@ -23,7 +23,7 @@ export async function POST(req: Request) {
 
 /** GET ?id= → état, rang dans la file, compteurs et temps restant estimé. */
 export async function GET(req: Request) {
-  if (!(await isAuthed())) return NextResponse.json({ erreur: "Not signed in." }, { status: 401 });
+  if (!(await accesProduit())) return NextResponse.json({ erreur: "Not signed in." }, { status: 401 });
   const id = new URL(req.url).searchParams.get("id") ?? "";
   return NextResponse.json(suivi(id));
 }

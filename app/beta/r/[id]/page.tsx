@@ -1,15 +1,18 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { isAuthed } from "@/lib/auth";
+import { accesProduit } from "@/bilan_RE/web/lib/acces";
 import { lire } from "@/bilan_RE/web/lib/rapport";
 import Report from "@/bilan_RE/web/components/Report";
+import { compteCourant } from "@/bilan_RE/web/lib/session";
+import { possede } from "@/bilan_RE/web/lib/comptes";
+import { langueCourante } from "@/bilan_RE/web/lib/langue";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export default async function RapportPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  if (!(await isAuthed())) redirect(`/login?next=/beta/r/${id}`);
+  if (!(await accesProduit())) redirect(`/login?next=/beta/r/${id}`);
   const r = lire(id);
   if (!r || r.statut === "not_found")
     return (
@@ -25,5 +28,19 @@ export default async function RapportPage({ params }: { params: Promise<{ id: st
         </Link>
       </div>
     );
-  return <Report r={r} />;
+
+  // Le bilan reste lisible sans compte (il est gratuit, backlog #1) ; c'est le
+  // rapport complet en PDF qui demande l'e-mail. L'état du compte est résolu
+  // ici parce que `Report` est un composant navigateur.
+  const [compte, langue] = await Promise.all([compteCourant(), langueCourante()]);
+  return (
+    <Report
+      r={r}
+      acces={{
+        langue,
+        connecte: Boolean(compte),
+        possede: Boolean(compte && possede(compte.id, id)),
+      }}
+    />
+  );
 }

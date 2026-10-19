@@ -8,10 +8,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AnalysisLoader, { type Suivi } from "./AnalysisLoader";
+import { traducteur, type Langue } from "../i18n";
 
 type Phase = { t: "idle" } | { t: "loading"; id: string; s?: Suivi } | { t: "error"; msg: string };
 
-export default function AnalyseForm() {
+export default function AnalyseForm({ langue = "en" }: { langue?: Langue }) {
+  const t = traducteur(langue);
   const [url, setUrl] = useState("");
   const [phase, setPhase] = useState<Phase>({ t: "idle" });
   const router = useRouter();
@@ -19,7 +21,7 @@ export default function AnalyseForm() {
 
   async function envoyer(e: React.FormEvent) {
     e.preventDefault();
-    if (!url.trim()) return setPhase({ t: "error", msg: "Paste the link of a listing first." });
+    if (!url.trim()) return setPhase({ t: "error", msg: t("form_need_link") });
     setPhase({ t: "loading", id: "" });
     debut.current = Date.now();
     const r = await fetch("/api/beta/analyse", {
@@ -28,7 +30,7 @@ export default function AnalyseForm() {
       body: JSON.stringify({ url }),
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) return setPhase({ t: "error", msg: j.erreur ?? "Something went wrong. Try again." });
+    if (!r.ok) return setPhase({ t: "error", msg: j.erreur ?? t("form_failed") });
     setPhase({ t: "loading", id: j.id, s: j });
   }
 
@@ -64,7 +66,7 @@ export default function AnalyseForm() {
   return (
     <form onSubmit={envoyer} className="w-full">
       <label htmlFor="url" className="sr-only">
-        Link of the listing
+        {t("form_label")}
       </label>
       <div className="flex flex-col gap-3 sm:flex-row">
         <input
@@ -84,7 +86,7 @@ export default function AnalyseForm() {
           type="submit"
           className="h-14 rounded-xl bg-violet-fluo px-7 text-base font-semibold text-white shadow-violet-glow transition hover:brightness-110 active:scale-[0.98]"
         >
-          Analyse this listing
+          {t("form_cta")}
         </button>
       </div>
       {phase.t === "error" && (

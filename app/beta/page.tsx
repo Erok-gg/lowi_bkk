@@ -1,36 +1,53 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { isAuthed } from "@/lib/auth";
+import { accesProduit } from "@/bilan_RE/web/lib/acces";
 import AnalyseForm from "@/bilan_RE/web/components/AnalyseForm";
+import { i18n } from "@/bilan_RE/web/lib/langue";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const POINTS = [
-  { t: "Is the price right?", d: "Price per m² against the same building, the same beds and size, within 1 km." },
-  { t: "Is the seller in a hurry?", d: "How long it has been listed, on how many portals, and every price cut." },
-  { t: "Who has the upper hand?", d: "A buyer's-or-seller's market score out of 100, with the sample behind it." },
-  { t: "Will it resell?", d: "How fast similar units sell at market price, and how that changes as the building ages." },
-];
+/**
+ * Landing du produit.
+ *
+ * ACCÈS (2026-10-19). Elle est faite pour être publique — nav réduite à
+ * connexion / inscription, aucun lien vers la carte ni vers les tableaux. Mais
+ * l'ouverture ne se fait PAS en silence : il faut poser `LOWI_BETA_PUBLIQUE=1`.
+ * Sans cette variable, le mot de passe partagé reste en place, exactement comme
+ * avant. Ouvrir au public est une décision, pas un effet de bord d'un commit —
+ * et le chemin du retour est le même interrupteur (règle 7).
+ */
+
 
 export default async function BetaPage() {
-  if (!(await isAuthed())) redirect("/login?next=/beta");
+  if (!(await accesProduit())) redirect("/login?next=/beta");
+  const { t, langue } = await i18n();
+
+  const POINTS = [
+    { t: t("land_p1_t"), d: t("land_p1_d") },
+    { t: t("land_p2_t"), d: t("land_p2_d") },
+    { t: t("land_p3_t"), d: t("land_p3_d") },
+    { t: t("land_p4_t"), d: t("land_p4_d") },
+  ];
+
   return (
     <div className="h-full overflow-y-auto">
       <section className="mx-auto flex max-w-3xl flex-col items-center px-4 pb-16 pt-14 text-center sm:pt-24">
         <span className="mb-6 rounded-full border border-gold/40 px-3 py-1 text-xs uppercase tracking-[0.18em] text-gold">
-          Private beta
+          {t("land_badge")}
         </span>
         <h1 className="text-3xl font-semibold leading-tight text-text sm:text-5xl">
-          Check a Bangkok condo <span className="text-violet-fluo">before</span> you make an offer.
+          {t("land_title_a")}{" "}
+          {/* La mise en valeur du mot « before » n'existe qu'en anglais : en thaï
+              et en chinois la phrase se construit autrement, les deux morceaux
+              suivants sont alors vides et rien ne casse. */}
+          {t("land_title_em") && <span className="text-violet-fluo">{t("land_title_em")}</span>}{" "}
+          {t("land_title_b")}
         </h1>
-        <p className="mt-5 max-w-xl text-base text-text-muted sm:text-lg">
-          Paste the link of the listing. We compare it with what the market really offers, across five portals.
-        </p>
+        <p className="mt-5 max-w-xl text-base text-text-muted sm:text-lg">{t("land_sub")}</p>
         <div className="mt-10 w-full max-w-2xl text-left">
-          <AnalyseForm />
-          <p className="mt-3 text-center text-xs text-text-faint">
-            Free summary · full report as PDF · Lowi takes nothing from the seller
-          </p>
+          <AnalyseForm langue={langue} />
+          <p className="mt-3 text-center text-xs text-text-faint">{t("land_free")}</p>
         </div>
       </section>
       <section className="mx-auto grid max-w-5xl gap-4 px-4 pb-20 sm:grid-cols-2 lg:grid-cols-4">
@@ -41,9 +58,15 @@ export default async function BetaPage() {
           </div>
         ))}
       </section>
-      <p className="mx-auto max-w-3xl px-4 pb-10 text-center text-xs text-text-faint">
-        Based on asking prices and listing exits, not confirmed sales. Market scores are recalculated monthly.
-        Not investment advice.
+      <p className="mx-auto max-w-3xl px-4 pb-6 text-center text-xs text-text-faint">
+        {/* « market analysis », jamais « valuation » ni « appraisal » : ces mots
+            sont réservés aux évaluateurs agréés en Thaïlande (backlog #36). */}
+        {t("land_disclaimer")}
+      </p>
+      <p className="pb-10 text-center text-xs">
+        <Link href="/beta/privacy" className="text-text-faint underline">
+          {t("cookie_more")}
+        </Link>
       </p>
     </div>
   );

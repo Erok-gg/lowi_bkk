@@ -11,6 +11,8 @@
 import { useState } from "react";
 import type { Chaine, Comparaison, Niveau, Rapport } from "@/bilan_RE/web/lib/types";
 import { EXPLICATIONS } from "./explications";
+import PdfGate from "./PdfGate";
+import type { Langue } from "@/bilan_RE/web/i18n";
 
 type Mode = "web" | "pdf";
 const thb = (v: number) => "THB " + (v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : Math.round(v).toLocaleString("en-US"));
@@ -175,7 +177,87 @@ function verdict(r: Rapport): string {
   return s.charAt(0).toUpperCase() + s.slice(1) + ".";
 }
 
-export default function Report({ r, mode = "web" }: { r: Rapport; mode?: Mode }) {
+/**
+ * `acces` : l'état du compte, résolu par la page serveur (le composant est côté
+ * navigateur et ne peut pas lire les cookies). Absent → bouton PDF ouvert comme
+ * avant, ce qui garde la version imprimable et les tests inchangés.
+ */
+/**
+ * MoisDeStock — « le marché en mois de stock », le dépliant pédagogique de la
+ * tension (demandé le 2026-10-19 : « je trouve cela facile à comprendre »).
+ *
+ * Les trois bandes (< 3 / 4–6 / > 6 mois) sont le repère classique du métier,
+ * et il est donné comme tel : c'est une grille de LECTURE, pas notre mesure.
+ * Nous ne pouvons pas encore l'afficher sur l'annonce, et le dire est plus
+ * utile que de l'inventer (règle 1, mesuré le 2026-10-17, journal-donnees) :
+ *   · nos mois de stock se calculent sur des RETRAITS d'annonces, pas sur des
+ *     ventes notariées comme le repère d'origine ;
+ *   · net des republications, les 36 districts publiables vont de 5,7 à 28,9
+ *     mois, médiane 13,0 : avec la grille absolue, 35 sur 36 seraient « buyer's
+ *     market » et la jauge ne dirait plus rien ;
+ *   · le délistage DDproperty est à l'arrêt depuis le 13/10, donc aucune
+ *     fenêtre n'a encore ses deux grandes sources saines en même temps.
+ * D'où un score RELATIF de 0 à 100, et cette explication pour le relier à la
+ * grille que tout le monde connaît.
+ */
+function MoisDeStock({ mode }: { mode: Mode }) {
+  const P = palette(mode);
+  const pdf = mode === "pdf";
+  const BANDES = [
+    {
+      t: "High tension",
+      m: "under 3 months",
+      d: "Very little on offer. Buyers move fast, units go almost as soon as they appear, and several buyers can end up on the same one.",
+    },
+    {
+      t: "Balanced",
+      m: "4 to 6 months",
+      d: "A healthy market. There is room to negotiate, without having to rush.",
+    },
+    {
+      t: "Low tension",
+      m: "over 6 months",
+      d: "More on offer than buyers. Sellers wait, and the leverage is on your side.",
+    },
+  ];
+  return (
+    <details open={pdf} className={`mt-4 rounded-lg ${P.fond2} p-3`}>
+      <summary className={`cursor-pointer text-xs font-semibold ${P.doux} ${pdf ? "list-none" : ""}`}>
+        Another way to read a market: months of supply
+      </summary>
+      <p className={`mt-2 text-xs leading-relaxed ${P.doux}`}>
+        Months of supply is how long it would take to sell everything on the market at the current pace. It is the
+        plainest way to say who has the upper hand:
+      </p>
+      <ul className="mt-2 space-y-1.5">
+        {BANDES.map((b) => (
+          <li key={b.t} className={`text-xs leading-relaxed ${P.doux}`}>
+            <span className="font-semibold">{b.t}</span> ({b.m}) — {b.d}
+          </li>
+        ))}
+      </ul>
+      <p className={`mt-2 text-xs leading-relaxed ${P.faible}`}>
+        We do not put a month figure on this listing yet, and we would rather say so. That scale was built on recorded
+        sales; what we can see are listings leaving the portals, and one portal has been publishing no removals since 13
+        October. Measured across Bangkok on 17 October, once agent reposts are removed, districts ranged from 5.7 to
+        28.9 months — on that scale almost every district in the city reads as a buyer&apos;s market, which tells you
+        nothing about where you actually have leverage. So the score above is relative instead: 50 is a typical Bangkok
+        district over the last 12 months, lower means more leverage for you than usual, higher means less. The months
+        figure appears here as soon as removals are reliable across portals.
+      </p>
+    </details>
+  );
+}
+
+export default function Report({
+  r,
+  mode = "web",
+  acces,
+}: {
+  r: Rapport;
+  mode?: Mode;
+  acces?: { langue: Langue; connecte: boolean; possede: boolean };
+}) {
   const P = palette(mode);
   const pdf = mode === "pdf";
   const a = r.annonce!, h = r.histoire!;
@@ -213,12 +295,16 @@ export default function Report({ r, mode = "web" }: { r: Rapport; mode?: Mode })
     </div>
   );
 
-  const boutonPdf = !pdf && (
-    <a href={`/beta/r/${r.id}/pdf`} target="_blank" rel="noopener"
-      className="flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-gold text-base font-bold text-[#16131f] shadow-[0_0_24px_rgba(201,168,76,0.45)] transition hover:brightness-110 active:scale-[0.98]">
-      <span aria-hidden="true">⬇</span> Get the full PDF report
-    </a>
-  );
+  const boutonPdf =
+    !pdf &&
+    (acces ? (
+      <PdfGate rapportId={r.id} langue={acces.langue} connecte={acces.connecte} possede={acces.possede} />
+    ) : (
+      <a href={`/beta/r/${r.id}/pdf`} target="_blank" rel="noopener"
+        className="flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-gold text-base font-bold text-[#16131f] shadow-[0_0_24px_rgba(201,168,76,0.45)] transition hover:brightness-110 active:scale-[0.98]">
+        <span aria-hidden="true">⬇</span> Get the full PDF report
+      </a>
+    ));
 
   const mentions = (
     <p className={`text-xs ${P.faible}`}>
@@ -288,6 +374,7 @@ export default function Report({ r, mode = "web" }: { r: Rapport; mode?: Mode })
       <Bloc titre="Market tension" id="tension" mode={mode} ouvert={pdf}
         resume={<Score n={r.tension?.retenu} mode={mode} />}>
         <Chaines chaine={r.tension?.chaine} mode={mode} />
+        <MoisDeStock mode={mode} />
       </Bloc>
 
       <Bloc titre="Ease of resale" id="liquidite" mode={mode} ouvert={pdf}

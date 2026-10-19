@@ -32,6 +32,9 @@ bilan partiel est gratuit, le bilan complet payant.
   apporteur.
 Détail et risques : [journal-business-model](journal-business-model.md).
 
+## Toutes les idées et leur état : [backlog](backlog.md)
+Liste unique de ce qui a été demandé pour le bilan, avec ce qui est fait, spécifié ou à faire.
+
 ## Journaux par sous-projet
 | Journal | Porte sur |
 |---|---|
@@ -58,6 +61,11 @@ Restent dans `agents/` (le cadre des agents l'impose) : `scores-tension` (mensue
 
 ## Code et données livrés
 - **Beta en ligne sur PC2** : `/beta` (landing), `/beta/r/<id>` (bilan mobile + PC 1920×1080), `/beta/r/<id>/pdf` (version imprimable). Règles : [regles-construction-ui](regles-construction-ui.md).
+- **Build 2 (2026-10-19)** : landing **publique** (nav réduite à connexion / inscription, aucun lien vers la carte), **comptes** à l'e-mail seul avec mot de passe généré et envoyé par e-mail, `/beta/reports` (les bilans restent dans le compte), bandeau **RGPD / PDPA** avec preuve en base, notice `/beta/privacy`, interface en **anglais / thaï / chinois**.
+  - ⚠ **L'ouverture au public est un interrupteur, pas un état** : `LOWI_BETA_PUBLIQUE=1` (non posé). Sans lui, tout `/beta…` reste derrière le mot de passe partagé, comme avant.
+  - ⚠ **Aucun paiement** : les colonnes existent (`paye`, `paiement_ref`, nom / prénom / naissance / nationalité) et restent vides ; pendant la beta, posséder le rapport suffit à ouvrir le PDF.
+  - Base des comptes : `scraper/output/comptes.db`, **séparée** de `bangkok.db`. Schéma : exemplaire unique dans `bilan_RE/web/lib/comptes-schema.ts` (ajouter un champ = une ligne) ; migration et rollback dans `bilan_RE/migrations/2026-10-19_comptes{,_rollback}.sql`.
+  - E-mails : déposés dans `agents/queue/mail/` et envoyés par le connecteur Gmail — pas de SMTP, donc pas de mot de passe applicatif sur la machine. L'envoi prend donc quelques minutes.
 - `bilan_RE/tension/` : scores (tension, liquidité, prix/m²), lot mensuel, `rapport.py` (bilan d'une annonce en JSON, ~10 s).
 - `bilan_RE/ops/recensement-unites.py` : liste de travail du recensement des unités
   (lecture seule de `bangkok.db`). La sortie
@@ -73,6 +81,7 @@ Restent dans `agents/` (le cadre des agents l'impose) : `scores-tension` (mensue
 | Test de disposition à payer | ⬜ |
 | Avis juridique | ⬜ |
 | Interface | 🟡 beta : landing, chargement, bilan mobile/PC, PDF par impression (2026-10-17) |
+| Comptes, landing publique, RGPD, 3 langues | 🟡 livré le 2026-10-19 — **paiement non branché**, traductions et notice non relues |
 
 ## Questions ouvertes, à trancher par l'utilisateur
 1. Collecter CondoMaps (source officielle) automatiquement, ou à la main ?
