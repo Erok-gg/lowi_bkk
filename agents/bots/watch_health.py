@@ -123,6 +123,21 @@ def _classer(nouvelles: int | None, erreurs: int, mediane: float | None,
     return "ok", "low"
 
 
+def _mail_zero(name: str, verdict: str, fige: bool, mediane, log) -> tuple[str, str]:
+    """Sujet et corps du mail « 0 annonce ». La cause probable est dite en clair
+    pour qu'on sache d'emblée si le site est en cause ou notre parseur."""
+    if verdict == "sitemap_non_regenere" or fige:
+        cause = ("le site n'a pas republié son sitemap (cause extérieure ; le complément "
+                 "par pages de liste ne couvre que 750 annonces par type)")
+    elif verdict == "panne_reseau":
+        cause = "erreurs réseau pendant le scan"
+    else:
+        cause = "cause non établie (parseur probablement cassé)"
+    return (f"{name} : 0 nouvelle annonce",
+            f"{name} n'a ramené aucune nouvelle annonce.\nCause probable : {cause}.\n"
+            f"Médiane habituelle : {mediane}\nLog : {log}")
+
+
 def run(led, run_id: int, lane: str, spec: dict) -> dict:
     detail, anomalies, escalades = [], 0, 0
 
@@ -175,6 +190,17 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
                     {"nouvelles": nouvelles, "mediane": mediane, "erreurs": erreurs,
                      "erreurs_images": err_images, "run_id": last["id"]}, run_id)
 
+        # Un extracteur qui ramène 0 annonce = mail direct, quelle que soit la
+        # cause (règle posée par l'utilisateur le 2026-10-19). Avant, le constat
+        # `sitemap_non_regenere` montait en sévérité haute (16-18/10, FazWaz à 0
+        # pour une médiane d'environ 280) sans qu'aucun mail ne parte : seul
+        # `parseur_casse` alertait, et seulement au 2e run.
+        mail_envoye = False
+        if nouvelles == 0:
+            sujet, corps = _mail_zero(name, verdict, fige, mediane, last["log_path"])
+            alert.alert(name, sujet, corps)
+            mail_envoye = True
+
         # Escalade : deux runs consécutifs à zéro, jamais sur un seul.
         if verdict == "parseur_casse":
             avant = led.recent_runs(name, 2)
@@ -193,10 +219,11 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
                         f"Précédent identique : commit 0980a1f (FazWaz, 2026-07-23)."),
                     ledger=led)
                 escalades += 1
-                alert.alert(name, f"{name} ne ramène plus rien (parseur probablement cassé)",
-                            f"Deux runs consécutifs à 0 annonce sans erreur HTTP.\n"
-                            f"Médiane historique : {mediane}\nLog : {last['log_path']}\n"
-                            f"Un ticket a été déposé pour Claude.")
+                if not mail_envoye:
+                    alert.alert(name, f"{name} ne ramène plus rien (parseur probablement cassé)",
+                                f"Deux runs consécutifs à 0 annonce sans erreur HTTP.\n"
+                                f"Médiane historique : {mediane}\nLog : {last['log_path']}\n"
+                                f"Un ticket a été déposé pour Claude.")
 
     return {"sources_verifiees": len(EXTRACTEURS), "anomalies": anomalies,
             "escalades": escalades, "detail": detail}
