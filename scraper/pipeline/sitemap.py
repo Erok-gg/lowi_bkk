@@ -34,7 +34,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 _LOC_RE = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>")
@@ -153,7 +153,14 @@ def lire_cache_perime(chemin: Path) -> list[dict] | None:
 
 
 def plus_frais(entrees: list[dict] | None) -> datetime | None:
-    dates = [_aware(e["lastmod"]) for e in entrees or [] if e.get("lastmod")]
+    # Une seule annonce (u6802908) porte un lastmod au 2026-11-22 dans le sitemap
+    # régénéré le 2026-10-19 : max() figeait « le plus frais » dans le futur, donc
+    # regenere_depuis() restait faux pour toujours (attente de 165 min chaque nuit
+    # + faux constat `sitemap_non_regenere` + mail « 0 annonce »). Un lastmod à plus
+    # de 2 jours d'aujourd'hui est une anomalie du site, pas une fraîcheur.
+    limite = datetime.now(timezone.utc) + timedelta(days=2)
+    dates = [d for d in (_aware(e["lastmod"]) for e in entrees or [] if e.get("lastmod"))
+             if d <= limite]
     return max(dates) if dates else None
 
 
