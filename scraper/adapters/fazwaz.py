@@ -333,21 +333,32 @@ class FazwazAdapter(BaseAdapter):
         base = self.config["base_url"]
         param = self.config.get("page_param", "page")
         filtre = self._sitemap_filter()
+        # Au-delà du plafond de 750 par chemin : une page de liste PAR QUARTIER
+        # (`list_complement_districts`, slugs de /condo-for-rent/thailand/bangkok/<slug>)
+        # donne jusqu'à 750 annonces chacune. Vide par défaut : 50 quartiers × 25
+        # pages × 2 deal_types ≈ 2 500 requêtes (~1 h 45 à 2,5 s) — une cadence
+        # de scrap, donc le choix de l'utilisateur.
+        quartiers = self.config.get("list_complement_districts") or []
+        plafond = int(self.config.get("list_complement_max_annonces", 0)) or None
         n = 0
         for search in self.config["searches"]:
-            chemin = urljoin(base + "/", search["path"].lstrip("/"))
-            for page in range(1, pages + 1):
-                html = fetcher.get_text(chemin if page == 1 else f"{chemin}?{param}={page}")
-                stubs = self._parse_list_page(html) if html else []
-                if not stubs:
-                    break
-                for stub in stubs:
-                    url = stub["source_url"]
-                    if url in deja or not filtre.search(url):
-                        continue
-                    deja.add(url)
-                    n += 1
-                    yield stub
+            racine = urljoin(base + "/", search["path"].lstrip("/"))
+            for chemin in [racine] + [f"{racine}/{q}" for q in quartiers]:
+                for page in range(1, pages + 1):
+                    html = fetcher.get_text(chemin if page == 1 else f"{chemin}?{param}={page}")
+                    stubs = self._parse_list_page(html) if html else []
+                    if not stubs:
+                        break
+                    for stub in stubs:
+                        url = stub["source_url"]
+                        if url in deja or not filtre.search(url):
+                            continue
+                        deja.add(url)
+                        n += 1
+                        yield stub
+                        if plafond and n >= plafond:
+                            print(f"  complément liste : plafond de {plafond} atteint", flush=True)
+                            return
         print(f"  complément liste : {n} annonces absentes du sitemap", flush=True)
 
     # ───────────────────────── liste ─────────────────────────

@@ -67,8 +67,21 @@ def test_limit_pas_de_complement():
     assert list(a._list_urls_sitemap(f, limit=5)) == [] and f.appels == []
 
 
+def test_quartiers_et_plafond():
+    base = "https://www.fazwaz.com/condo-for-rent/thailand/bangkok"
+    pages = {base: U.format(1, 1), base + "/watthana": f"{U.format(1, 2)} {U.format(1, 3)} {U.format(1, 4)}"}
+    a = adapt(25)
+    a.config["list_complement_districts"] = ["watthana"]
+    f = FauxFetcher(dict(pages))
+    sortie = list(a._complement_liste(f, set()))
+    assert len(sortie) == 4 and any("/watthana" in u for u in f.appels), (sortie, f.appels)
+    a.config["list_complement_max_annonces"] = 2           # plafond = arrêt net
+    assert len(list(a._complement_liste(FauxFetcher(dict(pages)), set()))) == 2
+
+
 if __name__ == "__main__":
+    test_quartiers_et_plafond()
     test_n_emet_que_labsent_du_sitemap()
     test_desactive_a_zero()
     test_limit_pas_de_complement()
-    print("3/3 ok")
+    print("4/4 ok")
