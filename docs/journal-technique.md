@@ -4250,18 +4250,6 @@ Le commentaire du bot Vercel sur la PR #4 liste **deux** projets qui déploient 
 
 **Suite, 2026-10-20** : `lowibkk` supprimé par l'utilisateur depuis le tableau de bord Vercel. Vérifié après coup (et non supposé — un exit 0 ne prouve rien) : la prévisualisation `lowibkk-git-feat-bilan-build2-comptes-…` répond **404**, celle de `lowi-bkk` répond **200**, et `lowi-bkk.vercel.app/login` répond **200**. Un seul projet build donc à nouveau chaque push. Chemin du retour, si jamais : réimporter le dépôt GitHub dans Vercel (seul l'historique de déploiement de la copie est perdu).
 
-## 2026-10-20 — scrapling 0.4.15 vs `pipeline/fetch.py` : comparaison mesurée, rien modifié
-
-Demande : rendre le scraper plus discret et plus rapide, si possible sans les délais « humains ». Comparaison faite sur le code installé (`scrapling` 0.4.15, déjà dans le venv depuis le 2026-08-29) et sur le chronomètre du cycle du 2026-10-19 (`agents/logs/extract-*-2026-10-19T193005.log`).
-
-**Mesuré — où passe le temps, cycle du 19/10.** Attente volontaire (`attente_*`, jitter + pauses longues) : DDproperty 24,8 min, FazWaz 15,7, PropertyScout 6,0, Nestopa 5,7 → **~52 min de sommeil par nuit**, contre ~11 min de réseau réel. Les deux plus gros postes ne sont PAS des délais humains : FazWaz a attendu **90 min** la régénération du sitemap (lancé 02:30, sitemap frais vers 04:00 alors que l'entrée du 2026-10-04 la situait vers 02:04) ; le recensement DDproperty a lu 5 815 pages en 95 min, déjà à 5 onglets parallèles.
-
-**Mesuré — discrétion.** 4 sources sur 5 partent en `requests` : empreinte TLS Python/urllib3 sous un User-Agent Chrome 126 figé — l'incohérence que les anti-bots repèrent en premier. curl_cffi (`impersonate="chrome"`) annonce aujourd'hui Chrome 150. **FazWaz s'annonce comme robot** (`bkk-perso/0.1; personal research`), sans justification trouvée au journal. Nestopa publie `Crawl-delay: 10` (on tourne à 3 s, `respect_robots: false` par arbitrage du 22/08). Aucune autre source ne publie de Crawl-delay. `_RETRY_STATUS` ne contient pas 429 : un rate-limit = fiche perdue, sans recul.
-
-**Ce que scrapling apporte en plus de ce qu'on a déjà pris (curl_cffi + Adaptor)** : un moteur `Spider` asynchrone avec concurrence par domaine, `AutoThrottle` (délai = latence observée / concurrence cible, doublé sur blocage, respect de `Retry-After`), `is_blocked()` + retries de blocage, Crawl-delay honoré, checkpoint pause/reprise. `StealthyFetcher` non fonctionnel ici (`patchright` absent ; Chromium Playwright téléchargé ce matin 08:31, inutilisé).
-
-**Non fait, laissé à l'arbitrage (règle 5)** : bascule des 4 sources en `curl_cffi` (la clé `fetcher_backend` existe, rollback = retirer la clé) ; UA de FazWaz ; remplacement du jitter fixe par un délai piloté par la latence avec recul sur 429/403 ; recalage de l'heure de FazWaz sur la régénération réelle du sitemap. **Écarté** : réécrire les adaptateurs sur `scrapling.spiders` (async, 5 adaptateurs à refaire, gain borné à ~52 min/nuit sur un cycle qui n'est pas limité par là).
-
 ## 2026-10-20 (suite) — thème « Ledger » vert/or/blanc sur le bilan acheteur
 
 Demande : reprendre le système de design du pitch et en faire un thème **vert, or
@@ -4327,6 +4315,69 @@ seul le rendu le montre. Renommé `page` ; la règle est consignée en tête de
 - **Un essai préexistant échoue toujours** : `lib/tension.test.ts`
   (« le time-on-market écarte par défaut l'historique d'avant le correctif »),
   13/14 au vert. Aucun fichier de la tension n'a été touché ici.
+
+### 2026-10-20 (suite 2) — filigrane des rapports PDF
+
+Demande : le logo en filigrane géant à 45° en travers de la feuille, « beta »
+dessous dans la même police, **même alpha** pour les deux.
+
+**Fait.** `bilan_RE/web/components/PdfWatermark.tsx` + les règles
+`.pdf-filigrane*` dans `globals.css`, posé dans la feuille de
+`app/beta/r/[id]/pdf/page.tsx`. `lowi` à 54 mm, `beta` à 16 mm sous lui, les
+deux en MCTen, **l'opacité (0,18) est portée par le bloc qui les contient** —
+c'est ce qui garantit l'alpha identique quoi qu'on change ensuite de leurs
+tailles. Couleur : l'or de marque (`--c-gold`).
+
+**Trois défauts trouvés en regardant le rendu, pas en lisant le code.**
+1. **Le filigrane ne s'affichait pas du tout** : en mode PDF, `palette()`
+   donnait `bg-white` à la page ET aux cartes. Un aplat blanc opaque par-dessus
+   le filigrane — la capture d'écran était **au pixel près la même** (147 094
+   octets) avec et sans lui, et c'est ce chiffre identique qui a mis sur la
+   piste, pas l'œil. Les deux fonds sont retirés : la feuille est déjà blanche,
+   et les cartes gardent leur filet or, qui suffit à les détourer.
+2. **Rognage en losange** : la rotation et `overflow:hidden` étaient sur le même
+   élément, donc le rectangle de rognage tournait avec le texte. La rotation est
+   passée au bloc intérieur, le cadre fixe garde le rognage.
+3. **Alpha 0,07 = invisible** : l'or est une couleur claire, 7 % sur blanc donne
+   ≈ `#FCFAF5`. Monté à 0,18 (≈ `#F5EDDC`), vérifié à l'œil à 1,0 d'abord pour
+   juger la forme, puis redescendu.
+
+**Mesuré, pas supposé — le filigrane se répète sur toutes les pages.** C'est
+`position:fixed` qui le fait (un élément en flux ne s'imprimerait qu'une fois),
+et Chrome le traite bien ainsi : PDF réel produit par
+`chrome --headless --print-to-pdf` sur la route, **6 pages**, et le texte
+`lowibeta` est en tête de **chacune des 6** (contrôle par `pypdf`).
+
+**Comment la route a pu être imprimée sans compte** : un second serveur de dev
+sur le port 3177 avec `LOWI_BETA_PUBLIQUE=1` et `LOWI_SQLITE_DB` **vidée** →
+`comptesActives()` faux → plus de porte de possession, `LOWI_RAPPORTS_DIR`
+fournissant les rapports. Serveur arrêté après coup. Rien de cela n'est
+committé ; la route reste gardée en usage normal.
+
+**Ce qui n'a PAS été fait / vérifié**
+- **Le PDF n'a pas été regardé page par page en image** : pas de `pdftoppm` sur
+  PC2 et le visualiseur PDF de Chrome ne rend rien en `--headless`. La forme a
+  été jugée sur la page à l'écran (même CSS), la répétition sur le texte extrait.
+- **Pas d'impression papier réelle** ni de contrôle sur un autre moteur
+  (Edge, Firefox) : `position:fixed` répété à l'impression est un comportement
+  de Chrome, et c'est Chrome que la page demande (« Save as PDF »).
+- **`prefers-reduced-motion` / mode sombre** : sans objet ici, la page est claire.
+- **Les boîtes opaques masquent le filigrane localement** (tuiles de chiffres,
+  encadrés « How is this computed? », en `bg-sunken`). C'est le comportement
+  normal d'un filigrane posé sous le contenu ; à changer seulement si on le veut
+  aussi par-dessus.
+
+## 2026-10-20 — scrapling 0.4.15 vs `pipeline/fetch.py` : comparaison mesurée, rien modifié
+
+Demande : rendre le scraper plus discret et plus rapide, si possible sans les délais « humains ». Comparaison faite sur le code installé (`scrapling` 0.4.15, déjà dans le venv depuis le 2026-08-29) et sur le chronomètre du cycle du 2026-10-19 (`agents/logs/extract-*-2026-10-19T193005.log`).
+
+**Mesuré — où passe le temps, cycle du 19/10.** Attente volontaire (`attente_*`, jitter + pauses longues) : DDproperty 24,8 min, FazWaz 15,7, PropertyScout 6,0, Nestopa 5,7 → **~52 min de sommeil par nuit**, contre ~11 min de réseau réel. Les deux plus gros postes ne sont PAS des délais humains : FazWaz a attendu **90 min** la régénération du sitemap (lancé 02:30, sitemap frais vers 04:00 alors que l'entrée du 2026-10-04 la situait vers 02:04) ; le recensement DDproperty a lu 5 815 pages en 95 min, déjà à 5 onglets parallèles.
+
+**Mesuré — discrétion.** 4 sources sur 5 partent en `requests` : empreinte TLS Python/urllib3 sous un User-Agent Chrome 126 figé — l'incohérence que les anti-bots repèrent en premier. curl_cffi (`impersonate="chrome"`) annonce aujourd'hui Chrome 150. **FazWaz s'annonce comme robot** (`bkk-perso/0.1; personal research`), sans justification trouvée au journal. Nestopa publie `Crawl-delay: 10` (on tourne à 3 s, `respect_robots: false` par arbitrage du 22/08). Aucune autre source ne publie de Crawl-delay. `_RETRY_STATUS` ne contient pas 429 : un rate-limit = fiche perdue, sans recul.
+
+**Ce que scrapling apporte en plus de ce qu'on a déjà pris (curl_cffi + Adaptor)** : un moteur `Spider` asynchrone avec concurrence par domaine, `AutoThrottle` (délai = latence observée / concurrence cible, doublé sur blocage, respect de `Retry-After`), `is_blocked()` + retries de blocage, Crawl-delay honoré, checkpoint pause/reprise. `StealthyFetcher` non fonctionnel ici (`patchright` absent ; Chromium Playwright téléchargé ce matin 08:31, inutilisé).
+
+**Non fait, laissé à l'arbitrage (règle 5)** : bascule des 4 sources en `curl_cffi` (la clé `fetcher_backend` existe, rollback = retirer la clé) ; UA de FazWaz ; remplacement du jitter fixe par un délai piloté par la latence avec recul sur 429/403 ; recalage de l'heure de FazWaz sur la régénération réelle du sitemap. **Écarté** : réécrire les adaptateurs sur `scrapling.spiders` (async, 5 adaptateurs à refaire, gain borné à ~52 min/nuit sur un cycle qui n'est pas limité par là).
 
 ### 2026-10-20 (suite) — curl_cffi sur toutes les sources, relances communes, cadence adaptative : livré et mesuré sur deux séries longues
 
