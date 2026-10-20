@@ -375,7 +375,11 @@ def escalader(jour: str, preuves: dict, problemes: list[str], verdict: dict, lan
         try:
             consigne = SKILL_OPUS.read_text(encoding="utf-8").split("---", 2)[-1]
         except OSError:
-            consigne = "Applique la procédure de réparation décrite dans C:\\Lowi_bkk\\CLAUDE.md."
+            # CLAUDE.md ne décrit aucune procédure de réparation (il porte les
+            # règles de travail) ; le SKILL ci-dessous est versionné dans le dépôt.
+            consigne = ("Lis puis applique la procédure de réparation décrite dans "
+                        "C:\\Lowi_bkk\\.claude\\skills\\lowi-reparation\\SKILL.md "
+                        "(règles de travail générales : C:\\Lowi_bkk\\CLAUDE.md).")
         prompt = (consigne + "\n\n## Pourquoi tu es appelé maintenant\n\n"
                   "La veille Haiku du cycle (ops/veille-cycle.py) a relevé ces problèmes ; le ticket "
                   f"`agents/queue/{ticket}` les porte. Commence par lui.\n\n"
