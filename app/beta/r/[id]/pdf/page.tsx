@@ -1,8 +1,9 @@
 import { notFound, redirect } from "next/navigation";
 import { accesProduit, betaPublique } from "@/bilan_RE/web/lib/acces";
-import { lire } from "@/bilan_RE/web/lib/rapport";
+import { lire, sansSources } from "@/bilan_RE/web/lib/rapport";
 import Report from "@/bilan_RE/web/components/Report";
 import PdfToolbar from "@/bilan_RE/web/components/PdfToolbar";
+import PdfWatermark from "@/bilan_RE/web/components/PdfWatermark";
 import { compteCourant } from "@/bilan_RE/web/lib/session";
 import { comptesActives, possede } from "@/bilan_RE/web/lib/comptes";
 
@@ -35,8 +36,13 @@ export default async function RapportPdf({ params }: { params: Promise<{ id: str
   return (
     <div className="h-full overflow-y-auto bg-sunken print:bg-white">
       <PdfToolbar />
-      <div className="mx-auto my-6 max-w-[210mm] bg-white shadow-xl print:my-0 print:shadow-none">
-        <Report r={r} mode="pdf" />
+      {/* Le filigrane est DANS la feuille : posé derrière elle, le fond blanc
+          opaque le masquerait. Le rapport repasse au-dessus (`z-10`). */}
+      <div className="relative mx-auto my-6 max-w-[210mm] bg-white shadow-xl print:my-0 print:shadow-none">
+        <PdfWatermark />
+        <div className="relative z-10">
+          <Report r={sansSources(r)} mode="pdf" />
+        </div>
       </div>
     </div>
   );

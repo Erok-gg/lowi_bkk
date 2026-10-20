@@ -11,6 +11,7 @@
 import { useState } from "react";
 import type { Chaine, Comparaison, Niveau, Rapport } from "@/bilan_RE/web/lib/types";
 import { EXPLICATIONS } from "./explications";
+import Annexe from "./Annexe";
 import PdfGate from "./PdfGate";
 import type { Langue } from "@/bilan_RE/web/i18n";
 import { palettes } from "@/config/theme";
@@ -36,8 +37,13 @@ const date = (s: string) =>
 function palette(mode: Mode) {
   const L = palettes.ledger;
   const svg = { piste: L.sunken, point: L.faint, accent: L.brand };
+  // En PDF, NI la page NI les cartes ne portent de fond : la feuille est deja
+  // blanche, et un aplat blanc par-dessus masquait entierement le filigrane
+  // (constate a l'ecran le 2026-10-20 — la capture etait au pixel pres la meme
+  // avec et sans filigrane). Les cartes gardent leur filet or, qui suffit a les
+  // detourer sur du blanc.
   return mode === "pdf"
-    ? { page: "bg-white text-ink", carte: "bg-white border border-rule", doux: "text-muted",
+    ? { page: "text-ink", carte: "border border-rule", doux: "text-muted",
         faible: "text-faint", fond2: "bg-sunken", ...svg }
     : { page: "text-ink", carte: "bg-surface border border-rule", doux: "text-muted",
         faible: "text-faint", fond2: "bg-sunken", ...svg };
@@ -252,12 +258,12 @@ function MoisDeStock({ mode }: { mode: Mode }) {
       </ul>
       <p className={`mt-2 text-xs leading-relaxed ${P.faible}`}>
         We do not put a month figure on this listing yet, and we would rather say so. That scale was built on recorded
-        sales; what we can see are listings leaving the portals, and one portal has been publishing no removals since 13
-        October. Measured across Bangkok on 17 October, once agent reposts are removed, districts ranged from 5.7 to
+        sales; what we can see are listings leaving the market, and one of our sources has been publishing no removals
+        since 13 October. Measured across Bangkok on 17 October, once agent reposts are removed, districts ranged from 5.7 to
         28.9 months — on that scale almost every district in the city reads as a buyer&apos;s market, which tells you
         nothing about where you actually have leverage. So the score above is relative instead: 50 is a typical Bangkok
         district over the last 12 months, lower means more leverage for you than usual, higher means less. The months
-        figure appears here as soon as removals are reliable across portals.
+        figure appears here as soon as removals are reliable across sources.
       </p>
     </details>
   );
@@ -290,7 +296,11 @@ export default function Report({
         {a.khet.replace(" District", "")}
       </p>
       <p className="mt-3 text-3xl font-semibold tabular-nums">{thb(a.prix)}</p>
-      <p className={`text-sm ${P.doux}`}>{k(a.prix_m2)} THB / m² · listed on {h.portails.join(", ")}</p>
+      {/* `h.portails` n'est PLUS affiché, ni nommé ni compté : demande
+          utilisateur du 2026-10-20 — « un agrégat de sources publiques
+          disponibles », sans nom ni décompte. Le champ reste dans le type, il
+          sert au recoupement de l'historique. */}
+      <p className={`text-sm ${P.doux}`}>{k(a.prix_m2)} THB / m²</p>
     </div>
   );
 
@@ -327,6 +337,20 @@ export default function Report({
       {calc?.fin_fenetre ? `, window ending ${date(calc.fin_fenetre)}` : " — not computed yet"}. Lowi takes nothing from
       the seller. Not investment advice.
     </p>
+  );
+
+  /**
+   * L'annexe ne passe PAS par `Bloc` : celui-ci colle à chaque section un encart
+   * « How is this computed? » tiré d'`EXPLICATIONS[id]`, qui ferait doublon avec
+   * l'annexe elle-même. Même carte, même titre, sans l'encart.
+   */
+  const annexe = (
+    <section className={`${P.carte} break-inside-avoid rounded-2xl p-5`}>
+      <h2 className="text-base font-semibold">Methodology &amp; limitations</h2>
+      <div className="mt-3">
+        <Annexe r={r} doux={P.doux} faible={P.faible} />
+      </div>
+    </section>
   );
 
   const blocs = (
@@ -370,13 +394,16 @@ export default function Report({
 
       <Bloc titre="The listing's history" id="histoire" mode={mode} ouvert={pdf}
         resume={<p className={`text-sm ${P.doux}`}>First seen {date(h.premier_vu)} · {h.annonces} listing
-          {h.annonces > 1 ? "s" : ""} for this unit on {h.portails.length} portal{h.portails.length > 1 ? "s" : ""}</p>}>
+          {h.annonces > 1 ? "s" : ""} found for this unit</p>}>
         <ol className="space-y-1.5 border-l-2 pl-4 text-sm" style={{ borderColor: P.piste }}>
           {h.evenements.slice(-12).map((e, i) => (
             <li key={i} className={e.type === "price_cut" ? "" : P.doux}>
+              {/* `e.source` n'est plus affiché : il nommait la plateforme à
+                  chaque ligne de la frise (« listed on DDproperty »). Le champ
+                  arrive désormais vide (`sansSources`, lib/rapport.ts). */}
               <span className="tabular-nums">{date(e.date)}</span> ·{" "}
-              {e.type === "listed" ? `listed on ${e.source}` :
-                `${e.type === "price_cut" ? "price cut" : "price rise"} ${thb(e.from!)} → ${thb(e.to!)} (${e.source})`}
+              {e.type === "listed" ? "listed" :
+                `${e.type === "price_cut" ? "price cut" : "price rise"} ${thb(e.from!)} → ${thb(e.to!)}`}
             </li>
           ))}
         </ol>
@@ -434,10 +461,11 @@ export default function Report({
         <p className="text-base font-medium">{verdict(r)}</p>
         {chiffres}
         <div className="space-y-4">{blocs}</div>
-        <Bloc titre="Method and limits" id="limites" mode={mode} ouvert>
-          <p className={`text-sm ${P.doux}`}>Report generated on {date(r.genere_le)} · reference {r.id} · sources used for
-            market scores: {calc?.sources_gardees?.join(", ") ?? "—"}.</p>
-        </Bloc>
+        {/* L'annexe clôt le rapport, identique à chaque édition. Elle remplace
+            l'ancien bloc « Method and limits », qui nommait les sources gardées
+            (`calc.sources_gardees`) et ne disait ni la version de méthode, ni la
+            règle de révision, ni ce qui n'est pas mesuré. */}
+        {annexe}
         {mentions}
       </div>
     );
@@ -452,7 +480,12 @@ export default function Report({
           <div className="hidden lg:block">{boutonPdf}</div>
           <div className="hidden lg:block">{mentions}</div>
         </aside>
-        <div className="mt-6 grid min-w-0 gap-4 lg:col-span-8 lg:mt-0 xl:grid-cols-2">{blocs}</div>
+        <div className="mt-6 grid min-w-0 gap-4 lg:col-span-8 lg:mt-0 xl:grid-cols-2">
+          {blocs}
+          {/* Pleine largeur, en dernier : c'est de la lecture de référence, pas
+              un bloc d'analyse. Le PDF la rend à l'identique. */}
+          <div className="xl:col-span-2">{annexe}</div>
+        </div>
         <div className="mt-6 lg:hidden">{mentions}</div>
       </div>
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-rule bg-page/95 p-3 backdrop-blur lg:hidden">

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { accesProduit } from "@/bilan_RE/web/lib/acces";
-import { lire } from "@/bilan_RE/web/lib/rapport";
+import { lire, sansSources } from "@/bilan_RE/web/lib/rapport";
 import Report from "@/bilan_RE/web/components/Report";
 import { compteCourant } from "@/bilan_RE/web/lib/session";
 import { possede } from "@/bilan_RE/web/lib/comptes";
@@ -35,7 +35,7 @@ export default async function RapportPage({ params }: { params: Promise<{ id: st
   const [compte, langue] = await Promise.all([compteCourant(), langueCourante()]);
   return (
     <Report
-      r={r}
+      r={sansSources(r)}
       acces={{
         langue,
         connecte: Boolean(compte),

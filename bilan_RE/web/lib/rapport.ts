@@ -160,6 +160,43 @@ export function lire(id: string): Rapport | null {
   return JSON.parse(readFileSync(fichier(id), "utf-8")) as Rapport;
 }
 
+/**
+ * Le rapport tel qu'il part vers le navigateur : sans aucun nom de source, et
+ * sans l'URL de l'annonce d'origine.
+ *
+ * À appliquer à TOUTE page qui passe un `Rapport` à `Report`. Retirer les noms
+ * du rendu ne suffisait pas : `Report` est un composant navigateur, donc Next
+ * sérialise l'objet ENTIER dans la page (charge utile RSC). Mesuré le
+ * 2026-10-20 sur le rendu PDF : « fazwaz » ×2, « ddproperty » ×2 et
+ * « propertyscout » ×1 restaient dans le HTML livré — invisibles à l'écran,
+ * lisibles dans le code source — via `annonce.source`, `histoire.portails`,
+ * `evenements[].source`, `scores_calcul.sources_gardees` et `url`.
+ *
+ * `url` part aussi, et pas seulement par discrétion : l'annexe jointe à chaque
+ * bilan affirme qu'il ne reproduit « no listing, photograph, description or
+ * link ». La laisser dans la charge utile démentait le texte qu'on signe.
+ *
+ * Les valeurs sont NEUTRALISÉES, pas supprimées : les champs restent requis
+ * dans `types.ts` et les tailles (`annonces`, le nombre d'événements) gardent
+ * leur sens. Chemin du retour : ne plus appeler cette fonction dans les deux
+ * pages `app/beta/r/[id]`.
+ */
+export function sansSources(r: Rapport): Rapport {
+  return {
+    ...r,
+    url: "",
+    // `annonce.id` est préfixé par la source (« fazwaz:sale:6873799 ») : il la
+    // nomme aussi, et il n'est utilisé nulle part à l'affichage.
+    annonce: r.annonce && { ...r.annonce, source: "", id: r.annonce.id.split(":").slice(1).join(":") },
+    histoire: r.histoire && {
+      ...r.histoire,
+      portails: [],
+      evenements: r.histoire.evenements.map((e) => ({ ...e, source: "" })),
+    },
+    scores_calcul: r.scores_calcul && { ...r.scores_calcul, sources_gardees: null },
+  };
+}
+
 /** Démarre le calcul. Arguments passés en tableau, sans shell : l'URL collée
  *  par l'utilisateur n'est jamais interprétée. */
 function demarrer(t: Tache): void {

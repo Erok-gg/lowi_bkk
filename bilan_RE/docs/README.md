@@ -45,6 +45,12 @@ Liste unique de ce qui a été demandé pour le bilan, avec ce qui est fait, sp�
 | [journal-donnees](journal-donnees.md) | Origine de chaque chiffre ; trous ; recensement des unités |
 | [journal-juridique](journal-juridique.md) | Points à faire valider par un avocat thaï |
 
+## Transparence de la méthode (ajouté le 2026-10-20)
+| Fichier | Porte sur |
+|---|---|
+| [methodologies-de-reference](methodologies-de-reference.md) | Ce que publient — et retiennent — IOSCO, RICS, Zillow, Case-Shiller, MSCI. La grille qui décide quoi divulguer |
+| [annexe-methodologie-client](annexe-methodologie-client.md) | **Texte à joindre à chaque bilan** : *Methodology & Limitations*, en anglais, sans constante ni source nommée |
+
 Le journal technique du dépôt ([docs/journal-technique.md](../../docs/journal-technique.md))
 garde les entrées qui touchent au système (scripts, bases, agents).
 

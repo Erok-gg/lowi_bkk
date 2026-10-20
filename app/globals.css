@@ -33,6 +33,55 @@
   .theme-ledger { background: #fff; }
 }
 
+/* Filigrane des rapports imprimés (`PdfWatermark`).
+
+   `fixed` : c'est ce qui le fait réapparaître sur chaque page à l'impression —
+   un élément en flux ne serait imprimé qu'une fois.
+
+   Deux éléments, et chacun son rôle, parce que les mélanger a coûté trois tours :
+   le CADRE est fixe, le BLOC intérieur est centré en absolu puis tourné.
+   Mettre la rotation sur le cadre faisait tourner son rectangle de rognage avec
+   lui (filigrane coupé en losange), et le centrage par `flex` dérivait d'une
+   page à l'autre — d'où `top/left:50%` + `translate(-50%,-50%)`.
+   ⚠ PAS d'`overflow:hidden` sur le cadre : à l'impression, le rognage reste
+   ancré à la PREMIÈRE page et ampute le filigrane sur toutes les suivantes
+   (mesuré page 2 du PDF, moitié gauche coupée). Un élément `fixed` ne crée pas
+   de débordement défilable, donc il n'ajoute pas de page sans ce garde-fou.
+
+   L'opacité est portée par le bloc : le logo et la mention « beta » ont donc
+   exactement le MÊME alpha. 0,26 et non 0,18 : l'or est une couleur claire,
+   en dessous le filigrane disparaît à l'écran d'un lecteur de PDF (constaté). */
+.pdf-filigrane {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  user-select: none;
+}
+.pdf-filigrane__bloc {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-45deg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  white-space: nowrap;
+  opacity: 0.26;
+  color: rgb(var(--c-gold));
+}
+.pdf-filigrane__mot {
+  font-size: 72mm;
+  line-height: 0.9;
+}
+.pdf-filigrane__beta {
+  font-size: 22mm;
+  line-height: 1;
+  /* `text-indent` compense le dernier interlettrage, sinon le mot est décentré. */
+  letter-spacing: 0.36em;
+  text-indent: 0.36em;
+}
+
 /* Chiffres et étiquettes : police de données, chasses alignées. */
 .font-data {
   font-family: var(--police-donnees);

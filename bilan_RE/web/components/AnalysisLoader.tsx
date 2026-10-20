@@ -22,8 +22,10 @@ export type Suivi = {
 const duree = (s: number) => (s < 1 ? "<1 s" : s < 60 ? `~${s} s` : `~${Math.round(s / 60)} min`);
 
 const ETAPES = [
-  { t: "Finding the listing in 5 portals", d: "DDproperty · FazWaz · PropertyScout · Nestopa · LivingInsider" },
-  { t: "Rebuilding the listing's history", d: "first seen, reposts, price cuts across portals" },
+  // Les sources ne sont ni nommées ni comptées (demande utilisateur du
+  // 2026-10-20) : elles l'étaient ici en clair, les cinq, sur l'écran d'attente.
+  { t: "Finding the listing", d: "matched across the publicly available sources we aggregate" },
+  { t: "Rebuilding the listing's history", d: "first seen, reposts, price cuts" },
   { t: "Collecting comparable units", d: "same building, same beds and size, within 1 km" },
   { t: "Pricing per m² against the building", d: "median, quartiles, rank" },
   { t: "Measuring market tension", d: "units clearing, time to sell, supply trend" },
