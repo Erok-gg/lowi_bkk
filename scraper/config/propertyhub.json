@@ -1,0 +1,32 @@
+{
+  "_comment": "PropertyHub (propertyhub.in.th) — app Next.js, liste dans __NEXT_DATA__ (pageProps.listings.listings) avec prix/surface/chambres/SDB/projet. robots.txt : Allow /. Sonde du 2026-10-20 : 151 117 locations + 64 158 ventes annoncees sur la zone Bangkok (province METROPOLITAINE, filtree sur l adresse du projet), 60 annonces gratuites par page + 60 sponsorisees repetees. Pas de tri par fraicheur : couverture = toutes les pages (2 519 + 1 070). Coordonnees = celles du PROJET, cachees par project_id dans output/propertyhub-projets.json.",
+  "source": "propertyhub",
+  "base_url": "https://propertyhub.in.th",
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  "rate_limit_seconds": 3.0,
+  "throttle": "adaptatif",
+  "rate_limit_floor_seconds": 1.0,
+  "fetcher_backend": "curl_cffi",
+  "image_rate_limit_seconds": 0.4,
+  "timeout_seconds": 30,
+  "max_pages": 2600,
+  "_max_pages_pourquoi": "Toutes les pages : sans tri par fraicheur, une fenetre partielle delisterait a tort (defaut FazWaz 150 pages, 2026-09-13). Liste seule ~3 600 pages a 1-3 s mesurees = 1 a 3 h par passage complet des deux deal_types.",
+  "max_nouvelles": 2000,
+  "_max_nouvelles_pourquoi": "Budget d inconnues ingerees PAR RUN (run.py). Rattrapage du stock initial (~200 000) etale : ~100 runs a 2 000. A arbitrer (volume, quota Supabase si remonte).",
+  "fetch_detail": "si_projet_inconnu",
+  "_fetch_detail_pourquoi": "toujours | si_projet_inconnu | jamais. La fiche n apporte que les coordonnees du projet (cachees), la description et l annee de livraison ; l ouvrir seulement si le projet est inconnu divise les visites par le nombre d annonces par projet (~100-700 sur les projets sondes).",
+  "respect_robots": true,
+  "searches": [
+    {"deal_type": "sale", "zone": "bangkok"},
+    {"deal_type": "rent", "zone": "bangkok"}
+  ],
+  "image": {
+    "width": 1024,
+    "height": 768,
+    "format": "webp",
+    "quality": 80,
+    "max_per_listing": 1,
+    "telecharger": true,
+    "televerser": false
+  }
+}

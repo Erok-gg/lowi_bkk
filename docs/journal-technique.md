@@ -4406,3 +4406,128 @@ Suite directe de l'entrée précédente, sur demande (« fais les 3 dans l'ordre
 **Chemin du retour** : retirer `throttle` d'une config pour revenir au mode fixe, et `fetcher_backend` pour revenir à `requests`. Aucune reprise de code nécessaire.
 
 **Non fait** : 403 non traité comme un blocage (Nestopa sert des 403 légitimes sur ses fiches) ; détection du challenge AWS WAF ; Nestopa tourne désormais à ~1 s malgré son `Crawl-delay: 10` (cadence approuvée « plancher 1 s », mais ce site demande explicitement plus lent : à revoir) ; recensement non accéléré (voir plus haut).
+
+## 2026-10-20 (suite) — deux nouvelles sources : PropertyHub et Hipflat, adaptateurs et agents branchés
+
+**Demande** : un scraper propertyhub.in.th, puis Hipflat. Adaptateurs écrits,
+testés de bout en bout en base jetable (`LOWI_OUTPUT_DIR`), agents ajoutés à
+`agents/agents.json`. **Aucun run de production** : premier passage au cycle
+de 02:30.
+
+**PropertyHub — mesuré à la sonde :**
+- robots.txt `Allow: /`. Next.js : la liste porte prix, surface, chambres, SDB,
+  projet, adresse → la dédup incrémentale (prix inchangé) s'applique.
+- **151 117 locations + 64 158 ventes** annoncées sur la zone « Bangkok », qui
+  est la province **métropolitaine** (dernière page : Samut Prakan) → filtre sur
+  l'adresse du projet.
+- Pages > 1 : 120 lignes = 60 sponsorisées **identiques d'une page à l'autre**
+  + 60 gratuites. Aucun tri par fraîcheur (`?sort=newest`, `?orderBy=` sans
+  effet) → couverture = toutes les pages (2 519 + 1 070). 1–3 s/page mesurées.
+- Coordonnées = celles du **projet**, sur la fiche seulement → cache
+  `project_id → lat/lng/année` (`output/propertyhub-projets.json`), alimenté
+  aussi par les ~6 `nearbyProjects` de chaque fiche. Test : 16/16 fiches
+  géolocalisées ; `year_built` 23/25 (le référentiel n'en avait **aucun**).
+- `contactInformation` (téléphone, e-mail) **jamais recopié**. Le texte libre
+  `detail` peut en contenir, comme les descriptifs des autres sources.
+- 6 couvertures sur 25 → **403 même en navigateur impersoné** : fichier mort
+  côté CDN, pas un blocage.
+
+**Hipflat — mesuré à la sonde :**
+- robots.txt `Allow: /` (interdits non utilisés). HTML serveur, 30 cartes/page.
+  Prix en **USD par défaut** → cookie `_wl_currency=THB` (celui que pose
+  `POST /api/currency`). La sonde échoue si le prix n'est pas en ฿, plutôt que
+  ranger des dollars en baht.
+- **62 233 ventes / 118 991 locations**, mais **pagination plafonnée à la page
+  167** (≈ 5 010 annonces/recherche, bornée par dichotomie). Pas de filtre prix
+  utilisable en URL (le formulaire passe par `/generate-seo-friendly-url`,
+  interdit par robots) ; `sort=price_asc|price_desc` fonctionne. Découpage :
+  district (50) → chambres → les deux bouts de la distribution des prix.
+  Khlong Toei location 1 ch. = 14 174 annonces : une tranche du milieu reste
+  invisible. `ids_hors_couverture` la **protège du délistage** (hook générique
+  ajouté à `BaseAdapter` et `run.py`, vide pour les autres sources) — sans quoi
+  on rejouait le défaut FazWaz des 150 pages (2026-09-13).
+- **Syndication FazWaz, mesurée** (même groupe Lifull Connect que DotProperty,
+  écarté en août pour cette raison) : **7/28** fiches échantillonnées sur 6
+  pages portent une référence d'unité FazWaz (`U6011645`, plans sur
+  cdn.fazwaz.com) — toutes en tête de liste « Premium » ; 10/10 en tête de
+  Watthana-vente. Les 21 autres viennent de flux d'agences (Proppit), dont une
+  « FreshProperty - a brand of PropertyScout » (recoupement possible avec
+  PropertyScout, non mesuré). Décision : les FazWaz sont **écartées** à la
+  fiche et leur identifiant mémorisé (`output/hipflat-ecartees.json`) pour ne
+  pas rouvrir la fiche à chaque run. Hipflat n'est donc pas un miroir — c'est
+  ce qui distingue ce cas de DotProperty (90/90 FazWaz).
+- ~1 carte sur 3 sans photo (placeholder du site). Elles étaient **rouvertes à
+  chaque run** (la dédup exige une image en base) : 8 fiches sur 25 au 2e
+  passage du test. Drapeau `_sans_image` posé par l'adaptateur et respecté par
+  `run.py` → 40/40 en dédup au passage suivant.
+
+**Changements génériques dans `run.py`** (comportement inchangé pour les 5
+sources existantes, aucune n'utilise ces clés) : `max_nouvelles` (budget
+d'annonces inconnues ingérées par run ; au-delà elles ne sont pas écrites et
+reviennent au run suivant — sans risque pour `--full`, qui ne déliste que ce
+qui est en base) ; drapeau de stub `_sans_image` ; `adapter.ids_hors_couverture`.
+
+**Défaut trouvé en testant, corrigé** : les deux caches d'adaptateur
+s'écrivaient dans `scraper/output/` même sous `LOWI_OUTPUT_DIR` — le test
+polluait la production. Racine alignée sur `run.py` ; les deux fichiers créés
+par le test déplacés hors du dépôt.
+
+**Branchement** : `extract-propertyhub` et `extract-hipflat` (T0, lane
+`daily`, vente puis location en `then`, sans `--geocode`), ajoutés aux `after`
+de watch-health / analyze-rent et à la liste suivante ; SKILL.md écrits ;
+`ops/verifie-synchro.py` et `bilan_RE/tension/rapport.py` connaissent les deux
+sources. Tests : lanes, cadence, metrics, fazwaz_sitemap (×2), courtiers
+passent ; `orchestrator.py run-lane daily --dry-run` liste les deux agents.
+
+**À arbitrer (règle 5) — valeurs posées provisoirement :**
+- **Cadence `every_days: 3`**. Estimé, **non mesuré** : un passage complet
+  coûte ~2–3 h par source (liste entière : ~3 600 pages PropertyHub, ~6 000+
+  Hipflat avec les doubles passes) + le budget de fiches → **jusqu'à ~7 h de
+  plus** la nuit où les deux tombent.
+- **`max_nouvelles: 2000`** par run : le stock initial (~200 000 PropertyHub,
+  ~180 000 Hipflat) se rattrape sur **des semaines**. Pendant ce temps, la
+  part de ces sources dans les médianes croît chaque nuit — une **rupture de
+  série** à marquer dans les études.
+- **Quota Supabase (règle 9)** : `remonter-supabase --delta` remontera ces
+  actives. À ~4 000 nouvelles par source et par passage, le serveur gagnerait
+  ~80 000 lignes par mois ; à 112 436 actives aujourd'hui, le stock de ces deux
+  sources pourrait **plus que tripler** la table. **Rien n'empêche aujourd'hui
+  ce dépassement** — exclure ces sources de la remontée, ou plafonner, est à
+  décider avant que le rattrapage avance.
+
+**Non fait, et pourquoi.** Aucun run complet (durée et volume réels inconnus
+jusqu'au premier cycle). Part réelle de la syndication FazWaz sur l'ensemble
+d'Hipflat **non mesurée** (échantillon de 28). Recoupement Hipflat ↔
+PropertyScout (FreshProperty) et PropertyHub ↔ DDproperty non mesuré : les
+doublons inter-sources iront dans la file d'`organize` comme les autres.
+Bandes `watch-health` provisoires (1–4 500). Quota étranger : exposé par
+aucune des deux. Rien committé (la branche courante porte des modifications
+d'autres séances sur `run.py`, `agents.json` et ce journal).
+
+## 2026-10-20 (suite) — PropertyHub et Hipflat exclues de la remontée Supabase
+
+**Décision utilisateur** (réponse à l'arbitrage quota de l'entrée précédente) :
+les deux sources **restent locales** tant que leur rattrapage n'est pas fini et
+que le quota n'est pas chiffré.
+
+- `ops/remonter-local.py --exclure-sources a,b` : filtre au SELECT dans
+  `charger()` **et** `statuts_morts()` (leurs délistages n'ont rien à recopier,
+  elles ne sont pas en ligne). `remonter-supabase` passe
+  `--exclure-sources propertyhub,hipflat`.
+- **Retour** : retirer l'option dans `agents/agents.json`. Les lignes exclues
+  gardent `dirty_since` (seul un envoi réussi l'efface), donc le `--delta`
+  suivant les remonte **toutes**, sans manœuvre — mais d'un seul coup, d'où
+  l'intérêt de chiffrer le quota avant.
+- **Vérifié en `--dry-run`** sur la base de test (40 PropertyHub + 38 Hipflat
+  sales, 2 mortes) : 78 annonces / 2 statuts sans l'option → **0 / 0** avec.
+  Sur la production : 0 à remonter (dernier delta il y a 8 h), l'option ne
+  change rien aux 5 autres sources.
+
+**Conséquence à garder en tête** : le site public ne montrera pas ces deux
+sources ; les statistiques locales (études, bilan acheteur) les incluront dès
+la première nuit. Les deux vues divergent donc aussi par la composition des
+sources, en plus de la fraîcheur.
+
+**Non fait** : aucun envoi réel (rien à envoyer avant le premier cycle). Le
+chiffrage du quota (coût/ligne × stock attendu) reste à faire avant de lever
+l'exclusion.

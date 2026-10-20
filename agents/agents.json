@@ -240,6 +240,96 @@
       "_gel": "Bande abaissee le 2026-08-11 : la source est GELEE a UNE page (cf. scraper/config/nestopa.json). Sans cet ajustement, watch-health la declarerait cassee a chaque cycle — un garde-fou qui crie au loup est pire que pas de garde-fou."
     },
     {
+      "name": "extract-propertyhub",
+      "famille": "Extraction",
+      "tier": "T0",
+      "lanes": [
+        "daily"
+      ],
+      "every_days": 3,
+      "_every_days_pourquoi": "Provisoire, a arbitrer (2026-10-20). Un passage complet coute ~3-4 h (liste entiere, voir config) : chaque nuit allongerait le cycle d'autant. 3 jours = posture ~hebdo du projet tout en tenant la dedup a jour.",
+      "cmd": [
+        "@py",
+        "scraper/run.py",
+        "--source",
+        "propertyhub",
+        "--deal-type",
+        "sale",
+        "--full",
+        "--store",
+        "sqlite"
+      ],
+      "then": [
+        [
+          "@py",
+          "scraper/run.py",
+          "--source",
+          "propertyhub",
+          "--deal-type",
+          "rent",
+          "--full",
+          "--store",
+          "sqlite"
+        ]
+      ],
+      "_ajoute_le": "2026-10-20 — aucun run de production encore, bandes provisoires. max_nouvelles=2000 par run (config) : rattrapage du stock initial etale sur des semaines. Sans --geocode : coordonnees du PROJET lues sur la fiche et cachees par project_id.",
+      "bandes": {
+        "nouvelles": [
+          1,
+          4500
+        ],
+        "traces_erreur": [
+          0,
+          5
+        ]
+      }
+    },
+    {
+      "name": "extract-hipflat",
+      "famille": "Extraction",
+      "tier": "T0",
+      "lanes": [
+        "daily"
+      ],
+      "every_days": 3,
+      "_every_days_pourquoi": "Provisoire, a arbitrer (2026-10-20). Un passage complet coute ~3-4 h (liste entiere, voir config) : chaque nuit allongerait le cycle d'autant. 3 jours = posture ~hebdo du projet tout en tenant la dedup a jour.",
+      "cmd": [
+        "@py",
+        "scraper/run.py",
+        "--source",
+        "hipflat",
+        "--deal-type",
+        "sale",
+        "--full",
+        "--store",
+        "sqlite"
+      ],
+      "then": [
+        [
+          "@py",
+          "scraper/run.py",
+          "--source",
+          "hipflat",
+          "--deal-type",
+          "rent",
+          "--full",
+          "--store",
+          "sqlite"
+        ]
+      ],
+      "_ajoute_le": "2026-10-20 — aucun run de production encore, bandes provisoires. max_nouvelles=2000 par run (config) : rattrapage du stock initial etale sur des semaines. Pagination plafonnee a 167 pages : decoupage district > chambres > prix, tranches non vues protegees du delistage. Annonces FazWaz syndiquees ecartees.",
+      "bandes": {
+        "nouvelles": [
+          1,
+          4500
+        ],
+        "traces_erreur": [
+          0,
+          5
+        ]
+      }
+    },
+    {
       "name": "extract-livinginsider",
       "famille": "Extraction",
       "tier": "T0",
@@ -300,8 +390,11 @@
         "scraper/output",
         "--statut",
         "actives",
-        "--synchro-statuts"
-      ]
+        "--synchro-statuts",
+        "--exclure-sources",
+        "propertyhub,hipflat"
+      ],
+      "_exclure_pourquoi": "2026-10-20, decision utilisateur : PropertyHub et Hipflat restent locales tant que leur rattrapage (max_nouvelles 2 000/run) n'est pas fini et que le quota Supabase n'est pas chiffre. Leurs lignes gardent dirty_since : retirer l'option les remonte toutes au --delta suivant."
     },
     {
       "_pourquoi": "Ajoute le 2026-09-09. Surveille que le stock ACTIF est reellement confirme par les scans, et non seulement marque actif. Ne pas confondre avec watch-health, qui juge la SORTIE d'un extracteur (bandes de metriques) : celui-ci juge l'ETAT de la base qui en resulte. Un extracteur peut rendre des metriques dans les clous pendant que le stock actif vieillit sans que rien ne le confirme — c'est exactement ce qui s'est passe : recense.py sautait le rafraichissement de last_seen des que le parcours avait un trou (1 a 6 pages sur ~2600, donc a TOUS les runs), et ddproperty est tombe a 9,6 % d'actives confirmees < 48 h, la plus ancienne datant du 23/07, sans une seule alerte. Place ICI, apres les extracteurs et remonter-supabase : il lit ce que le cycle vient d'ecrire. Seuil auto-calibre sur la mediane de l'historique de CHAQUE source (nestopa est gelee a une page par conception et plafonnera toujours bas : un seuil commun crierait au loup). Se tait tant qu'il n'a pas 4 releves.",
@@ -322,7 +415,9 @@
         "extract-ddproperty",
         "extract-propertyscout",
         "extract-nestopa",
-        "extract-livinginsider"
+        "extract-livinginsider",
+        "extract-propertyhub",
+        "extract-hipflat"
       ]
     },
     {
@@ -339,7 +434,9 @@
         "extract-ddproperty",
         "extract-propertyscout",
         "extract-nestopa",
-        "extract-livinginsider"
+        "extract-livinginsider",
+        "extract-propertyhub",
+        "extract-hipflat"
       ]
     },
     {
@@ -382,7 +479,9 @@
         "extract-ddproperty",
         "extract-propertyscout",
         "extract-nestopa",
-        "extract-livinginsider"
+        "extract-livinginsider",
+        "extract-propertyhub",
+        "extract-hipflat"
       ],
       "needs_supabase": true,
       "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté."

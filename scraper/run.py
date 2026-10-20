@@ -27,6 +27,8 @@ from adapters.ddproperty import DdpropertyAdapter  # noqa: E402
 from adapters.propertyscout import PropertyscoutAdapter  # noqa: E402
 from adapters.nestopa import NestopaAdapter  # noqa: E402
 from adapters.livinginsider import LivinginsiderAdapter  # noqa: E402
+from adapters.propertyhub import PropertyhubAdapter  # noqa: E402
+from adapters.hipflat import HipflatAdapter  # noqa: E402
 from pipeline.fetch import Fetcher  # noqa: E402
 from pipeline.normalize import normalize  # noqa: E402
 from pipeline.geo_match import KhetMatcher  # noqa: E402
@@ -44,6 +46,8 @@ ADAPTERS = {
     "propertyscout": PropertyscoutAdapter,
     "nestopa": NestopaAdapter,
     "livinginsider": LivinginsiderAdapter,
+    "propertyhub": PropertyhubAdapter,
+    "hipflat": HipflatAdapter,
 }
 ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "config"
@@ -221,6 +225,14 @@ def main() -> None:
     budget_visites = cfg.get("max_detail_visits")  # None = illimité
     n_visites = n_confirmees = n_reportees = n_hors_fenetre = n_indisponibles = 0
     mode_sitemap = cfg.get("discovery") == "sitemap"
+    # Budget d'annonces INCONNUES ingérées par run (2026-10-20, PropertyHub) :
+    # la source annonce 215 000 annonces Bangkok, quatre fois notre stock actif.
+    # Chaque inconnue coûte au moins une image (GET) et une empreinte (HEAD) ;
+    # tout ingérer d'un coup = ~430 000 requêtes, plus d'une journée. Au-delà
+    # du budget, l'inconnue n'est pas écrite (elle sera reprise un prochain
+    # run) — sans risque pour --full : on ne déliste que ce qui est EN BASE.
+    budget_nouvelles = cfg.get("max_nouvelles")  # None = illimité
+    n_nouvelles_reportees = 0
     seen_ids: set[str] = set()
     price_alerts: list[str] = []
     completed = False  # True si le scan est allé au bout (cond. au délistage --full)
@@ -264,11 +276,19 @@ def main() -> None:
                     continue
                 n_visites += 1
 
+            if (existing is None and budget_nouvelles is not None
+                    and n_new >= budget_nouvelles):
+                n_nouvelles_reportees += 1
+                continue
+
             stub_price = stub.get("price")
             if (existing is not None and stub_price is not None
                     and existing["price"] is not None
                     and float(existing["price"]) == float(stub_price)
-                    and store.has_images(lid)):
+                    # `_sans_image` : la liste montre que la source n'a AUCUNE photo
+                    # (Hipflat, ~1 carte sur 3 au test du 2026-10-20) — sans ce
+                    # drapeau, la fiche serait rouverte à chaque run pour rien.
+                    and (store.has_images(lid) or stub.get("_sans_image"))):
                 store.touch_listing(lid)
                 n_unchanged += 1
                 n_skipped += 1
@@ -424,6 +444,12 @@ def main() -> None:
             if vendues:
                 print(f"  {vendues} annonce(s) marquée(s) vendues depuis ≥7 j → sorties du stock")
 
+            # Pagination plafonnée (Hipflat, 2026-10-20) : ce que l'adaptateur SAIT
+            # n'avoir pas pu voir n'est pas « disparu ». Vide pour les autres sources.
+            proteges = adapter.ids_hors_couverture(store, args.deal_type)
+            if proteges:
+                print(f"  {len(proteges)} annonce(s) hors couverture du scan → non délistées")
+                seen_ids |= proteges
             # scope l'inactivation au deal_type scrapé (sinon on délisterait l'autre catégorie)
             delisted = store.mark_missing_inactive(args.source, seen_ids, deal_type=args.deal_type)
             removed = len(delisted)
@@ -463,6 +489,9 @@ def main() -> None:
     print(f"  scannées : {n_total} | nouvelles : {n_new} | changées : {n_changed} "
           f"| inchangées : {n_unchanged} (dont {n_skipped} dédup, fiche non re-visitée) "
           f"| retirées : {removed} | exclues : {n_excluded} | erreurs : {n_errors}")
+    if budget_nouvelles is not None:
+        print(f"  budget nouvelles : {n_new}/{budget_nouvelles} ingérées "
+              f"| {n_nouvelles_reportees} inconnues reportées au prochain run")
     if mode_sitemap:
         print(f"  sitemap : {n_confirmees} confirmées par lastmod | {n_visites} fiches visitées"
               f"{'' if budget_visites is None else f' (budget {budget_visites})'} "

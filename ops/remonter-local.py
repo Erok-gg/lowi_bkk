@@ -72,7 +72,8 @@ for _l in open(os.path.join(ROOT, "scraper", ".env"), encoding="utf-8"):
         os.environ.setdefault(_k.strip(), _v.strip())
 
 
-def charger(db_path: str, statut: str = "tout", delta: bool = False) -> list[dict]:
+def charger(db_path: str, statut: str = "tout", delta: bool = False,
+            exclure: tuple[str, ...] = ()) -> list[dict]:
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
     # PAS de `select *` : depuis le degraissage du 2026-08-25, la base locale
@@ -93,9 +94,11 @@ def charger(db_path: str, statut: str = "tout", delta: bool = False) -> list[dic
         # SqliteStore.upsert_listing/mark_missing_inactive/appliquer_ventes),
         # au lieu de réévaluer toute la fenêtre active chaque jour.
         conditions.append("dirty_since is not null")
+    if exclure:
+        conditions.append(f"source not in ({','.join('?' * len(exclure))})")
     where = (" where " + " and ".join(conditions)) if conditions else ""
     lignes = [dict(r) for r in db.execute(
-        f"select {','.join(colonnes)} from listings{where}")]
+        f"select {','.join(colonnes)} from listings{where}", exclure)]
     for l in lignes:
         # raw_data est stocké en TEXT côté SQLite, en jsonb côté Postgres
         if isinstance(l.get("raw_data"), str):
@@ -129,7 +132,8 @@ def images_de(db_path: str) -> dict[str, list[dict]]:
     return out
 
 
-def statuts_morts(db_path: str, delta: bool = False) -> list[tuple[str, str, str | None]]:
+def statuts_morts(db_path: str, delta: bool = False,
+                  exclure: tuple[str, ...] = ()) -> list[tuple[str, str, str | None]]:
     """Les annonces que le LOCAL sait mortes : (id, status, delisted_at).
 
     `status` distingue 'inactive' (disparue de la source) de 'sold' (marqueur
@@ -143,9 +147,11 @@ def statuts_morts(db_path: str, delta: bool = False) -> list[tuple[str, str, str
     """
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     where = "status<>'active'" + (" and dirty_since is not null" if delta else "")
+    if exclure:
+        where += f" and source not in ({','.join('?' * len(exclure))})"
     return [
         (r[0], r[1], r[2])
-        for r in db.execute(f"select id, status, delisted_at from listings where {where}")
+        for r in db.execute(f"select id, status, delisted_at from listings where {where}", exclure)
     ]
 
 
@@ -247,7 +253,16 @@ def main() -> int:
     ap.add_argument("--max-lots-en-echec", type=int, default=3,
                     help="lots consecutifs en echec avant abandon (defaut 3, "
                          "~1 h de panne Supabase)")
+    # 2026-10-20 (décision utilisateur) : PropertyHub et Hipflat restent LOCALES
+    # tant que leur rattrapage n'est pas fini et que le quota n'est pas chiffré —
+    # ~200 000 + ~180 000 annonces annoncées, contre 112 436 actives en ligne.
+    # Leurs lignes gardent `dirty_since` : retirer l'exclusion les remontera
+    # toutes au --delta suivant, sans autre manœuvre.
+    ap.add_argument("--exclure-sources", default="",
+                    help="sources a ne PAS remonter, separees par des virgules "
+                         "(elles restent dirty, donc remontees le jour ou on les retire)")
     a = ap.parse_args()
+    exclure = tuple(x.strip() for x in a.exclure_sources.split(",") if x.strip())
     if a.delta:
         a.statut = "actives"
         a.synchro_statuts = True
@@ -257,8 +272,8 @@ def main() -> int:
         print(f"ERREUR - base introuvable : {db_path}")
         return 2
 
-    lignes = charger(db_path, a.statut, delta=a.delta)
-    morts = statuts_morts(db_path, delta=a.delta) if a.synchro_statuts else []
+    lignes = charger(db_path, a.statut, delta=a.delta, exclure=exclure)
+    morts = statuts_morts(db_path, delta=a.delta, exclure=exclure) if a.synchro_statuts else []
     if a.limite:
         lignes = lignes[:a.limite]
     imgs = images_de(db_path)
@@ -271,6 +286,8 @@ def main() -> int:
           + ("  (scénario A — le serveur ne porte que le marché consultable)"
              if a.statut == "actives" else
              "  ⚠ upsert force status='active' : les délistées seraient RESSUSCITÉES"))
+    if exclure:
+        print(f"Exclues    : {', '.join(exclure)} (restent locales)")
     print(f"À remonter : {len(lignes)} annonces — " +
           ", ".join(f"{s} {n}" for s, n in sorted(par_source.items())))
     print(f"Images     : {sum(len(v) for v in imgs.values())} pour {len(imgs)} annonces")
