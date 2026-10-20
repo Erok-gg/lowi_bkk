@@ -557,7 +557,8 @@
       "lanes": [
         "daily"
       ],
-      "every_days": 30,
+      "every_days": 1,
+      "_every_days_2026-10-20": "Quotidien depuis le 2026-10-20 (décision utilisateur : « tous les jours à la fin des cycles », était 30). ~50 min ajoutées au cycle. L'agent surveille aussi ce qui nourrit les scores (délistage à l'arrêt dès 3 jours, source écartée, fenêtre périmée, régression de publication) : tout défaut = constat HAUT, donc réparation par la veille. Détail : agents/bots/scores_tension.py.",
       "module": "agents.bots.scores_tension",
       "_pourquoi": "Ajouté le 2026-10-17 (bilan acheteur). Mensuel par décision de l'utilisateur : ~50 min pour ~4 000 immeubles (2 min 15 fixes + 0,7 s/immeuble, mesuré). Lit bangkok.db en lecture seule, écrit scraper/output/scores-tension/, aucune remontée Supabase. Placé après report pour lire la base une fois le cycle d'extraction terminé.",
       "bandes": {

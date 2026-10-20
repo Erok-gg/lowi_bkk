@@ -146,6 +146,85 @@ def _parse_address(full: str) -> dict:
 _TENURE = {"F": "freehold", "L": "leasehold"}
 
 
+def _bloc_page(node) -> dict:
+    """Le dict du blob qui porte les blocs annexes, trouve PAR CONTENU.
+
+    Meme principe que `_walk_listings` : le chemin exact a deja bouge une fois
+    (`listings` -> `listingsData.items`, journal du 2026-08-11), donc on
+    cherche la cle, pas le chemin."""
+    if isinstance(node, dict):
+        if any(isinstance(node.get(k), dict) and node.get(k)
+               for k in ("contactAgentCardData", "enquiryModalData")):
+            return node
+        for v in node.values():
+            r = _bloc_page(v)
+            if r:
+                return r
+    elif isinstance(node, list):
+        for v in node:
+            r = _bloc_page(v)
+            if r:
+                return r
+    return {}
+
+
+def _cartes_annexes(data: dict) -> dict:
+    """Les annonces de la page, vues par les blocs ANNEXES du meme blob.
+
+    POURQUOI CE SECOND CHEMIN (mesure du 2026-10-21). Dans la nuit du 19 au
+    20/10, DDproperty s'est mis a elaguer `listingsData` — le tableau qui porte
+    la charge utile d'une annonce — tout en continuant a servir, pour les
+    MEMES 20 annonces, les blocs annexes `contactAgentCardData` et
+    `enquiryModalData`, tous deux indexes par identifiant d'annonce.
+
+    Mesure sur 16 pages (vente + location, pages 1-8) : `listingsData` ne
+    rendait plus que **10/160 annonces en vente (6 %) et 2/160 en location
+    (1 %)**, pendant que `contactAgentCardData` en rendait **20/20 sur les 16
+    pages**. La veille encore (run 927 du ledger), le recensement voyait
+    48 321 annonces sur 2 615 pages, soit 18,5/page — la structure etait saine.
+
+    CE QUE CE CHEMIN RECUPERE, ET CE QU'IL PERD. Sur les 10 identifiants
+    presents des DEUX cotes le 2026-10-21, `url` et `price` sont identiques
+    10/10. La carte annexe porte url, prix, nom d'immeuble, chambres, type
+    d'annonce, agent (id/nom/type) — 160/160 renseignes. Elle NE porte PAS
+    `fullAddress`, `floorArea`, `bathrooms`, `tenure`, `postedOn`, l'agence ni
+    `isAutoRepost` : ces champs viennent de la fiche detail, que `fetch_detail`
+    visite deja et qui, elle, est intacte (verifie le 2026-10-21 sur
+    500669058 : surface 54 m2, 1 SDB, lat/lng, tenure freehold, description).
+    Un stub issu de ce chemin n'a donc pas de khet tant que la fiche n'est pas
+    lue — le rattrapage se fait par point-in-polygon sur les coordonnees.
+
+    PRIORITE. `listingsData` reste la source principale quand elle repond :
+    elle est plus riche. Ce chemin ne COMPLETE que les identifiants absents.
+    Quand DDproperty remettra son tableau complet, il reprendra tout seul la
+    main et cette fonction ne rendra plus rien de neuf."""
+    cartes = data.get("contactAgentCardData")
+    if not isinstance(cartes, dict):
+        return {}
+    return {str(k): v for k, v in cartes.items() if isinstance(v, dict)}
+
+
+def _ids_annonces_page(data: dict, bangkok_seulement: bool = False) -> set[str]:
+    """Identifiants que la page DIT porter, selon ses blocs annexes.
+
+    Sert de verite terrain a la sonde : sans elle, « 1 stub obtenu » ne
+    distingue pas une page qui ne porte qu'une annonce d'une page qui en porte
+    vingt dont on n'a su en lire qu'une (defaut du 2026-10-20 : la sonde de la
+    passe couloirs a repondu OK avec 1 stub alors que la page en portait 20).
+
+    `bangkok_seulement` applique le meme filtre province que `_parse_list`,
+    pour que les deux comptages soient comparables."""
+    cartes = _cartes_annexes(data)
+    if bangkok_seulement:
+        return {sid for sid, c in cartes.items()
+                if (c.get("localizedTitle") or "").strip().lower().endswith("bangkok")}
+    ids = {sid for sid in cartes}
+    bloc = data.get("enquiryModalData")
+    if isinstance(bloc, dict):
+        ids |= {str(k) for k in bloc if str(k).isdigit()}
+    return ids
+
+
 class DdpropertyAdapter(BaseAdapter):
     source = "ddproperty"
 
@@ -165,9 +244,44 @@ class DdpropertyAdapter(BaseAdapter):
         data = _next_data(html)
         if not data:
             return False, "__NEXT_DATA__ absent ou illisible (JSON invalide)"
-        if next(_walk_listings(data), None) is None:
-            return False, "__NEXT_DATA__ présent mais aucun nœud avec 'fullAddress' — structure du blob changée"
-        return super().sonder(fetcher)
+        annonces, stubs = self._couverture(data, searches[0]["deal_type"])
+        if not annonces and not stubs:
+            return False, ("__NEXT_DATA__ présent mais la page ne porte aucune annonce "
+                           "(ni 'fullAddress', ni carte annexe) — structure du blob changée")
+        # Un nombre de stubs NON NUL ne suffit pas : le 2026-10-20, la passe
+        # couloirs a repondu « sonde OK — 1 stub obtenu » sur une page qui en
+        # portait 20, et a scanne le catalogue a 5 % sans que rien ne le dise.
+        # On compare donc a ce que la page ELLE-MEME annonce porter, au lieu
+        # de se contenter d'un « au moins un ». Pas de seuil arbitraire : la
+        # reference est mesuree sur la page du jour.
+        if annonces and len(stubs) < len(annonces):
+            manquantes = len(annonces) - len(stubs)
+            return False, (f"page 1 : {len(stubs)}/{len(annonces)} annonces extraites "
+                           f"({manquantes} perdues) — le blob est élagué, "
+                           f"la charge utile n'est plus servie pour toutes les annonces")
+        ok, msg = super().sonder(fetcher)
+        if not ok:
+            return ok, msg
+        # Le message de base dit « 1 stub obtenu » (il sonde avec limit=1) :
+        # on y ajoute la couverture réelle, sinon le journal ne permet pas de
+        # distinguer une page pleine d'une page élaguée — c'est precisement
+        # cette ambiguite qui a laisse passer le 2026-10-20.
+        elague = next(_walk_listings(data), None) is None
+        return True, (f"{msg} — couverture {len(stubs)}/{len(annonces)} annonces"
+                      + (" (listingsData élaguée, reprise par les cartes annexes)"
+                         if elague else ""))
+
+    def _couverture(self, data: dict, deal: str) -> tuple[set[str], set[str]]:
+        """(identifiants Bangkok annoncés par la page, identifiants extraits).
+
+        Les stubs sont comptés par le VRAI parseur (`_parse_list`), pas par une
+        copie qui pourrait diverger. Le premier ensemble est restreint à
+        Bangkok : une page annonce parfois des annonces de province que le
+        filtre écarte à bon droit (2 sur 200 le 2026-10-21) — les compter
+        comme perdues ferait crier la sonde au loup."""
+        annonces = _ids_annonces_page(_bloc_page(data), bangkok_seulement=True)
+        stubs = {str(s["source_id"]) for s in self._parse_list(data, deal)}
+        return annonces, stubs
 
     # ───────────────────────── liste ─────────────────────────
     def list_urls(self, fetcher: Fetcher, limit: int | None = None) -> Iterator[dict]:
@@ -227,6 +341,13 @@ class DdpropertyAdapter(BaseAdapter):
                 "full_address": full,
                 "agent_id": str(agent["id"]) if agent.get("id") is not None else None,
                 "agency_id": str(agent["agencyId"]) if agent.get("agencyId") is not None else None,
+                # Noms : meme blob, sonde du 2026-10-17 (`agent.name`,
+                # `agency.name`, `listerType`). Vont dans la table `courtiers`
+                # (une ligne par agent), pas dans `listings`.
+                "agent_name": (agent.get("name") or "").strip() or None,
+                "agency_name": ((it.get("agency") or {}).get("name") or "").strip() or None,
+                "lister_type": it.get("listerType"),
+                "agent_profile_url": agent.get("profileUrl"),
                 # Date de publication RÉELLE annoncée par le site. Mesure le
                 # time-on-market à la source, au lieu de le déduire de la date
                 # à laquelle NOUS avons vu l'annonce pour la première fois.
@@ -245,7 +366,56 @@ class DdpropertyAdapter(BaseAdapter):
                     str((it.get("additionalData") or {}).get("tenure") or "").upper()),
                 **addr,
             })
+        stubs += self._stubs_annexes(data, deal, seen)
         return stubs
+
+    def _stubs_annexes(self, data: dict, deal: str, deja: set[str]) -> list[dict]:
+        """Complete la page par les cartes annexes (cf. `_cartes_annexes`).
+
+        Ne tourne que sur les annonces que `listingsData` n'a PAS rendues :
+        quand le site repond normalement, cette methode ne produit rien."""
+        bloc = _bloc_page(data)
+        if not bloc:
+            return []
+        out = []
+        for sid, carte in _cartes_annexes(bloc).items():
+            url = (carte.get("url") or "").split("#")[0].split("?")[0]
+            if not url or url in deja:
+                continue
+            # Filtre province. `fullAddress` manque ici ; le suffixe du titre
+            # localise le remplace. Mesure du 2026-10-21 sur 200 cartes :
+            # 198 « …, Bangkok », 2 « …, Nakhon Ratchasima », et le slug de
+            # l'URL dit exactement la meme chose 200/200 — aucun desaccord.
+            titre = (carte.get("localizedTitle") or "").strip()
+            if not titre.lower().endswith("bangkok"):
+                continue
+            deja.add(url)
+            m = ID_RE.search(url)
+            agent = carte.get("agent") or {}
+            out.append({
+                "source_url": url,
+                "source_id": m.group(1) if m else sid,
+                "deal_type": deal,
+                "price": _price_num(carte.get("price")) or _float(carte.get("price")),
+                "condo_name": carte.get("propertyName") or carte.get("localizedTitle"),
+                "bedrooms": _int(carte.get("bedrooms")),
+                "bathrooms": None,
+                # Pas d'adresse dans ce bloc : le khet viendra du
+                # point-in-polygon sur les coordonnees de la fiche detail.
+                "full_address": "",
+                "agent_id": str(agent["id"]) if agent.get("id") is not None else None,
+                "agency_id": None,
+                "agent_name": (agent.get("name") or "").strip() or None,
+                "agency_name": None,
+                "lister_type": carte.get("listerType"),
+                "agent_profile_url": None,
+                "posted_at": None,
+                "is_auto_repost": None,
+                "area_sqm": None,
+                "tenure": None,
+                **_parse_address(""),
+            })
+        return out
 
     # ───────────────────────── détail ─────────────────────────
     def parse_listing(self, fetcher: Fetcher, stub: dict) -> dict | None:
@@ -305,6 +475,41 @@ class DdpropertyAdapter(BaseAdapter):
             year = _find_value(data, "completionYear")
             if year and str(year).isdigit() and 1970 <= int(year) <= 2040:
                 rec["year_built"] = int(year)
+            # Adresse, agence et date de publication : la fiche les porte aussi
+            # (`propertyOverviewData.propertyInfo.fullAddress`, `agencyId`,
+            # `postedOn`). On ne les lisait pas ici parce que la liste les
+            # fournissait toujours — jusqu'au 2026-10-21, ou l'elagage de
+            # `listingsData` a laisse khwaeng, street, agency_id et posted_at a
+            # 0 % sur les annonces reprises par les cartes annexes, contre
+            # 94-100 % la veille (mesure sur 4 962 annonces du 19-20/10).
+            # COMPLEMENT SEULEMENT : si la liste a repondu, elle fait foi.
+            if not rec.get("full_address"):
+                plein = _find_value(data, "fullAddress")
+                if plein:
+                    rec["full_address"] = str(plein)
+                    decoupe = _parse_address(str(plein))
+                    # KHWAENG ET RUE SEULEMENT — PAS LE KHET. La fiche ecrit
+                    # « Watthana » la ou le point-in-polygon sur les coordonnees
+                    # ecrit « Vadhana District » : melanger les deux
+                    # orthographes scinderait les statistiques par quartier en
+                    # deux groupes pour le meme khet. Les coordonnees sont la
+                    # (100 % sur les 12 annonces reprises le 2026-10-21) et
+                    # restent la seule source du khet.
+                    for cle in ("khwaeng", "street"):
+                        if decoupe.get(cle) and not rec.get(cle):
+                            rec[cle] = decoupe[cle]
+            if not rec.get("agency_id"):
+                aid = _find_value(data, "agencyId")
+                if aid is not None:
+                    rec["agency_id"] = str(aid)
+            if not rec.get("posted_at"):
+                poste = _find_with_keys(data, {"unix"})
+                if poste:
+                    rec["posted_at"] = _posted_at(poste)
+            if rec.get("is_auto_repost") is None:
+                repost = _find_value(data, "isAutoRepost")
+                if isinstance(repost, bool):
+                    rec["is_auto_repost"] = repost
 
         # facilities (piscine, gym…) via scan mots-clés sur le HTML
         rec["amenities"] = _scan_facilities(html)
