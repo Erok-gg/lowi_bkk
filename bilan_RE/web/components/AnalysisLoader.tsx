@@ -44,44 +44,44 @@ export default function AnalysisLoader({ s }: { s?: Suivi }) {
   const courant = i % ETAPES.length;
   const tours = Math.floor(i / ETAPES.length);
   return (
-    <div className="w-full rounded-2xl border border-violet-soft bg-surface p-6" aria-live="polite">
+    <div className="w-full rounded-2xl border border-rule bg-surface p-6" aria-live="polite">
       <div className="mb-5 flex items-center gap-3">
-        <span className="font-logo text-2xl text-gold">
+        <span className="font-logo text-2xl text-gold-ink">
           l<span className="logo-spin-o">o</span>wi
         </span>
-        <span className="text-sm text-text-muted">
+        <span className="text-sm text-muted">
           {enFile ? "Waiting for a free slot…" : "Analysing the listing…"}
         </span>
         {s?.restant_s != null && (
-          <span className="ml-auto text-sm font-semibold tabular-nums text-text">{duree(s.restant_s)} left</span>
+          <span className="ml-auto text-sm font-semibold tabular-nums text-ink">{duree(s.restant_s)} left</span>
         )}
       </div>
       {s && (
         <div className="mb-4 grid grid-cols-3 gap-2 text-center">
-          <div className="rounded-lg bg-anthracite p-2">
-            <p className="text-[11px] text-text-faint">{enFile ? "Your place in line" : "Status"}</p>
-            <p className="text-sm font-semibold tabular-nums text-text">
+          <div className="rounded-lg bg-sunken p-2">
+            <p className="text-[11px] text-faint">{enFile ? "Your place in line" : "Status"}</p>
+            <p className="text-sm font-semibold tabular-nums text-ink">
               {enFile ? `${s.position} of ${s.en_attente}` : "computing"}
             </p>
           </div>
-          <div className="rounded-lg bg-anthracite p-2">
-            <p className="text-[11px] text-text-faint">Reports running</p>
-            <p className="text-sm font-semibold tabular-nums text-text">
+          <div className="rounded-lg bg-sunken p-2">
+            <p className="text-[11px] text-faint">Reports running</p>
+            <p className="text-sm font-semibold tabular-nums text-ink">
               {s.en_cours} / {s.max_parallele}
             </p>
           </div>
-          <div className="rounded-lg bg-anthracite p-2">
-            <p className="text-[11px] text-text-faint">Reports processed</p>
-            <p className="text-sm font-semibold tabular-nums text-text">
+          <div className="rounded-lg bg-sunken p-2">
+            <p className="text-[11px] text-faint">Reports processed</p>
+            <p className="text-sm font-semibold tabular-nums text-ink">
               {s.traites_total.toLocaleString("en-US")}
-              <span className="font-normal text-text-faint"> · {s.traites_aujourdhui} today</span>
+              <span className="font-normal text-faint"> · {s.traites_aujourdhui} today</span>
             </p>
           </div>
         </div>
       )}
-      <div className="h-1 w-full overflow-hidden rounded bg-anthracite">
+      <div className="h-1 w-full overflow-hidden rounded bg-sunken">
         <div
-          className="h-1 bg-violet-fluo transition-all duration-700"
+          className="h-1 bg-brand transition-all duration-700"
           style={{ width: `${Math.min(96, ((i + 1) / ETAPES.length) * 100)}%` }}
         />
       </div>
@@ -98,23 +98,23 @@ export default function AnalysisLoader({ s }: { s?: Suivi }) {
             >
               <span
                 className={`mt-1 inline-flex h-4 w-4 flex-none items-center justify-center rounded-full border ${
-                  fait ? "border-[#34d399] bg-[#34d399]/20" : actif ? "border-violet-fluo" : "border-text-faint"
+                  fait ? "border-pos bg-pos/20" : actif ? "border-brand" : "border-faint"
                 }`}
                 aria-hidden="true"
               >
-                {fait && <span className="h-1.5 w-1.5 rounded-full bg-[#34d399]" />}
-                {actif && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-fluo" />}
+                {fait && <span className="h-1.5 w-1.5 rounded-full bg-pos" />}
+                {actif && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />}
               </span>
               <span>
-                <span className="block text-sm text-text">{e.t}</span>
-                <span className="block text-xs text-text-faint">{e.d}</span>
+                <span className="block text-sm text-ink">{e.t}</span>
+                <span className="block text-xs text-faint">{e.d}</span>
               </span>
             </li>
           );
         })}
       </ul>
       {tours > 1 && (
-        <p className="mt-5 text-xs text-text-faint">Taking longer than usual — still working on it.</p>
+        <p className="mt-5 text-xs text-faint">Taking longer than usual — still working on it.</p>
       )}
     </div>
   );

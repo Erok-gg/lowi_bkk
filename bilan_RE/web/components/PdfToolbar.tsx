@@ -8,9 +8,9 @@ export default function PdfToolbar() {
     return () => clearTimeout(t);
   }, []);
   return (
-    <div className="sticky top-0 z-10 flex items-center justify-center gap-3 bg-[#16131f] px-4 py-3 text-sm text-white print:hidden">
+    <div className="sticky top-0 z-10 flex items-center justify-center gap-3 border-b border-rule bg-sunken px-4 py-3 text-sm text-ink print:hidden">
       <span>Choose “Save as PDF” as the printer.</span>
-      <button type="button" onClick={() => window.print()} className="rounded-lg bg-gold px-4 py-2 font-semibold text-[#16131f]">
+      <button type="button" onClick={() => window.print()} className="rounded-lg bg-gold px-4 py-2 font-semibold text-on-gold">
         Save as PDF
       </button>
     </div>

@@ -120,12 +120,15 @@ export default function LowiHeader({
   const pathname = usePathname();
   const produit = pathname === "/beta" || pathname.startsWith("/beta/");
 
+  // Le header est rendu HORS du layout `/beta`, il pose donc lui-même le thème
+  // Ledger (vert/or/blanc) à partir de l'URL — sinon une barre sombre coifferait
+  // une page claire. Le partage se fait sur le chemin, pas sur un drapeau.
   if (produit)
     return (
-      <header className="relative z-30 flex h-14 shrink-0 items-center justify-between border-b border-violet-soft bg-anthracite-deep px-4 print:hidden">
+      <header className="theme-ledger relative z-30 flex h-14 shrink-0 items-center justify-between border-b border-rule-strong bg-page px-4 print:hidden">
         {/* Le logo renvoie à la landing du produit, pas à la carte. */}
-        <Link href="/beta" className="font-logo text-2xl text-text">
-          <span className="text-gold">lowi</span>
+        <Link href="/beta" className="font-logo text-2xl text-ink">
+          <span className="text-gold-ink">lowi</span>
         </Link>
         <PublicNav langue={langue} email={email} />
       </header>

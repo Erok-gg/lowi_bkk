@@ -176,16 +176,16 @@ export default async function Privacy() {
   return (
     <div className="h-full overflow-y-auto">
       <article className="mx-auto max-w-2xl px-4 pb-20 pt-10">
-        <h1 className="text-2xl font-semibold text-text">{txt.titre}</h1>
-        <p className="mt-1 text-xs text-text-faint">
+        <h1 className="text-2xl font-semibold text-ink">{txt.titre}</h1>
+        <p className="mt-1 text-xs text-faint">
           {txt.maj} {VERSION_CONSENTEMENT}
         </p>
         {txt.blocs.map((b) => (
           <section key={b.titre} className="mt-7">
-            <h2 className="text-base font-semibold text-text">{b.titre}</h2>
+            <h2 className="text-base font-semibold text-ink">{b.titre}</h2>
             <ul className="mt-2 space-y-2">
               {b.corps.map((p) => (
-                <li key={p} className="text-sm leading-relaxed text-text-muted">
+                <li key={p} className="text-sm leading-relaxed text-muted">
                   {p}
                 </li>
               ))}

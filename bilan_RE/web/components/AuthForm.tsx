@@ -74,12 +74,12 @@ export default function AuthForm({ langue, mode }: { langue: Langue; mode: "sign
 
   if (envoye)
     return (
-      <div className="w-full max-w-sm rounded-xl border border-violet-soft bg-surface p-6">
-        <h1 className="text-lg font-semibold text-text">{t("auth_sent_title")}</h1>
-        <p className="mt-2 text-sm text-text-muted">{t("auth_sent_body", { email })}</p>
+      <div className="w-full max-w-sm rounded-xl border border-rule bg-surface p-6">
+        <h1 className="text-lg font-semibold text-ink">{t("auth_sent_title")}</h1>
+        <p className="mt-2 text-sm text-muted">{t("auth_sent_body", { email })}</p>
         <Link
           href="/beta/reports"
-          className="mt-5 inline-block rounded-md bg-violet px-4 py-2 text-sm font-medium text-white hover:bg-violet-fluo"
+          className="mt-5 inline-block rounded-md bg-brand-deep px-4 py-2 text-sm font-medium text-white hover:bg-brand"
         >
           {t("nav_reports")}
         </Link>
@@ -87,13 +87,13 @@ export default function AuthForm({ langue, mode }: { langue: Langue; mode: "sign
     );
 
   return (
-    <form onSubmit={soumets} className="w-full max-w-sm rounded-xl border border-violet-soft bg-surface p-6">
-      <h1 className="text-lg font-semibold text-text">
+    <form onSubmit={soumets} className="w-full max-w-sm rounded-xl border border-rule bg-surface p-6">
+      <h1 className="text-lg font-semibold text-ink">
         {inscription ? t("auth_signup_title") : t("auth_signin_title")}
       </h1>
-      {inscription && <p className="mt-1 text-xs text-text-faint">{t("auth_signup_only_email")}</p>}
+      {inscription && <p className="mt-1 text-xs text-faint">{t("auth_signup_only_email")}</p>}
 
-      <label className="mt-5 block text-xs uppercase tracking-wide text-text-faint" htmlFor="email">
+      <label className="mt-5 block text-xs uppercase tracking-wide text-faint" htmlFor="email">
         {t("auth_email")}
       </label>
       <input
@@ -103,12 +103,12 @@ export default function AuthForm({ langue, mode }: { langue: Langue; mode: "sign
         required
         value={email}
         onChange={(e) => setEmail(e.target.value)}
-        className="mt-1 w-full rounded-md border border-violet-soft bg-anthracite-deep px-3 py-2 text-text outline-none focus:border-violet-fluo"
+        className="mt-1 w-full rounded-md border border-rule bg-page px-3 py-2 text-ink outline-none focus:border-brand"
       />
 
       {!inscription && (
         <>
-          <label className="mt-4 block text-xs uppercase tracking-wide text-text-faint" htmlFor="mdp">
+          <label className="mt-4 block text-xs uppercase tracking-wide text-faint" htmlFor="mdp">
             {t("auth_password")}
           </label>
           <input
@@ -118,22 +118,22 @@ export default function AuthForm({ langue, mode }: { langue: Langue; mode: "sign
             required
             value={mdp}
             onChange={(e) => setMdp(e.target.value)}
-            className="mt-1 w-full rounded-md border border-violet-soft bg-anthracite-deep px-3 py-2 text-text outline-none focus:border-violet-fluo"
+            className="mt-1 w-full rounded-md border border-rule bg-page px-3 py-2 text-ink outline-none focus:border-brand"
           />
         </>
       )}
 
       {inscription && (
-        <label className="mt-4 flex items-start gap-2 text-xs text-text-muted">
+        <label className="mt-4 flex items-start gap-2 text-xs text-muted">
           <input
             type="checkbox"
             checked={accepte}
             onChange={(e) => setAccepte(e.target.checked)}
-            className="mt-0.5 h-4 w-4 accent-violet-fluo"
+            className="mt-0.5 h-4 w-4 accent-brand"
           />
           <span>
             {t("auth_consent", { privacy: "" })}{" "}
-            <Link href="/beta/privacy" className="text-gold underline">
+            <Link href="/beta/privacy" className="text-gold-ink underline">
               {t("auth_privacy_link")}
             </Link>
           </span>
@@ -141,21 +141,21 @@ export default function AuthForm({ langue, mode }: { langue: Langue; mode: "sign
       )}
 
       {erreur && <p className="mt-3 text-sm text-red-400">{erreur}</p>}
-      {oubli && <p className="mt-3 text-sm text-text-muted">{t("auth_forgot_sent")}</p>}
+      {oubli && <p className="mt-3 text-sm text-muted">{t("auth_forgot_sent")}</p>}
 
       <button
         type="submit"
         disabled={occupe}
-        className="mt-5 w-full rounded-md bg-violet px-3 py-2 font-medium text-white transition hover:bg-violet-fluo disabled:opacity-50"
+        className="mt-5 w-full rounded-md bg-brand-deep px-3 py-2 font-medium text-white transition hover:bg-brand disabled:opacity-50"
       >
         {occupe ? "…" : inscription ? t("auth_signup_cta") : t("auth_signin_cta")}
       </button>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-text-faint">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-faint">
         {inscription ? (
           <span>
             {t("auth_have_account")}{" "}
-            <Link href="/beta/login" className="text-gold underline">
+            <Link href="/beta/login" className="text-gold-ink underline">
               {t("nav_signin")}
             </Link>
           </span>
@@ -163,7 +163,7 @@ export default function AuthForm({ langue, mode }: { langue: Langue; mode: "sign
           <>
             <span>
               {t("auth_no_account")}{" "}
-              <Link href="/beta/signup" className="text-gold underline">
+              <Link href="/beta/signup" className="text-gold-ink underline">
                 {t("nav_signup")}
               </Link>
             </span>

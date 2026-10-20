@@ -80,17 +80,17 @@ export default function AnalyseForm({ langue = "en" }: { langue?: Langue }) {
             if (phase.t === "error") setPhase({ t: "idle" });
           }}
           placeholder="https://www.ddproperty.com/en/property/…"
-          className="h-14 w-full rounded-xl border border-violet-soft bg-surface sm:flex-1 px-4 text-base text-text placeholder:text-text-faint focus:border-violet-fluo focus:outline-none focus:ring-2 focus:ring-violet-fluo/40"
+          className="h-14 w-full rounded-xl border border-rule bg-surface sm:flex-1 px-4 text-base text-ink placeholder:text-faint focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/40"
         />
         <button
           type="submit"
-          className="h-14 rounded-xl bg-violet-fluo px-7 text-base font-semibold text-white shadow-violet-glow transition hover:brightness-110 active:scale-[0.98]"
+          className="h-14 rounded-xl bg-brand px-7 text-base font-semibold text-white shadow-brand-glow transition hover:brightness-110 active:scale-[0.98]"
         >
           {t("form_cta")}
         </button>
       </div>
       {phase.t === "error" && (
-        <p role="alert" className="mt-3 text-sm text-[#f87171]">
+        <p role="alert" className="mt-3 text-sm text-neg">
           {phase.msg}
         </p>
       )}

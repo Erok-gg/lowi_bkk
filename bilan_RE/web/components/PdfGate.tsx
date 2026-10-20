@@ -37,7 +37,7 @@ export default function PdfGate({
   const [fait, setFait] = useState<{ email: string } | null>(null);
 
   const classeBouton =
-    "flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-gold text-base font-bold text-[#16131f] shadow-[0_0_24px_rgba(201,168,76,0.45)] transition hover:brightness-110 active:scale-[0.98]";
+    "flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-gold text-base font-bold text-on-gold shadow-gold-glow transition hover:brightness-110 active:scale-[0.98]";
 
   // Déjà à lui : on ne redemande rien.
   if (possede)
@@ -50,13 +50,13 @@ export default function PdfGate({
   if (fait)
     return (
       <div className="rounded-xl border border-gold/40 bg-surface p-4">
-        <p className="text-sm font-semibold text-text">{t("pdf_gate_done_title")}</p>
-        <p className="mt-1 text-xs text-text-muted">{t("pdf_gate_done_body", { email: fait.email })}</p>
+        <p className="text-sm font-semibold text-ink">{t("pdf_gate_done_title")}</p>
+        <p className="mt-1 text-xs text-muted">{t("pdf_gate_done_body", { email: fait.email })}</p>
         <a
           href={`/beta/r/${rapportId}/pdf`}
           target="_blank"
           rel="noopener"
-          className="mt-3 inline-block rounded-md bg-gold px-4 py-2 text-sm font-semibold text-[#16131f]"
+          className="mt-3 inline-block rounded-md bg-gold px-4 py-2 text-sm font-semibold text-on-gold"
         >
           {t("pdf_gate_open")}
         </a>
@@ -107,8 +107,8 @@ export default function PdfGate({
 
   return (
     <form onSubmit={demande} className="rounded-xl border border-gold/40 bg-surface p-4">
-      <p className="text-sm font-semibold text-text">{t("pdf_gate_title")}</p>
-      <p className="mt-1 text-xs text-text-muted">{t("pdf_gate_body")}</p>
+      <p className="text-sm font-semibold text-ink">{t("pdf_gate_title")}</p>
+      <p className="mt-1 text-xs text-muted">{t("pdf_gate_body")}</p>
 
       <input
         type="email"
@@ -117,19 +117,19 @@ export default function PdfGate({
         value={email}
         onChange={(ev) => setEmail(ev.target.value)}
         placeholder={t("auth_email")}
-        className="mt-3 w-full rounded-md border border-violet-soft bg-anthracite-deep px-3 py-2 text-text outline-none focus:border-violet-fluo"
+        className="mt-3 w-full rounded-md border border-rule bg-page px-3 py-2 text-ink outline-none focus:border-brand"
       />
 
-      <label className="mt-3 flex items-start gap-2 text-xs text-text-muted">
+      <label className="mt-3 flex items-start gap-2 text-xs text-muted">
         <input
           type="checkbox"
           checked={accepte}
           onChange={(ev) => setAccepte(ev.target.checked)}
-          className="mt-0.5 h-4 w-4 accent-violet-fluo"
+          className="mt-0.5 h-4 w-4 accent-brand"
         />
         <span>
           {t("auth_consent", { privacy: "" })}{" "}
-          <Link href="/beta/privacy" className="text-gold underline">
+          <Link href="/beta/privacy" className="text-gold-ink underline">
             {t("auth_privacy_link")}
           </Link>
         </span>
@@ -140,7 +140,7 @@ export default function PdfGate({
       <button
         type="submit"
         disabled={occupe}
-        className="mt-3 h-12 w-full rounded-xl bg-gold text-sm font-bold text-[#16131f] disabled:opacity-60"
+        className="mt-3 h-12 w-full rounded-xl bg-gold text-sm font-bold text-on-gold disabled:opacity-60"
       >
         {occupe ? t("pdf_gate_working") : t("pdf_gate_cta")}
       </button>

@@ -107,3 +107,33 @@ Tout passe, mais chaque demande ralentit les autres : les processus se partagent
 | 3 en parallèle | 18,5 s | 10,2 s | 7,1 s | **1,5 s** |
 | 6 en parallèle | 28,1 s | 15,1 s | 11,8 s | **2,5 s** |
 - L'estimation du chargement suit : t(k) = 1,1 + 0,23·k s. Le chargement dure toujours au moins un tour lisible (6,5 s, §5) : c'est désormais lui, et non le calcul, qui fixe l'attente. Le raccourcir est une décision produit.
+
+## 17. Thème « Ledger » — vert / or / blanc (2026-10-20)
+Les pages du produit (`/beta…`) ne sont plus sombres : elles portent le thème
+repris du système de design du pitch (`Erok-gg/lowi-th`, `Design-ledger.md`).
+
+- **Couleurs par jetons, jamais en hex.** `bg-surface`, `border-rule`,
+  `text-ink`, `text-muted`, `text-faint`, `bg-brand`, `text-gold-ink`,
+  `text-pos` / `text-neg` / `text-warn` / `text-info`. Les valeurs vivent dans
+  `config/theme.ts` (`palettes.sombre` / `palettes.ledger`) ; un hex écrit dans
+  un composant ne suivra pas le thème.
+- **L'or tient les lignes et les bords**, pas les surfaces : `rule` (filet
+  ordinaire) et `rule-strong` (bord appuyé). Le vert est l'accent (`brand`).
+- **Deux ors** : `gold` (#C9A84C) pour les fonds de bouton avec l'encre
+  `on-gold`, et `gold-ink` (#86681E) pour le texte — #C9A84C est à 2,2:1 sur
+  blanc, il ne peut pas porter de texte.
+- **Le thème est une classe**, `theme-ledger`, posée par `app/beta/layout.tsx`,
+  par la branche produit de `LowiHeader` et par `CookieBanner`. La retirer
+  ramène le sombre. Le partage se fait sur l'URL, pas sur un drapeau.
+- **Ne jamais nommer un jeton comme un utilitaire Tailwind.** Le jeton de fond
+  s'appelait `base` : `text-base` existait déjà (taille de police), la couleur
+  gagnait à l'ordre et les titres de bloc sortaient blanc sur blanc. Il
+  s'appelle `page`.
+- **SVG** : `var()` n'est pas interprété dans un attribut de présentation
+  (`fill="rgb(var(--x))"` ne peint rien). Les couleurs des graphiques du bilan
+  sont lues dans `palettes.ledger` côté JS (`Report.tsx`), pas recopiées.
+- **Polices** : Hanken Grotesk (texte) et JetBrains Mono (`font-data` :
+  étiquettes, chiffres), auto-hébergées par next/font dans `app/layout.tsx`.
+  MCTen reste sur le seul logo.
+- **Non harmonisés** : rayons (le Ledger n'en veut que deux, 6 et 12 px) et
+  grille de 8 px.

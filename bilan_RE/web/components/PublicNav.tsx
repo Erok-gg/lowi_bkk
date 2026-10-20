@@ -53,19 +53,19 @@ export default function PublicNav({
           onClick={() => setOuvert(!ouvert)}
           aria-label={t("nav_language")}
           aria-expanded={ouvert}
-          className="rounded-md px-2.5 py-1.5 text-sm text-text-muted transition hover:text-text"
+          className="rounded-md px-2.5 py-1.5 text-sm text-muted transition hover:text-ink"
         >
           {NOMS[langue]} <span aria-hidden="true">▾</span>
         </button>
         {ouvert && (
-          <ul className="absolute right-0 z-50 mt-1 w-32 overflow-hidden rounded-md border border-violet-soft bg-surface text-sm shadow-xl">
+          <ul className="absolute right-0 z-50 mt-1 w-32 overflow-hidden rounded-md border border-rule bg-surface text-sm shadow-xl">
             {LANGUES.map((l) => (
               <li key={l}>
                 <button
                   type="button"
                   onClick={() => changeLangue(l)}
-                  className={`block w-full px-3 py-2 text-left hover:bg-anthracite-deep ${
-                    l === langue ? "text-gold" : "text-text-muted"
+                  className={`block w-full px-3 py-2 text-left hover:bg-page ${
+                    l === langue ? "text-gold-ink" : "text-muted"
                   }`}
                 >
                   {NOMS[l]}
@@ -80,14 +80,14 @@ export default function PublicNav({
         <>
           <Link
             href="/beta/reports"
-            className="shrink-0 rounded-md px-3 py-1.5 text-sm text-text-muted transition hover:text-text"
+            className="shrink-0 rounded-md px-3 py-1.5 text-sm text-muted transition hover:text-ink"
           >
             {t("nav_reports")}
           </Link>
           <button
             type="button"
             onClick={deconnexion}
-            className="shrink-0 rounded-md px-3 py-1.5 text-sm text-text-faint transition hover:text-text"
+            className="shrink-0 rounded-md px-3 py-1.5 text-sm text-faint transition hover:text-ink"
             title={email}
           >
             {t("nav_signout")}
@@ -97,13 +97,13 @@ export default function PublicNav({
         <>
           <Link
             href="/beta/login"
-            className="shrink-0 rounded-md px-3 py-1.5 text-sm text-text-muted transition hover:text-text"
+            className="shrink-0 rounded-md px-3 py-1.5 text-sm text-muted transition hover:text-ink"
           >
             {t("nav_signin")}
           </Link>
           <Link
             href="/beta/signup"
-            className="shrink-0 rounded-md bg-violet px-3 py-1.5 text-sm font-medium text-white transition hover:bg-violet-fluo"
+            className="shrink-0 rounded-md bg-brand-deep px-3 py-1.5 text-sm font-medium text-white transition hover:bg-brand"
           >
             {t("nav_signup")}
           </Link>

@@ -13,6 +13,7 @@ import type { Chaine, Comparaison, Niveau, Rapport } from "@/bilan_RE/web/lib/ty
 import { EXPLICATIONS } from "./explications";
 import PdfGate from "./PdfGate";
 import type { Langue } from "@/bilan_RE/web/i18n";
+import { palettes } from "@/config/theme";
 
 type Mode = "web" | "pdf";
 const thb = (v: number) => "THB " + (v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : Math.round(v).toLocaleString("en-US"));
@@ -21,20 +22,33 @@ const pct = (v: number) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(Math.ro
 const date = (s: string) =>
   new Date(s + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
-/** Palette par rendu : sombre à l'écran (thème du site), claire sur papier. */
+/**
+ * Palette par rendu. Depuis le thème « Ledger » (vert/or/blanc) les DEUX rendus
+ * sont clairs : l'écran et le papier ne diffèrent plus que par le fond (blanc
+ * franc à l'impression) et par ce qui est déplié.
+ *
+ * Les couleurs de classe passent par les jetons (`bg-surface`, `text-muted`…)
+ * et suivent donc le thème. Les trois couleurs SVG, elles, sont lues dans
+ * `palettes.ledger` : `var()` n'est pas interprété dans un attribut de
+ * présentation SVG (`fill="rgb(var(--x))"` ne peint rien), et recopier les hex
+ * ici les aurait fait dériver de `config/theme.ts`.
+ */
 function palette(mode: Mode) {
+  const L = palettes.ledger;
+  const svg = { piste: L.sunken, point: L.faint, accent: L.brand };
   return mode === "pdf"
-    ? { page: "bg-white text-[#16131f]", carte: "bg-white border border-[#ddd8ea]", doux: "text-[#5b5470]",
-        faible: "text-[#8a849c]", piste: "#ece9f3", point: "#9a93ad", accent: "#6d28d9", fond2: "bg-[#f6f4fb]" }
-    : { page: "text-text", carte: "bg-surface border border-violet-soft", doux: "text-text-muted",
-        faible: "text-text-faint", piste: "#272040", point: "#6b6485", accent: "#b026ff", fond2: "bg-anthracite" };
+    ? { page: "bg-white text-ink", carte: "bg-white border border-rule", doux: "text-muted",
+        faible: "text-faint", fond2: "bg-sunken", ...svg }
+    : { page: "text-ink", carte: "bg-surface border border-rule", doux: "text-muted",
+        faible: "text-faint", fond2: "bg-sunken", ...svg };
 }
 
+/** Pastille d'un libellé de score — en jetons, donc juste dans les deux thèmes. */
 function couleurLibelle(l: string) {
-  if (l.includes("buyer") || l.includes("hard")) return "bg-[#fbbf24]/15 text-[#fbbf24]";
-  if (l.includes("seller") || l.includes("easy")) return "bg-[#34d399]/15 text-[#34d399]";
-  if (l.includes("not enough") || l.includes("no reference")) return "bg-[#6b6485]/20 text-[#9b94b3]";
-  return "bg-[#3b82f6]/15 text-[#93c5fd]";
+  if (l.includes("buyer") || l.includes("hard")) return "bg-warn/15 text-warn";
+  if (l.includes("seller") || l.includes("easy")) return "bg-pos/15 text-pos";
+  if (l.includes("not enough") || l.includes("no reference")) return "bg-faint/15 text-faint";
+  return "bg-info/15 text-info";
 }
 
 function Bloc({ titre, id, mode, ouvert = false, children, resume }: {
@@ -80,7 +94,7 @@ function Score({ n, mode }: { n: (Niveau & { niveau?: string }) | null | undefin
   return (
     <div>
       <div className="flex items-baseline gap-2">
-        <span className="font-serif text-5xl tabular-nums">{n.score}</span>
+        <span className="font-data text-5xl">{n.score}</span>
         <span className={P.doux}>/ 100</span>
         <span className={`ml-auto rounded-md px-2.5 py-1 text-xs ${couleurLibelle(n.libelle)}`}>{n.libelle}</span>
       </div>
@@ -99,9 +113,9 @@ function Echelle({ n, mode }: { n: Niveau; mode: Mode }) {
   return (
     <svg viewBox="0 0 320 30" className="mt-3 w-full" role="img"
       aria-label={`Score ${n.score} on a 0 to 100 scale, likely range ${n.p10} to ${n.p90}`}>
-      <rect x="4" y="12" width="108" height="6" rx="3" fill="#fbbf24" opacity="0.25" />
+      <rect x="4" y="12" width="108" height="6" rx="3" fill={palettes.ledger.warn} opacity="0.25" />
       <rect x="113" y="12" width="94" height="6" fill={P.piste} />
-      <rect x="208" y="12" width="108" height="6" rx="3" fill="#34d399" opacity="0.25" />
+      <rect x="208" y="12" width="108" height="6" rx="3" fill={palettes.ledger.pos} opacity="0.25" />
       <rect x={x(n.p10 ?? 0)} y="8" width={Math.max(2, x(n.p90 ?? 0) - x(n.p10 ?? 0))} height="14" rx="4"
         fill="none" stroke={P.accent} strokeWidth="1.5" />
       <circle cx={x(n.score ?? 0)} cy="15" r="5.5" fill={P.accent} />
@@ -153,7 +167,7 @@ function Reglette({ c, prix, mode }: { c: Comparaison; prix: number; mode: Mode 
         <circle key={i} cx={x(v)} cy={24 + ((i % 3) - 1) * 5} r="3.2" fill={P.point} opacity="0.75" />
       ))}
       {c.mediane && <line x1={x(c.mediane)} y1="8" x2={x(c.mediane)} y2="40" stroke={P.point} strokeDasharray="3 3" />}
-      <circle cx={x(prix)} cy="24" r="7" fill={P.accent} stroke="#fff" strokeWidth="2" />
+      <circle cx={x(prix)} cy="24" r="7" fill={P.accent} stroke={palettes.ledger.surface} strokeWidth="2" />
       <text x="8" y="50" fontSize="9" fill={P.point}>{k(lo)}/m²</text>
       {c.mediane && <text x={x(c.mediane)} y="6" fontSize="9" fill={P.point} textAnchor="middle">median</text>}
       <text x="312" y="50" fontSize="9" fill={P.point} textAnchor="end">{k(hi)}/m²</text>
@@ -269,7 +283,7 @@ export default function Report({
 
   const identite = (
     <div>
-      <p className={`text-xs uppercase tracking-[0.14em] ${P.faible}`}>Buyer report · beta</p>
+      <p className={`font-data text-xs uppercase tracking-[0.14em] ${P.faible}`}>Buyer report · beta</p>
       <h1 className="mt-1 text-2xl font-semibold leading-tight 2xl:text-3xl">{a.condo.replace(", Bangkok", "")}</h1>
       <p className={`mt-1 text-sm ${P.doux}`}>
         {a.chambres ?? "?"} bed · {a.sdb ?? "?"} bath · {a.surface} m²{a.etage ? ` · floor ${a.etage}` : ""} ·{" "}
@@ -301,7 +315,7 @@ export default function Report({
       <PdfGate rapportId={r.id} langue={acces.langue} connecte={acces.connecte} possede={acces.possede} />
     ) : (
       <a href={`/beta/r/${r.id}/pdf`} target="_blank" rel="noopener"
-        className="flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-gold text-base font-bold text-[#16131f] shadow-[0_0_24px_rgba(201,168,76,0.45)] transition hover:brightness-110 active:scale-[0.98]">
+        className="flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-gold text-base font-bold text-on-gold shadow-gold-glow transition hover:brightness-110 active:scale-[0.98]">
         <span aria-hidden="true">⬇</span> Get the full PDF report
       </a>
     ));
@@ -329,7 +343,7 @@ export default function Report({
             {r.prix?.map((c) => (
               <button key={c.cle} type="button" onClick={() => setNiveauPrix(c.cle)} disabled={!c.mediane}
                 className={`rounded-full border px-3 py-1 text-xs ${c.cle === niveauPrix
-                  ? "border-violet-fluo bg-violet-fluo/15 text-text" : "border-violet-soft " + P.doux}
+                  ? "border-brand bg-brand/15 text-ink" : "border-rule " + P.doux}
                   ${!c.mediane ? "opacity-40" : ""}`}>
                 {c.niveau.replace("The building, ", "Building · ")} ({c.n})
               </button>
@@ -399,7 +413,7 @@ export default function Report({
           <ul className="space-y-2 text-sm">
             {r.drapeaux.map((d, i) => (
               <li key={i} className="flex gap-2">
-                <span className={d.niveau === "high" ? "text-[#f87171]" : d.niveau === "medium" ? "text-[#fbbf24]" : P.doux}
+                <span className={d.niveau === "high" ? "text-neg" : d.niveau === "medium" ? "text-warn" : P.doux}
                   aria-hidden="true">●</span>
                 <span>{d.texte}</span>
               </li>
@@ -413,9 +427,9 @@ export default function Report({
   if (pdf)
     return (
       <div className={`${P.page} mx-auto max-w-[190mm] space-y-4 p-6 text-[13px]`}>
-        <div className="flex items-start justify-between gap-6 border-b border-[#ddd8ea] pb-4">
+        <div className="flex items-start justify-between gap-6 border-b border-rule pb-4">
           {identite}
-          <span className="font-logo text-3xl text-[#a8871f]">lowi</span>
+          <span className="font-logo text-3xl text-gold-ink">lowi</span>
         </div>
         <p className="text-base font-medium">{verdict(r)}</p>
         {chiffres}
@@ -441,7 +455,7 @@ export default function Report({
         <div className="mt-6 grid min-w-0 gap-4 lg:col-span-8 lg:mt-0 xl:grid-cols-2">{blocs}</div>
         <div className="mt-6 lg:hidden">{mentions}</div>
       </div>
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-violet-soft bg-anthracite-deep/95 p-3 backdrop-blur lg:hidden">
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-rule bg-page/95 p-3 backdrop-blur lg:hidden">
         {boutonPdf}
       </div>
     </div>

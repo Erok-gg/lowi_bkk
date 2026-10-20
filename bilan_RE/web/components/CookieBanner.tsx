@@ -86,11 +86,11 @@ export default function CookieBanner({ langue }: { langue: Langue }) {
         checked={on}
         disabled={fige}
         onChange={(e) => set?.(e.target.checked)}
-        className="mt-1 h-4 w-4 shrink-0 accent-violet-fluo"
+        className="mt-1 h-4 w-4 shrink-0 accent-brand"
       />
       <span>
-        <span className="block text-sm font-medium text-text">{titre}</span>
-        <span className="block text-xs text-text-faint">{d}</span>
+        <span className="block text-sm font-medium text-ink">{titre}</span>
+        <span className="block text-xs text-faint">{d}</span>
       </span>
     </label>
   );
@@ -99,25 +99,27 @@ export default function CookieBanner({ langue }: { langue: Langue }) {
     <div
       role="dialog"
       aria-label={t("cookie_title")}
-      className="fixed inset-x-0 bottom-0 z-[60] border-t border-violet-soft bg-surface/95 px-4 py-4 backdrop-blur print:hidden"
+      /* `theme-ledger` ici aussi : le bandeau est monté par le layout racine,
+         hors du sous-arbre `/beta` — et il ne s'affiche QUE sur /beta. */
+      className="theme-ledger fixed inset-x-0 bottom-0 z-[60] border-t border-rule-strong bg-surface/95 px-4 py-4 backdrop-blur print:hidden"
     >
       <div className="mx-auto flex max-w-4xl flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-text">{t("cookie_title")}</p>
-          <p className="mt-1 text-xs leading-relaxed text-text-muted">{t("cookie_body")}</p>
-          <Link href="/beta/privacy" className="mt-1 inline-block text-xs text-gold underline">
+          <p className="text-sm font-semibold text-ink">{t("cookie_title")}</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted">{t("cookie_body")}</p>
+          <Link href="/beta/privacy" className="mt-1 inline-block text-xs text-gold-ink underline">
             {t("cookie_more")}
           </Link>
 
           {detail && (
-            <div className="mt-2 border-t border-violet-soft pt-2">
+            <div className="mt-2 border-t border-rule pt-2">
               <Case on fige titre={t("cookie_necessary")} detail={t("cookie_necessary_d")} />
               <Case on={mesure} set={setMesure} titre={t("cookie_measure")} detail={t("cookie_measure_d")} />
               <Case on={marketing} set={setMarketing} titre={t("cookie_marketing")} detail={t("cookie_marketing_d")} />
               <button
                 type="button"
                 onClick={() => repond(mesure, marketing)}
-                className="mt-2 rounded-md bg-violet px-4 py-2 text-sm font-medium text-white hover:bg-violet-fluo"
+                className="mt-2 rounded-md bg-brand-deep px-4 py-2 text-sm font-medium text-white hover:bg-brand"
               >
                 {t("cookie_save")}
               </button>
@@ -131,21 +133,21 @@ export default function CookieBanner({ langue }: { langue: Langue }) {
             <button
               type="button"
               onClick={() => repond(false, false)}
-              className="rounded-md border border-violet-soft px-4 py-2 text-sm text-text transition hover:border-violet-fluo"
+              className="rounded-md border border-rule px-4 py-2 text-sm text-ink transition hover:border-brand"
             >
               {t("cookie_refuse")}
             </button>
             <button
               type="button"
               onClick={() => repond(true, true)}
-              className="rounded-md bg-violet px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-fluo"
+              className="rounded-md bg-brand-deep px-4 py-2 text-sm font-medium text-white transition hover:bg-brand"
             >
               {t("cookie_accept")}
             </button>
             <button
               type="button"
               onClick={() => setDetail(true)}
-              className="rounded-md px-2 py-2 text-xs text-text-faint underline transition hover:text-text"
+              className="rounded-md px-2 py-2 text-xs text-faint underline transition hover:text-ink"
             >
               {t("cookie_choose")}
             </button>

@@ -22,25 +22,25 @@ export default async function MesRapports() {
   return (
     <div className="h-full overflow-y-auto">
       <section className="mx-auto max-w-3xl px-4 pb-16 pt-10">
-        <h1 className="text-2xl font-semibold text-text">{t("rep_title")}</h1>
-        <p className="mt-1 text-sm text-text-faint">{compte.email_saisi ?? compte.email}</p>
+        <h1 className="text-2xl font-semibold text-ink">{t("rep_title")}</h1>
+        <p className="mt-1 text-sm text-faint">{compte.email_saisi ?? compte.email}</p>
 
         {liste.length === 0 ? (
-          <p className="mt-8 text-sm text-text-muted">{t("rep_empty")}</p>
+          <p className="mt-8 text-sm text-muted">{t("rep_empty")}</p>
         ) : (
-          <ul className="mt-6 divide-y divide-violet-soft overflow-hidden rounded-xl border border-violet-soft bg-surface">
+          <ul className="mt-6 divide-y divide-rule overflow-hidden rounded-xl border border-rule bg-surface">
             {liste.map((r) => (
               <li key={r.rapport_id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-text">{r.titre ?? r.rapport_id}</p>
-                  <p className="text-xs text-text-faint">
+                  <p className="truncate text-sm font-medium text-ink">{r.titre ?? r.rapport_id}</p>
+                  <p className="text-xs text-faint">
                     {r.cree_le.slice(0, 10)} · {r.paye ? t("rep_paid") : t("rep_free")}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <Link
                     href={`/beta/r/${r.rapport_id}`}
-                    className="rounded-md border border-violet-soft px-3 py-1.5 text-xs text-text transition hover:border-violet-fluo"
+                    className="rounded-md border border-rule px-3 py-1.5 text-xs text-ink transition hover:border-brand"
                   >
                     {t("rep_open")}
                   </Link>
@@ -48,7 +48,7 @@ export default async function MesRapports() {
                     href={`/beta/r/${r.rapport_id}/pdf`}
                     target="_blank"
                     rel="noopener"
-                    className="rounded-md bg-gold px-3 py-1.5 text-xs font-semibold text-[#16131f]"
+                    className="rounded-md bg-gold px-3 py-1.5 text-xs font-semibold text-on-gold"
                   >
                     {t("rep_pdf")}
                   </Link>
@@ -58,7 +58,7 @@ export default async function MesRapports() {
           </ul>
         )}
 
-        <Link href="/beta" className="mt-8 inline-block text-sm text-gold underline">
+        <Link href="/beta" className="mt-8 inline-block text-sm text-gold-ink underline">
           {t("rep_analyse_another")}
         </Link>
       </section>

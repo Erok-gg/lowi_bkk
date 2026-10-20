@@ -12,6 +12,31 @@
 
 :root {
   color-scheme: dark;
+  /* Polices par defaut hors sous-arbre du bilan (ou next/font les fournit). */
+  --police-texte: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --police-donnees: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Thème Ledger (vert/or/blanc) — jetons dans config/theme.ts, injectés par le
+   layout. Ici seulement ce qui ne se dit pas en variables : le schéma de
+   couleurs natif des contrôles et le fond du sous-arbre. */
+.theme-ledger {
+  color-scheme: light;
+  background: rgb(var(--c-page));
+  color: rgb(var(--c-ink));
+  font-family: var(--police-texte);
+}
+
+/* Impression du bilan : le thème est déjà clair, on garde juste le blanc franc
+   et on laisse les couleurs (règle d'impression, globals §print plus bas). */
+@media print {
+  .theme-ledger { background: #fff; }
+}
+
+/* Chiffres et étiquettes : police de données, chasses alignées. */
+.font-data {
+  font-family: var(--police-donnees);
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
 .font-logo {
@@ -34,8 +59,8 @@ body {
   height: 100%;
   margin: 0;
   padding: 0;
-  background: theme("colors.anthracite-deep");
-  color: theme("colors.text");
+  background: rgb(var(--c-anthracite-deep));
+  color: rgb(var(--c-text));
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -67,17 +92,17 @@ body {
   height: 14px;
   width: 14px;
   border-radius: 50%;
-  background: theme("colors.violet-fluo");
-  border: 2px solid theme("colors.anthracite-deep");
+  background: rgb(var(--c-violet-fluo));
+  border: 2px solid rgb(var(--c-anthracite-deep));
   cursor: pointer;
 }
 .range-dual input[type="range"]::-moz-range-thumb {
   pointer-events: auto;
   height: 14px;
   width: 14px;
-  border: 2px solid theme("colors.anthracite-deep");
+  border: 2px solid rgb(var(--c-anthracite-deep));
   border-radius: 50%;
-  background: theme("colors.violet-fluo");
+  background: rgb(var(--c-violet-fluo));
   cursor: pointer;
 }
 .range-dual .range-track {
@@ -87,35 +112,35 @@ body {
   top: 12px;
   height: 4px;
   border-radius: 2px;
-  background: theme("colors.violet-soft");
+  background: rgb(var(--c-violet-soft));
 }
 .range-dual .range-fill {
   position: absolute;
   top: 12px;
   height: 4px;
   border-radius: 2px;
-  background: theme("colors.violet-fluo");
+  background: rgb(var(--c-violet-fluo));
 }
 
 /* Popups MapLibre — habillage dark */
 .maplibregl-popup-content {
-  background: theme("colors.surface");
-  color: theme("colors.text");
-  border: 1px solid theme("colors.violet-soft");
+  background: rgb(var(--c-surface));
+  color: rgb(var(--c-text));
+  border: 1px solid rgb(var(--c-violet-soft));
   border-radius: 0.5rem;
   padding: 0;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
 }
 .maplibregl-popup-tip {
-  border-top-color: theme("colors.surface");
-  border-bottom-color: theme("colors.surface");
+  border-top-color: rgb(var(--c-surface));
+  border-bottom-color: rgb(var(--c-surface));
 }
 .maplibregl-ctrl-group {
-  background: theme("colors.surface");
-  border: 1px solid theme("colors.violet-soft");
+  background: rgb(var(--c-surface));
+  border: 1px solid rgb(var(--c-violet-soft));
 }
 .maplibregl-ctrl-group button + button {
-  border-top-color: theme("colors.violet-soft");
+  border-top-color: rgb(var(--c-violet-soft));
 }
 
 /* Bilan acheteur — impression en PDF : A4, marges fines, couleurs conservées,

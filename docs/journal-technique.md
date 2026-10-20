@@ -4249,3 +4249,69 @@ Demande de l'utilisateur, backlog #25 et suite : la landing ne donne plus accès
 Le commentaire du bot Vercel sur la PR #4 liste **deux** projets qui déploient la branche : `lowi-bkk` (celui qui sert le site) et **`lowibkk`**, l'un des trois doublons que l'entrée du 2026-10-17 (suite) déclarait supprimés. Chaque push lance donc à nouveau 2 builds (règle 9), et chaque branche reçoit 2 préviews. Prévisualisations sans danger ici (la beta n'est publique que si `LOWI_BETA_PUBLIQUE=1`, posée nulle part), mais le compteur de builds, lui, tourne. **Non fait** : rien supprimé — c'est au tableau de bord Vercel, et c'est une décision de l'utilisateur. **Non vérifié** : si la suppression du 17/10 a échoué ou si le projet a été réimporté depuis ; et si les deux autres doublons (`lowi_bkk`, `lowi_bkk_`) sont revenus eux aussi (le commentaire n'en montre que deux, donc probablement non).
 
 **Suite, 2026-10-20** : `lowibkk` supprimé par l'utilisateur depuis le tableau de bord Vercel. Vérifié après coup (et non supposé — un exit 0 ne prouve rien) : la prévisualisation `lowibkk-git-feat-bilan-build2-comptes-…` répond **404**, celle de `lowi-bkk` répond **200**, et `lowi-bkk.vercel.app/login` répond **200**. Un seul projet build donc à nouveau chaque push. Chemin du retour, si jamais : réimporter le dépôt GitHub dans Vercel (seul l'historique de déploiement de la copie est perdu).
+
+## 2026-10-20 (suite) — thème « Ledger » vert/or/blanc sur le bilan acheteur
+
+Demande : reprendre le système de design du pitch et en faire un thème **vert, or
+(lignes et bords surtout) et blanc**, appliqué au bilan acheteur et à ses pages.
+
+**La source.** Le « nouveau système de design du pitch » n'est pas dans ce
+dépôt : c'est `Design-ledger.md` + `Design.md` à la racine de `Erok-gg/lowi-th`
+(public), implémenté le 2026-10-14 dans `public/dossier.html`. Les jetons réels
+ont été lus sur le `:root` du fichier déployé, pas déduits du tableau de la doc
+(les deux concordent). Maquettes : artefact `Cp4vsj92sa1uH5mEX4nNEm`.
+
+**Ce qui est repris du Ledger** : les *rôles* de jetons (page / creux / surface /
+encre / filet / accent / positif-négatif), le principe « positif et négatif
+diffèrent aussi en luminosité », et les deux polices (Hanken Grotesk pour le
+texte, JetBrains Mono pour les données — MCTen reste sur le seul logo). Les
+polices sont **auto-hébergées par next/font**, pas liées à Google : le Ledger a
+justement été écrit après avoir mesuré qu'`Aptos` n'existait que sur le poste de
+test. Ce qui change : l'accent violet devient **vert** et l'or quitte les
+surfaces pour tenir les **filets et les bords**.
+
+**Mécanisme, et pourquoi celui-là.** Les couleurs Tailwind ne sont plus des hex
+mais `rgb(var(--c-<jeton>) / <alpha-value>)` — l'opacité (`bg-gold/40`) continue
+de marcher, et un sous-arbre peut redéfinir tout le jeu. `:root` porte
+**exactement les hex d'avant**, donc la carte et les tableaux ne bougent pas
+(vérifié à l'écran sur `/for-sale`) ; la classe `.theme-ledger` porte le clair.
+Elle est posée à trois endroits, tous dérivés de l'URL et non d'un drapeau :
+`app/beta/layout.tsx`, la branche produit de `LowiHeader`, et `CookieBanner`
+(monté par le layout racine, mais affiché seulement sous `/beta`). **Chemin du
+retour** (règle 7) : retirer la classe — un fichier de 2 lignes et 2 `className`.
+Le CSS des jetons est **généré** par `cssTokens()` depuis `config/theme.ts` et
+injecté par le layout (~1,6 ko inline, ~0,5 ko compressé) plutôt que recopié
+dans `globals.css` : deux jeux auraient dérivé.
+
+**Deux ors, et pourquoi.** `#C9A84C` plafonne à **2,2:1** sur blanc — illisible
+en texte. Il reste donc sur les bords et les fonds de bouton (où l'encre est
+sombre, 8,9:1, jeton `on-gold`), et le texte or passe par `gold-ink` `#86681E`
+(5,0:1). Même raison pour `faint` : la valeur claire du Ledger (`#7A808C`,
+3,9:1) ne passe pas en 11 px, d'où `#616E65` (4,8:1).
+
+**Défaut trouvé en vérifiant à l'écran, corrigé.** Le jeton de fond s'appelait
+d'abord `base`. Or `text-base` **est déjà** un utilitaire Tailwind (taille de
+police) : Tailwind émettait un second `.text-base{color:…}` qui gagnait à
+l'ordre, et tous les titres de bloc du bilan ainsi que la phrase de verdict
+passaient en **blanc sur blanc**. Invisible au typecheck, invisible au test :
+seul le rendu le montre. Renommé `page` ; la règle est consignée en tête de
+`JETONS` dans `config/theme.ts`.
+
+**Vérifié** : `/beta`, `/beta/login`, `/beta/signup`, `/beta/privacy`,
+`/beta/r/<id>` en 1440 px et en 375 px ; aucune erreur de console ;
+`npm run typecheck` propre. `/for-sale` inchangé (thème sombre).
+
+**Ce qui n'a PAS été fait**
+- **La page PDF `/beta/r/<id>/pdf` n'a pas été vue** : elle redirige vers
+  `/beta/login` (elle est derrière un compte). Son rendu partage les mêmes
+  jetons que l'écran — contrôlé dans le code, pas à l'œil.
+- **L'écran de chargement** (`AnalysisLoader`) n'a pas été vu non plus : il
+  faudrait soumettre une URL neuve. Classes converties, rendu non constaté.
+- **Rayons et espacements non harmonisés.** Le Ledger impose deux rayons
+  (6/12 px) et une grille de 8 px ; le bilan garde ses `rounded-md/lg/xl/2xl`.
+  C'est un travail de forme, séparé du thème, à faire ou non.
+- **Pas d'étiquettes en pastille** (principe 2 du Ledger) : les pastilles de
+  libellé du bilan (`balanced`, `buyer's`…) ont été recolorées, pas supprimées.
+- **Un essai préexistant échoue toujours** : `lib/tension.test.ts`
+  (« le time-on-market écarte par défaut l'historique d'avant le correctif »),
+  13/14 au vert. Aucun fichier de la tension n'a été touché ici.

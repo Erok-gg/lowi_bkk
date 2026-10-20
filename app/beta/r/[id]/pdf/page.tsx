@@ -33,7 +33,7 @@ export default async function RapportPdf({ params }: { params: Promise<{ id: str
   const r = lire(id);
   if (!r || r.statut !== "ok") notFound();
   return (
-    <div className="h-full overflow-y-auto bg-[#e9e6f0] print:bg-white">
+    <div className="h-full overflow-y-auto bg-sunken print:bg-white">
       <PdfToolbar />
       <div className="mx-auto my-6 max-w-[210mm] bg-white shadow-xl print:my-0 print:shadow-none">
         <Report r={r} mode="pdf" />
