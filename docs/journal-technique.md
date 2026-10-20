@@ -4407,6 +4407,106 @@ Suite directe de l'entrée précédente, sur demande (« fais les 3 dans l'ordre
 
 **Non fait** : 403 non traité comme un blocage (Nestopa sert des 403 légitimes sur ses fiches) ; détection du challenge AWS WAF ; Nestopa tourne désormais à ~1 s malgré son `Crawl-delay: 10` (cadence approuvée « plancher 1 s », mais ce site demande explicitement plus lent : à revoir) ; recensement non accéléré (voir plus haut).
 
+## 2026-10-20 (suite) — LivingInsider : panne datée en deux temps, pourquoi elle n'a pas sonné, options chiffrées
+
+Enquête demandée par la séance du fetcher (`curl_cffi` partout). Lecture seule
+sur le dépôt ; **6 requêtes live** à ≥ 3 s (2 listes ancien chemin, 1 liste
+nouveau chemin, robots.txt, 2 fiches). Rien modifié hors de cette entrée.
+
+**Prémisse à corriger d'abord : la source n'est pas « morte en silence ».**
+Elle a été diagnostiquée et **suspendue sur décision utilisateur le 26/09**
+(`066fb2a`, entrées du 2026-09-26 ci-dessus). `watch-health` l'avait signalée
+chaque nuit (ledger `findings`, mesuré) : `derive` (medium) le 18/09, puis
+`parseur_casse` (**high**) les 21, 23, 24, 25 et 26/09. Les runs « ok » à
+0 nouvelle d'octobre se réduisent à **un seul** : le `run` **manuel** du 18/10
+(`manuel-extract-livinginsider-20261018.out`, 300 scannées, 0 utile, 24,7 min),
+qu'aucune surveillance ne juge puisque la source n'a plus de lane — c'est
+voulu (règle 2), mais c'est le seul vrai angle mort.
+
+**Datation (mesurée dans `agents/logs/extract-livinginsider-*.log`, horodatage UTC du nom de fichier) — deux ruptures, pas une :**
+
+| Run (UTC) | Liste | Fiches | Preuve |
+|---|---|---|---|
+| ≤ 16/09 18:00 | ok | ok | ~250 nouvelles, identifiants `LV…`, `reseau_fiche` ≈ 0,5 s |
+| **17/09 18:13** → 24/09 18:10 | **cassée** | répondent | mêmes 4 identifiants Bangkok sur les 25 pages, préfixe `LV` perdu, prix `None`, titre = nom de zone ; `reseau_fiche` 0,49 s (vraies pages) |
+| **25/09 18:10** → | cassée | **challenge** | `reseau_fiche` **0,07 s** sur 652 appels, 0 inchangée : le corps de ~2 Ko du WAF |
+
+- **Rupture 1 = refonte du site entre le 16/09 19:11 et le 17/09 18:13 UTC**
+  (dernier `last_seen` sain : 2026-09-16T19:11). Mesuré ce jour : l'ancien chemin
+  `/searchword_en/Condo/Buysell/<n>/…` répond 200 mais sert toujours la page 1
+  (canonique `/en/condo-buysell`) ; l'`ItemList` ld+json est **identique p1/p2**
+  (12 mêmes URL) ; les vraies cartes sont des liens `/en/detail/…` (72 sur la
+  p1).
+- **Rupture 2 = challenge AWS WAF sur les fiches, apparu entre le 24/09 ~19:00
+  et le 25/09 18:10 UTC** (déduit de la chute de latence, le statut HTTP n'était
+  pas journalisé à l'époque). Confirmé ce jour : `/detail_en/…` **et**
+  `/en/detail/…` → **202, 2 012 octets, `x-amzn-waf-action: challenge`**, corps
+  `window.awsWafCookieDomainList…` (page JS qui pose un jeton). La note du 26/09
+  plaçait le 202 dès le 17/09 : les logs montrent que les fiches répondaient
+  encore jusqu'au 24/09 — précision, pas contradiction sur le fond.
+
+**Pourquoi rien n'a vu le 202 lui-même (mesuré dans le code) :**
+1. `Fetcher.get_text()` rend `.text` **quel que soit le statut** : le corps du
+   challenge arrive à l'adaptateur comme une page normale.
+2. `parse_listing()` ne trouve pas « Bangkok » dans 2 Ko de JS → `return None`,
+   **le même chemin qu'une annonce hors Bangkok**. Un WAF et un filtre géo sont
+   indiscernables : ni `erreurs_http`, ni `exclues`, ni trace.
+3. `sonder()` ne vérifie que l'`ItemList` de la page de **liste** — qui a
+   survécu à la refonte sous forme de bloc figé. Il n'ouvre jamais une fiche.
+4. `Fetcher.statuts` (compteur par code HTTP, ajouté le 20/10, non committé)
+   existe mais **n'est lu par personne** : ni `run.py`, ni l'orchestrateur.
+5. `watch-health` ne juge que `nouvelles` : il a vu l'effet, jamais la cause
+   (« parseur probablement cassé » alors que le parseur n'y était pour rien
+   après le 25/09). Effet secondaire noté : sa médiane glissante sur 10 runs
+   absorbe les zéros (275,5 → 3,0 en six nuits), donc la règle `derive`
+   (< 25 % de la médiane) s'éteint d'elle-même sur une panne longue ; seule la
+   règle `nouvelles == 0` tient.
+
+**Garde-fou proposé (non implémenté) — « part de fiches bloquées » :**
+- *Mesure* : dans `Fetcher._get()`, compter à part les réponses
+  `202` + en-tête `x-amzn-waf-action` (et, par source, le 403/503 Cloudflare
+  `cf-mitigated: challenge`) ; `run.py` imprime en fin de scan une ligne
+  `fiches_bloquees=<n>/<total>` que `orchestrator.py` range dans `metrics`
+  comme `erreurs_http` aujourd'hui.
+- *Décision* : `watch-health._classer()` → verdict `challenge_waf` (**high**,
+  mail) dès que `fiches_bloquees / fiches ≥ 50 %` sur le run, **avant** le test
+  `nouvelles == 0` (sinon la cause reste « parseur cassé »). Sous 50 %,
+  `medium` sans mail : un challenge isolé arrive sur un site sain.
+- *Sonde* : `sonder()` de LivingInsider ouvre **une** fiche prise dans la liste ;
+  202+WAF → `[SONDE-ECHEC] challenge WAF`, escalade immédiate au lieu d'un scan
+  de 50 min pour rien. Coût : 1 requête par run.
+- *Se tait quand tout va bien* : sur les 4 sources saines le compteur vaut 0
+  (aucune n'émet `x-amzn-waf-action` ; à vérifier sur un cycle avant
+  d'activer le seuil). *Parle quand ça ne va pas* : rejoué sur les logs du
+  25/09 et du 18/10, il aurait donné 652/652 et 328/328 → high. **Ces deux
+  vérifications sont à faire en test, pas supposées.**
+- Fichiers touchés : `scraper/pipeline/fetch.py` (en cours de modification par
+  une autre séance — à faire après son commit), `scraper/run.py`,
+  `scraper/adapters/livinginsider.py`, `agents/bots/watch_health.py`, un test.
+
+**Options chiffrées — aucune appliquée (règle 5) :**
+
+| | Coût dev | Coût/nuit | Données | Posture |
+|---|---|---|---|---|
+| **A. Abandon** | ~0 (+ trancher les 516 actives figées au 16/09) | 0 | perd la source : 516 actives = **0,40 %** des 129 539, ~250 nouvelles brutes/nuit avant panne, 9 318 lignes en 6 semaines | neutre |
+| **B. Liste seule** (nouvelle pagination `/en/condo-buysell/<n>`, `/en/condo-rent/<n>`) | ~½–1 j (nouveau `list_urls` + lecture des cartes) | 50 pages ≈ **70–100 Mo** (1,4–2,1 Mo/page, mesuré), ~3 min à 3 s | **mesuré sur p1/p2** : 200 sans WAF, 48–72 cartes/page dont ~7 « boostées » répétées, prix + surface + chambres + SDB + étage + nom d'immeuble en clair ; **dédup incrémentale enfin possible** (prix en liste). Perdus : description, `page_text`, `posted_at`, galerie. Filtre Bangkok par carte **non vérifié**. 1 599 pages en vente (national) | ne touche pas aux fiches protégées ; risque que le WAF s'étende aux listes |
+| **C. Navigateur réel** (Playwright/Chrome qui exécute le JS du challenge) | 1–2 j + Chromium sur PC2 | ~5–10 s/fiche × ~600 ≈ **1–1,5 h** (estimé, non mesuré) | complètes | **contourne un WAF** : décision utilisateur ; risque de blocage de l'IP |
+| **D. Sitemap** (`sitemap-topic.xml`…) | — | — | découverte seulement : les fiches restent derrière le WAF, ne résout rien seul | neutre |
+| **E. Demander un accès** à LivingInsider (flux, API, liste blanche) | 0 dev | — | selon réponse | la plus propre ; délai inconnu |
+
+B est la seule option qui rouvre la source sans franchir le challenge ; elle en
+change la nature (données de carte, plus de fiche). C n'est pas recommandée
+sans décision explicite.
+
+**Non fait, et pourquoi.** Aucune option appliquée, aucun garde-fou codé :
+`fetch.py` est en cours de modification non committée par une autre séance, et
+le seuil d'un garde-fou est à trancher (règle 5). Statut des fiches entre le
+17 et le 24/09 **déduit** de la latence, pas mesuré. Filtre Bangkok sur les
+cartes de liste, comportement de la pagination au-delà de la p2, et volume réel
+d'une passe B **non mesurés**. Les 516 actives figées au 16/09 restent `active`
+(déjà relevé le 08/10, toujours à trancher). Escalades `parser_break`
+LivingInsider toujours ouvertes. Rien committé.
+
 ## 2026-10-20 (suite) — deux nouvelles sources : PropertyHub et Hipflat, adaptateurs et agents branchés
 
 **Demande** : un scraper propertyhub.in.th, puis Hipflat. Adaptateurs écrits,
@@ -4531,3 +4631,134 @@ sources, en plus de la fraîcheur.
 **Non fait** : aucun envoi réel (rien à envoyer avant le premier cycle). Le
 chiffrage du quota (coût/ligne × stock attendu) reste à faire avant de lever
 l'exclusion.
+
+## 2026-10-21 — DDproperty élague sa charge utile ; la sonde ne le voyait pas
+
+Séance de réparation autonome déclenchée par la veille du cycle (escalade Opus
+`2026-10-21.escalade-5e7c81570c`, 03:00). Trois tickets en file, **une seule
+cause** : les « 4 problèmes » vus par Haiku sont les deux échecs de sonde
+`extract-ddproperty` (principal et `then_0`), comptés une fois comme constat et
+une fois comme ligne d'erreur de journal.
+
+### Ce qui a changé chez eux, et ce que la mesure a tranché
+
+Entre le **2026-10-19 19:30 UTC** (run 927 : 48 321 annonces sur 2 615 pages,
+soit **18,5 par page**) et le **2026-10-20 19:30 UTC**, DDproperty a cessé de
+servir la charge utile de ses annonces dans
+`__NEXT_DATA__ … pageData.data.listingsData`.
+
+Mesuré le 2026-10-21 sur 16 pages réelles :
+
+| | `listingsData` | `contactAgentCardData` |
+|---|---|---|
+| vente, pages 1-8 | **10 / 160** (6 %) | 160 / 160 |
+| location, pages 1-8 | **2 / 160** (1 %) | 160 / 160 |
+
+Le diagnostic automatique disait « structure du blob changée ». **C'est faux au
+sens où on l'entend d'habitude** : là où `listingsData` répond encore, le chemin
+et les noms de champs sont strictement inchangés, et l'adaptateur les lit sans
+rien modifier. Ce n'est pas un renommage, c'est un **élagage** : la page
+continue d'émettre, pour les **vingt** annonces, les blocs annexes
+`contactAgentCardData` et `enquiryModalData` indexés par identifiant, et
+seulement ceux-là. La **fiche détail est intacte** (vérifié sur 500669058 :
+surface 54 m², 1 SDB, lat/lng, tenure, description).
+
+La distinction n'est pas cosmétique : elle décide du correctif. Chercher un
+nouveau chemin pour `fullAddress` n'aurait rien donné — il n'y en a pas.
+
+### Le second défaut, celui qui est de notre côté (règle 2)
+
+La passe couloirs de la même nuit a journalisé
+`sonde structure : OK — page 1 ok — 1 stub obtenu (951011)` **sur une page qui
+en portait vingt**, puis a scanné à ce régime sans une alerte. La sonde héritée
+de `BaseAdapter` appelle `list_urls(limit=1)` : **un stub suffisait**. Elle ne
+pouvait pas distinguer « cette page porte une annonce » de « cette page en
+porte vingt dont je n'en lis qu'une ». Un garde-fou qui ne sait pas voir une
+perte de 95 % ne garde rien.
+
+### Correctif — branche `fix/ddproperty-listingsdata-elaguee`, commit `5d9fce2`
+
+1. `_parse_list` complète par les cartes annexes les identifiants que
+   `listingsData` ne rend plus. **Fidélité** : sur les 10 identifiants présents
+   des deux côtés, url **10/10** et prix **10/10** identiques. `listingsData`
+   reste prioritaire : le jour où le tableau revient, le chemin annexe se tait
+   tout seul.
+2. Filtre province sans `fullAddress` : le suffixe du titre localisé.
+   **Mesure sur 200 cartes** : 198 « …, Bangkok », 2 « …, Nakhon Ratchasima »,
+   et le slug d'URL dit la même chose **200/200**.
+3. La fiche détail rebouche `khwaeng`, `street`, `agency_id`, `posted_at`,
+   `is_auto_repost` — on ne les y lisait pas parce que la liste les avait
+   toujours fournis. **Concordance liste ↔ fiche sur 6 annonces** :
+   `posted_at` 6/6 **à la seconde**, `agency_id` 6/6, `khwaeng` 6/6,
+   `is_auto_repost` 6/6, `street` 5/6.
+4. **Le khet n'est PAS repris de la fiche** — piège trouvé en implémentant :
+   elle écrit « Watthana » là où le point-in-polygon écrit « Vadhana District ».
+   Deux orthographes pour un même khet scinderaient les statistiques par
+   quartier. Les coordonnées sont là à 100 % et restent la seule source.
+5. La sonde compare ce qu'elle extrait à ce que la page **annonce porter**, hors
+   province, et journalise la couverture (`couverture 20/20 annonces`). **Aucun
+   seuil nouveau** : la référence est lue sur la page du jour, pas choisie.
+
+**Vérifié en production** : 198/200 annonces Bangkok sur 10 pages (contre 1 à 5
+avant) ; deux runs `run.py` réels (12 vente, 10 location) écrits en base avec
+**14 champs sur 14 au taux de remplissage du run sain de la veille** (4 962
+annonces) — seule `street` passe de 94 % à 90 %. Test :
+`agents/tests/test_ddproperty_blob_elague.py`, 23 essais hors réseau, qui
+verrouille aussi le **silence** du garde-fou sur une page saine et sur une page
+portant légitimement des annonces de province.
+
+### La donnée n'a pas été abîmée
+
+Le recensement tournait avec `--delister`. Il s'était **abstenu de lui-même** :
+« signature de fin introuvable » → `fin_atteinte = False`, donc zéro délistage.
+Les deux autres garde-fous (`DELIST_MAX_TROUS`, `DELIST_MIN_RATIO` à 50 %)
+l'auraient bloqué de toute façon. Les trois conditions d'abstention de
+`recense._delister` ont fait exactement ce pour quoi elles existent.
+
+### Autres contrôles de la séance
+
+- `pragma quick_check` sur `bangkok.db` (5,01 Go, en WAL, pendant le cycle) :
+  **ok** en 308 s. 206 872 annonces, 132 167 actives.
+- Sauvegarde clé USB du cycle précédent : **ok**, 4 969,8 Mo, **3 essais de
+  relecture sur 3** (204 250 / 129 539 à l'identique).
+- Journaux des extracteurs : **2 lignes d'erreur au total** sur les 40 derniers
+  journaux, et ce sont les deux `[SONDE-ECHEC]` ci-dessus. Aucun `Traceback`.
+- FazWaz `sitemap_non_regenere` (3 constats, 16-18/10) : **déjà résolu** par le
+  filet `_complement_liste` (710 nouvelles le 18/10, 347 le 19/10), plus aucun
+  constat depuis.
+- **LivingInsider, à décider** : 516 actives dont **0 % confirmées depuis le
+  2026-09-16**. Le run du 18/10 n'avait retenu que **12 annonces sur 300**.
+  L'adaptateur a depuis été réparé dans l'arbre de travail (non committé) :
+  vérifié ce soir par un run borné — **20 scannées, 13 nouvelles, 2 changées,
+  5 inchangées, 0 erreur**. La source est saine, mais l'agent est **hors
+  lanes** : elle ne rattrapera rien toute seule.
+
+### Ce qui n'a PAS été fait, et pourquoi
+
+- **Rien fusionné**, ni dans `main` ni dans `feat/bilan-build2-comptes`. La
+  branche part de `a9e9cd0` et ne porte qu'un commit.
+- **L'arbre de travail reste sur la branche de correctif** — le cycle lit
+  l'arbre, donc revenir sur `feat/bilan-build2-comptes` ferait **retomber
+  DDproperty à 1-6 % dès le cycle du 22/10**. Les 31 fichiers modifiés et 122
+  non suivis de la séance précédente sont intacts. Retour :
+  `git checkout feat/bilan-build2-comptes`.
+- **Aucune règle de méthode touchée** (règle 5) : ni seuil de délistage, ni
+  délai de grâce, ni cadence, ni borne de plausibilité, ni définition de calcul.
+- **Le cycle en cours n'a été ni interrompu ni relancé.** Conséquence :
+  **la moisson DDproperty de la nuit du 20 au 21/10 est perdue** (passes
+  principale et location arrêtées par la sonde, passe couloirs à ~1 annonce par
+  page, recensement abstenu). Rattrapage au premier cycle avec le correctif.
+- **Pas de `--full` de rattrapage en pleine journée**, non demandé et concurrent
+  du cycle déjà en cours.
+- **LivingInsider non réparée ici** (déjà faite ailleurs, hors lanes, 0,4 % du
+  stock) ; lui rendre une lane reste à arbitrer.
+- **Non vérifié** : le correctif sur un recensement complet (2 600 pages ×
+  5 onglets). Il n'a été éprouvé que sur 16 pages et deux runs de 12 et 10
+  annonces.
+- **Deux courriers laissés en boîte** (`queue/mail/`) : les transactionnels
+  `bilan-comptes` du 20/10, dont l'un **contient un mot de passe en clair** et
+  tous deux pointent sur `localhost:3001`. Envoyer un mot de passe par courriel
+  est une décision de posture, elle n'est pas à prendre ici. Les 2 alertes de
+  sévérité haute, elles, sont parties (un seul message groupé, même cause).
+
+Compte rendu détaillé : [agents/audits/reparations-2026-10-21.md](../agents/audits/reparations-2026-10-21.md).
