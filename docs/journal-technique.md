@@ -4250,6 +4250,18 @@ Le commentaire du bot Vercel sur la PR #4 liste **deux** projets qui déploient 
 
 **Suite, 2026-10-20** : `lowibkk` supprimé par l'utilisateur depuis le tableau de bord Vercel. Vérifié après coup (et non supposé — un exit 0 ne prouve rien) : la prévisualisation `lowibkk-git-feat-bilan-build2-comptes-…` répond **404**, celle de `lowi-bkk` répond **200**, et `lowi-bkk.vercel.app/login` répond **200**. Un seul projet build donc à nouveau chaque push. Chemin du retour, si jamais : réimporter le dépôt GitHub dans Vercel (seul l'historique de déploiement de la copie est perdu).
 
+## 2026-10-20 — scrapling 0.4.15 vs `pipeline/fetch.py` : comparaison mesurée, rien modifié
+
+Demande : rendre le scraper plus discret et plus rapide, si possible sans les délais « humains ». Comparaison faite sur le code installé (`scrapling` 0.4.15, déjà dans le venv depuis le 2026-08-29) et sur le chronomètre du cycle du 2026-10-19 (`agents/logs/extract-*-2026-10-19T193005.log`).
+
+**Mesuré — où passe le temps, cycle du 19/10.** Attente volontaire (`attente_*`, jitter + pauses longues) : DDproperty 24,8 min, FazWaz 15,7, PropertyScout 6,0, Nestopa 5,7 → **~52 min de sommeil par nuit**, contre ~11 min de réseau réel. Les deux plus gros postes ne sont PAS des délais humains : FazWaz a attendu **90 min** la régénération du sitemap (lancé 02:30, sitemap frais vers 04:00 alors que l'entrée du 2026-10-04 la situait vers 02:04) ; le recensement DDproperty a lu 5 815 pages en 95 min, déjà à 5 onglets parallèles.
+
+**Mesuré — discrétion.** 4 sources sur 5 partent en `requests` : empreinte TLS Python/urllib3 sous un User-Agent Chrome 126 figé — l'incohérence que les anti-bots repèrent en premier. curl_cffi (`impersonate="chrome"`) annonce aujourd'hui Chrome 150. **FazWaz s'annonce comme robot** (`bkk-perso/0.1; personal research`), sans justification trouvée au journal. Nestopa publie `Crawl-delay: 10` (on tourne à 3 s, `respect_robots: false` par arbitrage du 22/08). Aucune autre source ne publie de Crawl-delay. `_RETRY_STATUS` ne contient pas 429 : un rate-limit = fiche perdue, sans recul.
+
+**Ce que scrapling apporte en plus de ce qu'on a déjà pris (curl_cffi + Adaptor)** : un moteur `Spider` asynchrone avec concurrence par domaine, `AutoThrottle` (délai = latence observée / concurrence cible, doublé sur blocage, respect de `Retry-After`), `is_blocked()` + retries de blocage, Crawl-delay honoré, checkpoint pause/reprise. `StealthyFetcher` non fonctionnel ici (`patchright` absent ; Chromium Playwright téléchargé ce matin 08:31, inutilisé).
+
+**Non fait, laissé à l'arbitrage (règle 5)** : bascule des 4 sources en `curl_cffi` (la clé `fetcher_backend` existe, rollback = retirer la clé) ; UA de FazWaz ; remplacement du jitter fixe par un délai piloté par la latence avec recul sur 429/403 ; recalage de l'heure de FazWaz sur la régénération réelle du sitemap. **Écarté** : réécrire les adaptateurs sur `scrapling.spiders` (async, 5 adaptateurs à refaire, gain borné à ~52 min/nuit sur un cycle qui n'est pas limité par là).
+
 ## 2026-10-20 (suite) — thème « Ledger » vert/or/blanc sur le bilan acheteur
 
 Demande : reprendre le système de design du pitch et en faire un thème **vert, or
@@ -4316,53 +4328,30 @@ seul le rendu le montre. Renommé `page` ; la règle est consignée en tête de
   (« le time-on-market écarte par défaut l'historique d'avant le correctif »),
   13/14 au vert. Aucun fichier de la tension n'a été touché ici.
 
-### 2026-10-20 (suite 2) — filigrane des rapports PDF
+### 2026-10-20 (suite) — curl_cffi sur toutes les sources, relances communes, cadence adaptative : livré et mesuré sur deux séries longues
 
-Demande : le logo en filigrane géant à 45° en travers de la feuille, « beta »
-dessous dans la même police, **même alpha** pour les deux.
+Suite directe de l'entrée précédente, sur demande (« fais les 3 dans l'ordre », puis « teste sur une série longue »).
 
-**Fait.** `bilan_RE/web/components/PdfWatermark.tsx` + les règles
-`.pdf-filigrane*` dans `globals.css`, posé dans la feuille de
-`app/beta/r/[id]/pdf/page.tsx`. `lowi` à 54 mm, `beta` à 16 mm sous lui, les
-deux en MCTen, **l'opacité (0,18) est portée par le bloc qui les contient** —
-c'est ce qui garantit l'alpha identique quoi qu'on change ensuite de leurs
-tailles. Couleur : l'or de marque (`--c-gold`).
+**1. Recalage de l'heure de FazWaz — ABANDONNÉ après mesure.** Les extracteurs tournent en parallèle et DDproperty est le chemin critique : le 19/10, FazWaz a fini à 22:15 UTC, DDproperty à 22:54, et rien n'attend FazWaz. Ses 90 min d'attente du sitemap ne rallongent donc pas le cycle. L'heure de régénération dérive en plus d'une nuit à l'autre (01:30 → 03:42 → 04:00) : aucun créneau fiable à viser.
 
-**Trois défauts trouvés en regardant le rendu, pas en lisant le code.**
-1. **Le filigrane ne s'affichait pas du tout** : en mode PDF, `palette()`
-   donnait `bg-white` à la page ET aux cartes. Un aplat blanc opaque par-dessus
-   le filigrane — la capture d'écran était **au pixel près la même** (147 094
-   octets) avec et sans lui, et c'est ce chiffre identique qui a mis sur la
-   piste, pas l'œil. Les deux fonds sont retirés : la feuille est déjà blanche,
-   et les cartes gardent leur filet or, qui suffit à les détourer.
-2. **Rognage en losange** : la rotation et `overflow:hidden` étaient sur le même
-   élément, donc le rectangle de rognage tournait avec le texte. La rotation est
-   passée au bloc intérieur, le cadre fixe garde le rognage.
-3. **Alpha 0,07 = invisible** : l'or est une couleur claire, 7 % sur blanc donne
-   ≈ `#FCFAF5`. Monté à 0,18 (≈ `#F5EDDC`), vérifié à l'œil à 1,0 d'abord pour
-   juger la forme, puis redescendu.
+**Défaut trouvé en route : le backend curl_cffi n'avait AUCUNE relance.** La docstring de `fetch.py` et la config DDproperty annonçaient « 3 retries intégrés, backoff 1 s » depuis le 2026-08-29. Mesuré : `Session(impersonate="chrome").retry` = `RetryStrategy(count=0)`. Ces 3 retries étaient ceux de `scrapling.FetcherSession`, abandonné le même jour. DDproperty a donc tourné sept semaines sans relance, et aucun test ne le voyait : `test_fetch_retry` n'exerçait que `requests`.
 
-**Mesuré, pas supposé — le filigrane se répète sur toutes les pages.** C'est
-`position:fixed` qui le fait (un élément en flux ne s'imprimerait qu'une fois),
-et Chrome le traite bien ainsi : PDF réel produit par
-`chrome --headless --print-to-pdf` sur la route, **6 pages**, et le texte
-`lowibeta` est en tête de **chacune des 6** (contrôle par `pypdf`).
+**2. Relances communes + 429.** L'urllib3 `Retry` (réservé à `requests`) est remplacé par une boucle unique `Fetcher._get()`, la même pour les deux backends. Budget inchangé : 3 relances, backoff 1, 2 puis 4 s. **429 ajouté** (avant : fiche perdue, sans recul). `Retry-After` est honoré jusqu'à 120 s ; au-delà on rend la main. Les 4 sources restantes passent en `fetcher_backend: curl_cffi`. ⚠ Ce backend **n'utilise pas** le champ `user_agent` : FazWaz cesse donc de s'annoncer `bkk-perso/0.1` et se présente en Chrome 150.
 
-**Comment la route a pu être imprimée sans compte** : un second serveur de dev
-sur le port 3177 avec `LOWI_BETA_PUBLIQUE=1` et `LOWI_SQLITE_DB` **vidée** →
-`comptesActives()` faux → plus de porte de possession, `LOWI_RAPPORTS_DIR`
-fournissant les rapports. Serveur arrêté après coup. Rien de cela n'est
-committé ; la route reste gardée en usage normal.
+**3. Cadence adaptative** (`throttle: "adaptatif"`, `rate_limit_floor_seconds: 1.0`). C'est la règle `AutoThrottle` de scrapling 0.4.15, recopiée et non importée, son `Spider` étant asynchrone. Elle part de `rate_limit_seconds`, puis délai = max((courant + latence)/2, latence), avec un plancher à 1 s. Le délai double sur 429/5xx, ou suit `Retry-After`. Plus de pause longue ; le jitter (×1 à ×1,8) reste. La latence des images (CDN) n'entre pas dans le réglage. Activée sur ddproperty, fazwaz, propertyscout et nestopa.
+- **LivingInsider est laissé en cadence fixe, à dessein.** Mesuré ce jour : chaque fiche renvoie **202 + `x-amzn-waf-action`** (challenge AWS WAF), avec `requests` comme avec curl_cffi. La source tourne « ok » à 0 annonce utile depuis fin septembre (ledger : 300 à 600 « scannées », 0 nouvelle). Comme un 202 compte comme un succès, la cadence adaptative l'aurait accéléré contre un pare-feu qui nous a déjà repérés. **Non traité** : contourner un WAF est une décision de posture (règle 5).
+- `recense.py` et `backfill_condo_years.py` restent en **cadence fixe** : ils ne transmettent pas `throttle`. Le recensement DDproperty (5 onglets, 95 min, ~1 page/s cumulée) n'est donc pas accéléré. Passer ses 5 onglets à 1 s quintuplerait le débit cumulé sur DDproperty : laissé à l'arbitrage.
 
-**Ce qui n'a PAS été fait / vérifié**
-- **Le PDF n'a pas été regardé page par page en image** : pas de `pdftoppm` sur
-  PC2 et le visualiseur PDF de Chrome ne rend rien en `--headless`. La forme a
-  été jugée sur la page à l'écran (même CSS), la répétition sur le texte extrait.
-- **Pas d'impression papier réelle** ni de contrôle sur un autre moteur
-  (Edge, Firefox) : `position:fixed` répété à l'impression est un comportement
-  de Chrome, et c'est Chrome que la page demande (« Save as PDF »).
-- **`prefers-reduced-motion` / mode sombre** : sans objet ici, la page est claire.
-- **Les boîtes opaques masquent le filigrane localement** (tuiles de chiffres,
-  encadrés « How is this computed? », en `bg-sunken`). C'est le comportement
-  normal d'un filigrane posé sous le contenu ; à changer seulement si on le veut
-  aussi par-dessus.
+**Tests.** `test_fetch_throttle.py` (nouveau) couvre la relance d'un 522 et d'un 429 sur LES DEUX backends, le respect de `Retry-After`, la convergence vers le plancher, et l'immobilité du mode fixe. `test_fetch_retry` et `test_fetch_outage` restent verts.
+
+**Série longue n° 1** (4 sources en parallèle dans UN process, vrai parcours liste → fiche parsée par l'adaptateur, sans écriture en base) : 1 600 annonces, 1 339 requêtes, **100 % de 200**, aucun 403, 429 ni challenge. 1 599 fiches parsées. Coordonnées 400/400 sauf Nestopa (0, attendu : pas de coordonnées serveur). Secondes par page, comparées aux pages de la nuit du 19/10 (attente + réseau) : **DDproperty 1,83** (≈ 3,6–4,1 avant), **FazWaz 1,74** (≈ 2,9), **Nestopa 1,41** (≈ 4,0), **PropertyScout 4,78** (≈ 4,0, pas plus rapide : ce site répond en 1–20 s et la cadence suit sa latence, comme prévu). 4 délais dépassés, tous arrêtés à **16 366 octets reçus**, sur deux domaines différents, tous rattrapés sans perte.
+
+**Série longue n° 2** (un process par source, comme en production) : 750 annonces, 785 requêtes, 100 % de 200, **0 délai dépassé**. Les arrêts à 16 366 octets étaient donc un artefact du banc (plusieurs sessions curl_cffi dans un même process) ; la production lance chaque extracteur dans son propre process. DDproperty 1,37 s/page, FazWaz 1,41, PropertyScout 6,19 (serveur lent en journée).
+
+**Prix manquants DDproperty (25/399 puis 23/248) : sans lien avec le changement.** `parse_listing` copie le prix de la liste et ne l'écrase jamais à vide, et 60 stubs testés avaient tous un prix. Ce sont des annonces publiées sans prix. **Non expliqué** : l'écart avec la base (81 ventes sans prix sur 63 033, soit 0,13 %).
+
+**Gain attendu, non encore mesuré en production** : ~52 min d'attente par nuit → ~25 min, soit **~−13 min sur le chemin critique** (DDproperty hors recensement) et ~−28 min de temps machine. Le premier cycle réel est celui de cette nuit : `run.py` lit l'arbre de travail, ces changements partent donc ce soir **qu'ils soient commités ou non**. À vérifier demain dans le chronomètre et les statuts.
+
+**Chemin du retour** : retirer `throttle` d'une config pour revenir au mode fixe, et `fetcher_backend` pour revenir à `requests`. Aucune reprise de code nécessaire.
+
+**Non fait** : 403 non traité comme un blocage (Nestopa sert des 403 légitimes sur ses fiches) ; détection du challenge AWS WAF ; Nestopa tourne désormais à ~1 s malgré son `Crawl-delay: 10` (cadence approuvée « plancher 1 s », mais ce site demande explicitement plus lent : à revoir) ; recensement non accéléré (voir plus haut).

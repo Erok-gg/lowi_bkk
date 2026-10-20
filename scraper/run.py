@@ -165,6 +165,8 @@ def main() -> None:
         backend=cfg.get("fetcher_backend", "requests"),
         outage_poll_seconds=cfg.get("outage_poll_seconds", 30.0),
         outage_max_wait_seconds=cfg.get("outage_max_wait_seconds", 20 * 60.0),
+        throttle=cfg.get("throttle", "fixe"),
+        rate_limit_floor_seconds=cfg.get("rate_limit_floor_seconds", 1.0),
     )
     matcher = KhetMatcher()
     geocoder = None

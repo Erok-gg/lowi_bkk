@@ -10,8 +10,13 @@ Deux backends de session, choisis par site via `fetcher_backend` dans
   - "requests"  : comportement historique, en-têtes Chrome-126 statiques.
   - "curl_cffi" : empreinte TLS/JA3 usurpée (impersonation Chrome réelle,
     en-têtes générés par curl_cffi lui-même — cohérents avec la version
-    impersonée, donc PAS mélangés avec `_BROWSER_HEADERS`). Ajoute des
-    retries intégrés (3, backoff 1 s) là où `requests` n'en a aucun.
+    impersonée, donc PAS mélangés avec `_BROWSER_HEADERS`).
+    ⚠ CORRIGÉ le 2026-10-20 : il était écrit ici « retries intégrés (3,
+    backoff 1 s) ». FAUX — mesuré : `Session(impersonate="chrome").retry` =
+    `RetryStrategy(count=0)`. Les 3 retries étaient ceux de
+    `scrapling.FetcherSession`, abandonné le 29/08 ; DDproperty a tourné
+    sept semaines sans aucune relance. Les relances vivent désormais dans
+    `Fetcher._get()`, identiques pour les deux backends.
     Mesuré le 2026-08-29 : `curl_cffi.requests.Session` seul (sans passer
     par `scrapling.fetchers`, qui embarque patchright/browserforge en
     dépendance "fetchers" — inutile ici et ~110 Mo de plus) — API quasi
@@ -20,6 +25,17 @@ Deux backends de session, choisis par site via `fetcher_backend` dans
     backend. `scrapling` (sans extra) reste utilisé ailleurs (adaptateurs
     FazWaz/LivingInsider) pour le parsing adaptatif — capacité indépendante
     de ce module.
+
+Deux modes de cadence, choisis par `throttle` dans la config (défaut "fixe") :
+  - "fixe"      : délai = rate_limit × (1 + jitter), + pause longue 1 fois
+    sur 25 — comportement historique.
+  - "adaptatif" : délai piloté par la latence mesurée (algorithme
+    `AutoThrottle` de scrapling 0.4.15, `spiders/throttle.py`, recopié plutôt
+    qu'importé : son `Spider` est asynchrone et réécrirait les 5 adaptateurs).
+    Part de `rate_limit_seconds`, converge vers max(latence, plancher), double
+    sur 429/5xx ou suit `Retry-After`. Plus de pause longue. Le jitter reste.
+    Pourquoi (mesuré le 2026-10-19) : ~52 min de sommeil volontaire par nuit
+    contre ~11 min de réseau réel ; la latence des sites est de 0,3–0,7 s.
 """
 from __future__ import annotations
 
@@ -30,23 +46,25 @@ import urllib.robotparser
 from urllib.parse import urljoin
 
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 from pipeline import chrono
 
-# Retries transitoires (5xx / erreurs de connexion) pour le backend "requests" —
-# jusqu'ici SANS aucun retry, contrairement a curl_cffi qui en integre 3
-# (backoff 1s). Mesure le 2026-09-02 : un 522 Cloudflare (origine indisponible,
-# auto-resolu — les 2 autres etapes du meme run ont reussi normalement juste
-# apres) sur fazwaz a fait echouer `get_text()` en un seul essai, ce que
-# `sonder()` traduit en "page de liste inaccessible" -> ticket haute severite
-# etiquete `parser_break` alors qu'aucune structure n'avait change. Meme
-# nombre d'essais que curl_cffi pour ne pas favoriser un backend sur l'autre.
-_RETRY_STATUS = (500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 530)
-_retry = Retry(total=3, backoff_factor=1.0, status_forcelist=_RETRY_STATUS,
-               allowed_methods=("GET", "HEAD"))
-_RETRY_ADAPTER = HTTPAdapter(max_retries=_retry)
+# Relances sur réponse HTTP transitoire, UNE politique pour les deux backends.
+# Historique : le 2026-09-02, un 522 Cloudflare isolé sur fazwaz ("requests",
+# alors sans aucun retry) a fait échouer `sonder()` -> ticket `parser_break`
+# haute sévérité alors qu'aucune structure n'avait changé (règle 2). La
+# correction d'alors (urllib3 `Retry`) ne couvrait que "requests" — et
+# curl_cffi, qu'on croyait doté de 3 retries, n'en avait aucun (count=0,
+# mesuré le 2026-10-20). D'où une boucle unique dans `Fetcher._get()`.
+# 429 ajouté le 2026-10-20 : un rate-limit perdait la fiche, sans recul.
+_RETRY_STATUS = (429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 530)
+#: Relances après le 1er essai (soit 4 requêtes au plus) — même budget que
+#: l'urllib3 `Retry(total=3)` qu'elle remplace, verrouillé par test_fetch_retry.
+_RETRY_COUNT = 3
+_RETRY_BACKOFF = 1.0             # 1 s, 2 s, 4 s
+#: Plafond d'un `Retry-After` honoré : au-delà, on rend la main (fiche perdue
+#: pour ce run, reprise au suivant) plutôt que de geler le scan.
+_RETRY_AFTER_MAX = 120.0
 
 # Exceptions réseau à traiter comme un échec de requête récupérable, quel que
 # soit le backend actif. curl_cffi n'est importé ici que si présent — le
@@ -61,7 +79,7 @@ except ImportError:
 # Sous-ensemble de _REQUEST_EXC qui signifie « on n'a même pas atteint le
 # site » (DNS, connexion refusée/impossible, délai dépassé) — PAR OPPOSITION à
 # une réponse HTTP obtenue mais mauvaise (404, ou 5xx déjà épuisé par
-# _RETRY_ADAPTER : requests.exceptions.RetryError / HTTPError). Distinction
+# `_get()` : HTTPError). Distinction
 # mesurée nécessaire : la coupure internet du script d'origine (`ops/
 # superviseur.py`, retiré le 2026-07-31 lors du passage au système d'agents,
 # sans remplacement — capacité perdue en silence, pas une decision) attendait
@@ -211,7 +229,9 @@ class Fetcher:
                  timeout_seconds: int = 30, respect_robots: bool = True,
                  image_rate_limit_seconds: float = 0.4, backend: str = "requests",
                  outage_poll_seconds: float = OUTAGE_POLL_SECONDS,
-                 outage_max_wait_seconds: float = OUTAGE_MAX_WAIT_SECONDS):
+                 outage_max_wait_seconds: float = OUTAGE_MAX_WAIT_SECONDS,
+                 throttle: str = "fixe", rate_limit_floor_seconds: float = 1.0,
+                 rate_limit_max_seconds: float = 60.0):
         self.base_url = base_url.rstrip("/")
         self.user_agent = user_agent
         self.rate_limit = rate_limit_seconds
@@ -226,6 +246,16 @@ class Fetcher:
         # distinguer "coupure" de "fin de liste normale" (voir _COUPURE_EXC).
         self.a_subi_coupure = False
         self._last_request = 0.0
+        if throttle not in ("fixe", "adaptatif"):
+            raise ValueError(f"throttle inconnu : {throttle!r} (fixe|adaptatif)")
+        self.throttle = throttle
+        self.floor = rate_limit_floor_seconds
+        self.max_delay = max(rate_limit_max_seconds, rate_limit_seconds)
+        # Délai courant du mode adaptatif. Démarre au débit configuré (prudent),
+        # puis suit la latence — comme AutoThrottle.start_delay.
+        self._delai = rate_limit_seconds
+        #: Statuts HTTP vus, pour le bilan de fin de run et le test longue série.
+        self.statuts: dict[int, int] = {}
         if backend == "curl_cffi":
             from curl_cffi.requests import Session as CurlSession
             # Pas de `_BROWSER_HEADERS` ici : curl_cffi génère déjà un jeu
@@ -238,8 +268,6 @@ class Fetcher:
         else:
             self._session = requests.Session()
             self._session.headers.update({"User-Agent": user_agent, **_BROWSER_HEADERS})
-            self._session.mount("https://", _RETRY_ADAPTER)
-            self._session.mount("http://", _RETRY_ADAPTER)
         self._robots = self._load_robots() if respect_robots else None
 
     def _load_robots(self):
@@ -267,12 +295,74 @@ class Fetcher:
     def _throttle(self, base_delay: float, allow_long_pause: bool = False):
         # délai cible randomisé (jitter), jamais sous le débit configuré
         delay = base_delay * (1.0 + random.random() * _JITTER_RATIO)
-        if allow_long_pause and random.random() < _LONG_PAUSE_PROB:
+        if allow_long_pause and self.throttle == "fixe" and random.random() < _LONG_PAUSE_PROB:
             delay += random.uniform(*_LONG_PAUSE_RANGE)
         elapsed = time.time() - self._last_request
         if elapsed < delay:
             time.sleep(delay - elapsed)
         self._last_request = time.time()
+
+    def _ajuste(self, latence: float, ok: bool, retry_after: float | None) -> None:
+        """AutoThrottle (scrapling 0.4.15, `spiders/throttle.py::record`),
+        concurrence cible 1 : chaque Fetcher est un onglet séquentiel.
+        Succès : moyenne entre le délai courant et la latence, jamais sous la
+        latence (le serveur dit lui-même ce qu'il encaisse). Échec : jamais
+        plus rapide — `Retry-After` s'il est donné, sinon délai × 2."""
+        if self.throttle != "adaptatif":
+            return
+        cur = self._delai
+        nouveau = max((cur + latence) / 2, latence)
+        if not ok:
+            penalite = retry_after if retry_after is not None else cur * 2.0
+            nouveau = max(nouveau, penalite, cur)
+        self._delai = min(max(nouveau, self.floor), self.max_delay)
+
+    @staticmethod
+    def _retry_after(r) -> float | None:
+        v = (r.headers.get("retry-after") or "").strip()
+        if not v:
+            return None
+        try:
+            return max(float(v), 0.0)
+        except ValueError:
+            pass
+        try:  # date HTTP plutôt qu'un nombre de secondes
+            from email.utils import parsedate_to_datetime
+            from datetime import datetime, timezone
+            return max((parsedate_to_datetime(v) - datetime.now(timezone.utc)).total_seconds(), 0.0)
+        except (TypeError, ValueError):
+            return None
+
+    def _get(self, url: str, poste: str, ajuste: bool = True, **kw):
+        """GET avec la politique de relance commune (voir `_RETRY_STATUS`).
+        Lève l'exception réseau telle quelle (le chemin coupure la traite) ;
+        lève HTTPError si le statut reste mauvais après les relances.
+        `ajuste=False` pour les images : elles viennent d'un CDN, leur latence
+        ne dit rien de ce qu'encaisse le site, et ne doit pas régler sa cadence."""
+        for essai in range(_RETRY_COUNT + 1):
+            t0 = time.perf_counter()
+            with chrono.mesure(poste):
+                r = self._session.get(url, timeout=self.timeout, **kw)
+            latence = time.perf_counter() - t0
+            self.statuts[r.status_code] = self.statuts.get(r.status_code, 0) + 1
+            if r.status_code not in _RETRY_STATUS:
+                if ajuste:
+                    self._ajuste(latence, r.status_code < 400, None)
+                r.raise_for_status()
+                return r
+            ra = self._retry_after(r)
+            if ajuste:
+                self._ajuste(latence, False, ra)
+            if essai == _RETRY_COUNT:
+                r.raise_for_status()
+            if ra is not None and ra > _RETRY_AFTER_MAX:
+                print(f"  {r.status_code} sur {url} : Retry-After {ra:.0f}s > plafond, abandon")
+                r.raise_for_status()
+            attente = ra if ra is not None else _RETRY_BACKOFF * (2 ** essai)
+            print(f"  {r.status_code} sur {url} — relance {essai + 1}/{_RETRY_COUNT} dans {attente:.0f}s",
+                  flush=True)
+            time.sleep(attente)
+        raise AssertionError("inatteignable")
 
     def _attend_coupure(self, url: str) -> None:
         """Bloque jusqu'au retour du réseau (sonde = re-essayer `url` elle-même,
@@ -320,24 +410,20 @@ class Fetcher:
         # produit une estimation fausse le 2026-08-11.
         est_liste = bool(m) or bool(re.search(r"/page-(\d+)", url)) or "?" in url
         poste = "attente_liste" if est_liste else "attente_fiche"
+        base = self._delai if self.throttle == "adaptatif" else self.rate_limit
         with chrono.mesure(poste):
-            self._throttle(self.rate_limit, allow_long_pause=True)
+            self._throttle(base, allow_long_pause=True)
         headers = {"Referer": referer, "Sec-Fetch-Site": "same-origin"} if referer else {}
+        reseau = "reseau_liste" if est_liste else "reseau_fiche"
         try:
-            with chrono.mesure("reseau_liste" if est_liste else "reseau_fiche"):
-                r = self._session.get(url, headers=headers, timeout=self.timeout)
-                r.raise_for_status()
-                return r.text
+            return self._get(url, reseau, headers=headers).text
         except _COUPURE_EXC as e:
             print(f"  échec GET {url} (coupure ?) : {e}")
             self._attend_coupure(url)
             if self.a_subi_coupure:
                 return None
             try:  # réseau revenu pendant l'attente -> un seul nouvel essai
-                with chrono.mesure("reseau_liste" if est_liste else "reseau_fiche"):
-                    r = self._session.get(url, headers=headers, timeout=self.timeout)
-                    r.raise_for_status()
-                    return r.text
+                return self._get(url, reseau, headers=headers).text
             except _REQUEST_EXC as e2:
                 print(f"  échec GET {url} (après retour réseau) : {e2}")
                 return None
@@ -368,20 +454,14 @@ class Fetcher:
         with chrono.mesure("attente_image"):
             self._throttle(self.image_rate_limit)
         try:
-            with chrono.mesure("reseau_image"):
-                r = self._session.get(url, timeout=self.timeout)
-                r.raise_for_status()
-                return r.content
+            return self._get(url, "reseau_image", ajuste=False).content
         except _COUPURE_EXC as e:
             print(f"  échec GET (bytes) {url} (coupure ?) : {e}")
             self._attend_coupure(url)
             if self.a_subi_coupure:
                 return None
             try:
-                with chrono.mesure("reseau_image"):
-                    r = self._session.get(url, timeout=self.timeout)
-                    r.raise_for_status()
-                    return r.content
+                return self._get(url, "reseau_image", ajuste=False).content
             except _REQUEST_EXC as e2:
                 print(f"  échec GET (bytes) {url} (après retour réseau) : {e2}")
                 return None
