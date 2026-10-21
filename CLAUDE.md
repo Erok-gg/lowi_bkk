@@ -107,6 +107,24 @@ trouve rien. Précédent qui justifie la règle : les 15 vues `SECURITY DEFINER`
 ouvraient `anon` en **écriture** pendant des semaines, et rejouer un
 `create or replace view` du dépôt rouvrait la faille en silence.
 
+**11. Un compte rendu se lit sans être du métier.** Tout rapport destiné à être
+relu — compte rendu de réparation, log de veille, alerte, mail, entrée de
+journal — suit quatre parties, dans cet ordre, chacune titrée :
+1. **Causes** — ce qui s'est passé et pourquoi, en une ou deux phrases.
+2. **Conséquences** — ce que ça change concrètement (données manquantes, site
+   à jour ou non, rien de grave…), chiffré.
+3. **Plan** — ce qui a été fait, ce qui reste à faire, ce qui attend une
+   décision.
+4. **Méthode** — comment on l'a vérifié, simplement.
+
+Vocabulaire courant : pas de nom de fichier, de fonction, de variable ni de
+code d'erreur dans le corps du texte ; s'il le faut, en fin de rapport sous
+« Références techniques ». Un terme technique inévitable s'explique à la
+première occurrence (« la sonde, c'est-à-dire le test rapide fait avant chaque
+scrap »). Phrases courtes. Le lecteur n'est pas forcément celui qui a lancé le
+projet. Demande du 2026-10-21 : les rapports de la veille nocturne étaient
+illisibles hors initiés.
+
 ## Objectif
 Outil **perso, non public** : carte interactive de Bangkok découpée par quartiers, cliquable (zoom au clic), thème dark violet/anthracite, alimentée par des annonces immobilières scrapées (condos **vente + location**, **foreigner & thai quota**), avec fiches biens et statistiques agrégées (ville / quartier / rue).
 

@@ -5049,3 +5049,44 @@ quelques dizaines par nuit.
 - **Remise en lane** (`agents.json`, `lanes: []` + `_suspendu`) **non faite** :
   le fichier porte des modifications non committées d'autres séances, et la
   reprise est une décision utilisateur. Premier run de production non lancé.
+
+## 2026-10-21 — Charge des scrapers doublée, et règle d'écriture des comptes rendus
+
+### 1. Causes
+- Demande : doubler le travail fait par chaque scraper à chaque cycle.
+- Demande : les comptes rendus de la réparation de nuit étaient illisibles
+  pour qui n'est pas du métier.
+
+### 2. Conséquences
+Attendu au prochain cycle (estimé à partir des temps mesurés le 20/10) :
+
+| Source | Avant | Après | Durée en plus |
+|---|---|---|---|
+| PropertyHub | 4 000 nouvelles, ~5 h 45 | 8 000, ~10 h 30 | ~+4 h 40 |
+| Hipflat | 4 000 nouvelles, ~5 h 55 | 8 000, ~10 h 15 | ~+4 h 20 |
+| DDproperty | 150 pages par type, ~3 h 30 | 300 pages | ~+30 à 45 min |
+| FazWaz | 1 000 fiches max, 905 utilisées | 2 000 max | 0 (la limite n'était pas atteinte) |
+| PropertyScout | catalogue entier | idem | 0 (déjà tout lu) |
+| Nestopa | 1 page (interdit au-delà) | idem | 0 |
+
+Les sources tournent en parallèle : le cycle de 02:30 finirait vers **13:00**
+au lieu de ~08:30. Le stock de départ de PropertyHub et Hipflat (~200 000 et
+~180 000 annonces) se rattrape en ~25 et ~23 passages au lieu du double.
+
+### 3. Plan
+- Fait : budgets doublés, surveillance ajustée (plafond de nouvelles 9 000,
+  plafond de photos manquantes PropertyHub 5 000), règle 11 ajoutée au
+  CLAUDE.md et à la consigne de la réparation de nuit.
+- À surveiller : si le cycle déborde après 13:00, la mise en veille du poste
+  (réglée à 13 h d'inactivité) peut le couper.
+- Chaque doublement porte sa valeur de retour dans la configuration.
+
+### 4. Méthode
+Durées tirées des mesures de temps des runs du 19 et 20/10 (temps par nouvelle
+annonce : ~4,2 s PropertyHub, ~3,9 s Hipflat). Rien n'a encore tourné avec les
+nouveaux réglages.
+
+### Références techniques
+`max_nouvelles` 2000→4000 (propertyhub, hipflat), `max_pages` 150→300
+(ddproperty, propertyscout), `max_detail_visits` 1000→2000 (fazwaz) ; bandes
+`agents.json`. DDproperty vérifié en direct le 21/10 : sonde OK, 40/40, 0 erreur.

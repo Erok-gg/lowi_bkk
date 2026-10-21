@@ -276,7 +276,7 @@
       "bandes": {
         "nouvelles": [
           1,
-          4500
+          9000
         ],
         "traces_erreur": [
           0,
@@ -284,10 +284,10 @@
         ],
         "erreurs_images": [
           0,
-          2500
+          5000
         ]
       },
-      "_erreurs_images_pourquoi": "Couvertures absentes du CDN (S3 AccessDenied, le site construit la meme URL) : 29/82 = 35 % sur 3 echantillons du 2026-10-20 (6/25, 9/30, 14/27). Jusqu'a ~1 400 echecs pour 4 000 nouvelles ; au-dela de 2 500 (~62 %), watch-health releve images_perdues."
+      "_erreurs_images_pourquoi": "Couvertures absentes du CDN (S3 AccessDenied, le site construit la meme URL) : 29/82 = 35 % sur 3 echantillons du 2026-10-20 (6/25, 9/30, 14/27). Jusqu'a ~1 400 echecs pour 4 000 nouvelles ; au-dela de 2 500 (~62 %), watch-health releve images_perdues. 2026-10-21 : budget double (max_nouvelles 4 000/run) -> bande 0-5 000."
     },
     {
       "name": "extract-hipflat",
@@ -326,7 +326,7 @@
       "bandes": {
         "nouvelles": [
           1,
-          4500
+          9000
         ],
         "traces_erreur": [
           0,
