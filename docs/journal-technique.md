@@ -5165,3 +5165,56 @@ types du site passée.
 `lib/sources.ts` (`sourceLabel`), `components/ListingsTable.tsx`,
 `components/PropertyCard.tsx`, `bilan_RE/tension/rapport.py`
 (`SOURCES_LISIBLES`), `agents/skills/extract-fazwaz/SKILL.md`.
+
+## 2026-10-21 (suite) — FazWaz : nombre de logements et estimation de prix par immeuble
+
+### 1. Causes
+Demande : collecter, pour chaque immeuble, le nombre de logements et
+l'estimation de FazWaz (« les annonces de cet immeuble sont X % sous ou
+au-dessus du prix de marché »).
+
+### 2. Conséquences
+- Ces deux informations ne figurent **pas** sur les pages d'annonce (0 sur 24
+  vérifiées). Elles sont sur la page de l'immeuble, vers laquelle chaque
+  annonce renvoie (24 sur 24).
+- Taux de remplissage mesurés : **nombre de logements 32 sur 32** immeubles,
+  **estimation de prix 37 sur 52** (environ 7 sur 10 : FazWaz ne l'affiche pas
+  pour tous les immeubles).
+- L'estimation est une **moyenne par immeuble**, pas un avis sur une annonce
+  précise. Elle est négative quand l'immeuble se vend sous le marché selon
+  FazWaz (exemples relevés : de -50 % à +8 %).
+- Coût : une page de plus par immeuble, gardée en mémoire 30 jours. Au plus 300
+  pages d'immeuble par passage (~10 à 15 minutes). Les ~4 500 immeubles connus
+  seront couverts en ~15 passages, ensuite seuls les immeubles des annonces
+  nouvelles ou modifiées sont relus.
+- L'estimation est conservée **dans le temps** (une valeur par relevé) : on
+  pourra suivre son évolution.
+
+### 3. Plan
+- Fait : collecte ajoutée au scraper FazWaz, active dès le prochain cycle.
+- Les données sont rangées dans un fichier par immeuble et recopiées dans les
+  annonces nouvellement lues. Elles ne sont **pas encore utilisées** dans les
+  statistiques, ni affichées : à décider (par exemple, rapporter le nombre
+  d'annonces en vente à la taille de l'immeuble, ou comparer l'estimation de
+  FazWaz à notre propre calcul de décote).
+- Pas de changement de structure de la base : rien à défaire côté base. Pour
+  couper la collecte, un réglage suffit.
+
+### 4. Méthode
+- Avant d'écrire : 24 annonces actives prises au hasard, puis 12 pages
+  d'immeuble lues à la main.
+- **Erreur de mesure corrigée en route** : sur 2 des 12 pages, le pourcentage
+  d'abord compté appartenait à un immeuble **voisin** affiché plus bas sur la
+  page. Seule la phrase propre à l'immeuble est désormais lue ; le vrai taux
+  était 9 sur 12, pas 11 sur 12.
+- Premier essai en direct : 3 immeubles sur 20 sans nombre de logements, tous
+  en construction (écrits autrement que les immeubles livrés). Corrigé, puis
+  second essai : 20 sur 20.
+- Second passage sur les mêmes annonces : 0 page d'immeuble relue (la mémoire
+  de 30 jours fonctionne). Tests FazWaz existants : tous passent.
+
+### Références techniques
+`scraper/adapters/fazwaz.py` (`lire_projet`, `_projet`, cache
+`output/fazwaz-projets.json`, clés `raw_data.projet_*`) ;
+`scraper/config/fazwaz.json` → `projets` (`visiter`, `max_par_run` 300,
+`rafraichir_jours` 30). Retour : `"visiter": false`.

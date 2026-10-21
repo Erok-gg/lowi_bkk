@@ -23,8 +23,10 @@ DEUX MODES DE DÉCOUVERTE (`config.discovery`) :
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
+from datetime import datetime, timedelta, timezone
 from html import unescape
 from pathlib import Path
 from typing import Iterator
@@ -121,11 +123,64 @@ def statut_marche(html: str, url: str) -> str | None:
     return _STATUTS.get(v)
 
 
+#: Page de l'IMMEUBLE (2026-10-21). Les fiches d'annonce ne portent ni le
+#: nombre de logements ni l'estimation de prix de FazWaz (0/24 mesurées) ; la
+#: page de l'immeuble, liée depuis 24/24 fiches, les porte.
+PROJET_URL_RE = re.compile(r'href="(https://www\.fazwaz\.com/projects/thailand/[^"#?]+)"')
+#: « Jan 2024 Completed 35 Floors 1 Building 737 Units » : 12/12 pages livrées.
+#: « Off Plan 22 Floors … » pour un immeuble en construction : ancrer sur
+#: « Completed » seul en manquait 3 sur 20 au test du 2026-10-21.
+PROJET_TAILLE_RE = re.compile(
+    r"(?:Completed|Off Plan|Construction|EIA)\s+(?:(\d+)\s*Floors?\s*)?"
+    r"(?:(\d+)\s*Buildings?\s*)?([\d,]+)\s*Units\b")
+#: « units in that project are priced BELOW ( -9.2% ) their market value » :
+#: 9/12 pages. On ne lit QUE cette phrase : les pastilles « ▼ -6.8% » plus bas
+#: sur la page sont celles des immeubles VOISINS (2/12 pages n'avaient que
+#: celles-là — prises à tort pour l'immeuble lors de la première mesure).
+PROJET_ESTIMATION_RE = re.compile(
+    r"priced\s+(BELOW|ABOVE)\s*\(\s*([-+]?\d+(?:\.\d+)?)\s*%\s*\)", re.I)
+
+
+def _texte_visible(html: str) -> str:
+    t = re.sub(r"<script.*?</script>|<style.*?</style>", " ", html, flags=re.S)
+    return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", t)))
+
+
+def lire_projet(html: str) -> dict:
+    """Nombre de logements, étages, bâtiments, et écart de prix au marché
+    estimé par FazWaz (en %, négatif = sous le marché) depuis la page de
+    l'immeuble. Champ absent → None, jamais deviné."""
+    t = _texte_visible(html)
+    out = {"logements": None, "etages": None, "batiments": None, "ecart_marche_pct": None}
+    m = PROJET_TAILLE_RE.search(t)
+    if m:
+        out["etages"] = int(m.group(1)) if m.group(1) else None
+        out["batiments"] = int(m.group(2)) if m.group(2) else None
+        out["logements"] = int(m.group(3).replace(",", ""))
+    e = PROJET_ESTIMATION_RE.search(t)
+    if e:
+        v = abs(float(e.group(2)))
+        out["ecart_marche_pct"] = -v if e.group(1).upper() == "BELOW" else v
+    return out
+
+
 class FazwazAdapter(BaseAdapter):
     source = "fazwaz"
 
     def __init__(self, config: dict):
         super().__init__(config)
+        # Cache par immeuble : une page d'immeuble sert à toutes ses annonces.
+        # Même racine que run.py (un test sous LOWI_OUTPUT_DIR ne touche pas
+        # au cache de production).
+        out = Path(os.environ.get("LOWI_OUTPUT_DIR")
+                   or Path(__file__).resolve().parent.parent / "output")
+        self._projets_path = Path(self.config.get("projets_cache") or out / "fazwaz-projets.json")
+        try:
+            self._projets: dict = json.loads(self._projets_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            self._projets = {}
+        self._projets_sale = False
+        self._projets_visites = 0
         if self._mode_sitemap():
             # Sans page de liste, le prix n'existe que sur la fiche : un scan
             # sans détail écrirait des annonces sans prix.
@@ -363,6 +418,57 @@ class FazwazAdapter(BaseAdapter):
 
     # ───────────────────────── liste ─────────────────────────
     def list_urls(self, fetcher: Fetcher, limit: int | None = None) -> Iterator[dict]:
+        try:
+            yield from self._list_urls(fetcher, limit)
+        finally:
+            self._sauver_projets()
+
+    def _sauver_projets(self) -> None:
+        if not self._projets_sale:
+            return
+        self._projets_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._projets_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self._projets, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(self._projets_path)
+        self._projets_sale = False
+        print(f"  [projets] {self._projets_visites} page(s) d'immeuble lue(s) ce run, "
+              f"{len(self._projets)} immeubles en cache")
+
+    def _projet(self, fetcher: Fetcher, url: str) -> dict | None:
+        """Données de l'immeuble : depuis le cache si relevées il y a moins de
+        `projets.rafraichir_jours`, sinon page relue — dans la limite de
+        `projets.max_par_run` (au-delà : ancienne valeur, ou rien)."""
+        conf = self.config.get("projets") or {}
+        if not conf.get("visiter"):
+            return None
+        cle = url.rstrip("/").rsplit("/projects/", 1)[-1]
+        ancien = self._projets.get(cle)
+        maintenant = datetime.now(timezone.utc)
+        if ancien:
+            try:
+                age = maintenant - datetime.fromisoformat(ancien["vu_le"])
+                if age < timedelta(days=float(conf.get("rafraichir_jours", 30))):
+                    return ancien
+            except (KeyError, ValueError):
+                pass
+        if self._projets_visites >= int(conf.get("max_par_run", 300)):
+            return ancien
+        html = fetcher.get_text(url, referer=self.config["base_url"])
+        self._projets_visites += 1
+        if not html:
+            return ancien
+        lu = lire_projet(html)
+        entree = {**lu, "url": url, "vu_le": maintenant.isoformat(timespec="seconds")}
+        # L'estimation bouge dans le temps : on garde la série, pas la seule dernière valeur.
+        histo = list((ancien or {}).get("historique_ecart") or [])
+        if lu["ecart_marche_pct"] is not None:
+            histo.append([entree["vu_le"][:10], lu["ecart_marche_pct"]])
+        entree["historique_ecart"] = histo[-24:]
+        self._projets[cle] = entree
+        self._projets_sale = True
+        return entree
+
+    def _list_urls(self, fetcher: Fetcher, limit: int | None = None) -> Iterator[dict]:
         if self._mode_sitemap():
             yield from self._list_urls_sitemap(fetcher, limit)
             return
@@ -498,6 +604,13 @@ class FazwazAdapter(BaseAdapter):
 
         rec["raw_data"] = {k: rec.get(k) for k in
                            ("condo_name", "bedrooms", "area_sqm", "lat", "lng", "district", "price", "lastmod")}
+        projet = rec.pop("_projet", None)
+        if projet:
+            rec["raw_data"].update({
+                "projet_url": projet.get("url"),
+                "projet_logements": projet.get("logements"),
+                "projet_ecart_marche_pct": projet.get("ecart_marche_pct"),
+                "projet_releve_le": (projet.get("vu_le") or "")[:10] or None})
         return rec
 
     def _completer_depuis_fiche(self, html: str, rec: dict) -> None:
@@ -568,6 +681,11 @@ class FazwazAdapter(BaseAdapter):
               or re.search(r"completed\s+in\s+(?:\w+\s+)?(\d{4})", html, re.I))
         if my and 1970 <= int(my.group(1)) <= 2040:
             rec["year_built"] = int(my.group(1))
+
+        # immeuble : nombre de logements + estimation de prix FazWaz (page dédiée, en cache)
+        mp = PROJET_URL_RE.search(html)
+        if mp:
+            rec["_projet"] = self._projet(fetcher, mp.group(1))
 
         # bathrooms : "<n> Bathroom"
         mb = re.search(r"(\d+)\s+Bathroom", html)
