@@ -5124,3 +5124,44 @@ identifiants d'annonce comparés un à un à la base locale.
 ### Références techniques
 Identifiants d'unité `u1234567` communs aux deux sites ; robots.txt identique
 (interdiction de `order_by`) ; sitemap déclaré `https://www.thaigerproperty.com/sitemap.xml`.
+
+## 2026-10-21 (suite) — Thaiger Property : ses statistiques, et FazWaz affiché « FazWaz / Thaiger »
+
+### 1. Causes
+- Question : Thaiger Property publie-t-il des statistiques réutilisables ?
+- Demande : afficher la source FazWaz sous le nom « FazWaz / Thaiger ».
+
+### 2. Conséquences
+- **Rien d'exclusif chez Thaiger.** Ce qu'il publie vient de la plateforme
+  FazWaz et se trouve à l'identique sur fazwaz.com : prix médian d'un condo à
+  Bangkok (~4,9 M ฿) et prix médian au m² (~157 000 ฿) ; par immeuble, l'année
+  de livraison (déjà relevée chez nous), le nombre d'étages, de bâtiments et de
+  logements, et une estimation « X % sous / au-dessus du prix de marché »
+  calculée par FazWaz.
+- Deux éléments seraient utiles et ne sont pas encore collectés : le **nombre
+  de logements par immeuble** (pour rapporter le stock en vente à la taille de
+  l'immeuble) et l'**estimation de prix de FazWaz** (comme point de comparaison
+  avec notre propre décote). Les deux se prennent sur FazWaz, pas besoin de
+  Thaiger.
+- Le site, les fiches et le bilan affichent désormais « FazWaz / Thaiger ».
+  L'identifiant interne reste « fazwaz » : le changer casserait les ~86 000
+  annonces en base et l'historique des agents.
+
+### 3. Plan
+- Fait : nom affiché changé (filtre des tableaux, fiche au survol, rapport de
+  tension), note dans la consigne de l'agent FazWaz.
+- À décider : collecter le nombre de logements par immeuble et l'estimation
+  de prix FazWaz.
+- Non fait : le bilan acheteur n'accepte pas encore un lien Thaiger en entrée
+  (il ne reconnaît que les liens fazwaz.com) — c'est un changement de
+  fonctionnement, pas un renommage.
+
+### 4. Méthode
+Page « Bangkok » de Thaiger, une page de quartier et une page d'immeuble lues
+le 21/10, comparées à ce que notre scraper FazWaz relève déjà. Vérification de
+types du site passée.
+
+### Références techniques
+`lib/sources.ts` (`sourceLabel`), `components/ListingsTable.tsx`,
+`components/PropertyCard.tsx`, `bilan_RE/tension/rapport.py`
+(`SOURCES_LISIBLES`), `agents/skills/extract-fazwaz/SKILL.md`.

@@ -57,7 +57,7 @@ def _in(noms: list[str]) -> str:
 RAPPORTS = os.path.join(SORTIES, "rapports")
 TOL_SURFACE = 0.15
 MIN_COMPARABLES = 5
-SOURCES_LISIBLES = {"ddproperty": "DDproperty", "fazwaz": "FazWaz", "propertyscout": "PropertyScout",
+SOURCES_LISIBLES = {"ddproperty": "DDproperty", "fazwaz": "FazWaz / Thaiger", "propertyscout": "PropertyScout",
                     "nestopa": "Nestopa", "livinginsider": "LivingInsider",
                     "propertyhub": "PropertyHub", "hipflat": "Hipflat"}
 
