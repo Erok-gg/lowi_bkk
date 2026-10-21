@@ -5094,3 +5094,33 @@ nouveaux réglages.
 ### 2026-10-21 (suite) — LivingInsider remis en lane `daily`, mode « liste »
 
 Décision utilisateur, après l'entrée « LivingInsider réparé en mode liste ». `extract-livinginsider` → `lanes: ["daily"]`, motif `_repris` (le `_suspendu` reste en historique). Retour : `lanes: []`. Vérifié : `run-lane daily --all --dry-run` le liste ; `test_lanes`, `test_status_hors_lanes`, `test_fraicheur`, `test_livinginsider_cartes` passent. **Non fait** : premier run de production (au prochain cycle de nuit : ~640 nouvelles et ~25 min d'images attendues) ; aucun contournement du challenge ; les 216 loyers à prix de vente hérités du mode fiche restent en base.
+
+## 2026-10-21 (suite) — Thaiger Property : préparation d'un scraper, arrêtée à la mesure
+
+### 1. Causes
+Demande : préparer un scraper pour thaigerproperty.com.
+
+### 2. Conséquences
+Le site est une **vitrine du groupe FazWaz**, avec le même catalogue :
+- mêmes totaux affichés pour Bangkok que FazWaz (35 588 condos en vente,
+  54 410 en location) ;
+- **58 annonces sur 60** prises en tête de liste sont déjà dans notre base
+  sous FazWaz (53 encore actives) ;
+- photos hébergées chez FazWaz, même fichier de règles d'accès pour les robots.
+
+Un scraper Thaiger ne rapporterait pratiquement aucune annonce nouvelle et
+créerait des doublons. C'est le même cas que Dot Property (écarté en août).
+
+### 3. Plan
+Aucun scraper écrit. Si on le voulait quand même, ce serait une copie du
+scraper FazWaz avec une autre adresse de site — sans intérêt mesurable.
+Décision à prendre : clore, ou chercher les 2 annonces sur 60 qui ne sont pas
+chez FazWaz pour voir s'il existe une part propre à Thaiger.
+
+### 4. Méthode
+Pages de liste Bangkok vente et location téléchargées le 21/10, 60
+identifiants d'annonce comparés un à un à la base locale.
+
+### Références techniques
+Identifiants d'unité `u1234567` communs aux deux sites ; robots.txt identique
+(interdiction de `order_by`) ; sitemap déclaré `https://www.thaigerproperty.com/sitemap.xml`.
