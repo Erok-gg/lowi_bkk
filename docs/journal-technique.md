@@ -4762,3 +4762,90 @@ l'auraient bloqué de toute façon. Les trois conditions d'abstention de
   sévérité haute, elles, sont parties (un seul message groupé, même cause).
 
 Compte rendu détaillé : [agents/audits/reparations-2026-10-21.md](../agents/audits/reparations-2026-10-21.md).
+
+---
+
+## 2026-10-21 (matin, 07:00) — seconde escalade : le test du garde-fou était lui-même muet
+
+Deuxième séance autonome du même jour (escalade `fa255d2087`, PID 23500), sur le
+ticket `2026-10-21T000014`. L'entrée ci-dessus (03:00) reste telle quelle : elle
+n'est pas corrigée, elle est complétée.
+
+**Le ticket ne portait pas de rechute.** Ses 5 problèmes ont tous la cause
+traitée à 03:00. Ce qui l'a rendu décidable, c'est l'horodatage : le run #945 a
+démarré à **02:30:05**, le correctif a été commité à **03:33:04** (`5d9fce2`).
+L'échec journalisé est donc l'échec *pré-correctif*. Et sur les 5 étapes de
+`extract-ddproperty`, seules deux (principal, `then_0`) se sont arrêtées sur la
+sonde : `then_1` a rendu 70 annonces et `then_2` (recensement) a lu 1 789 pages
+en 4 h 09 **en s'abstenant de délister** (page terminale non atteinte). Aucune
+annonce perdue.
+
+**Le correctif tient, et l'élagage côté source s'aggrave.** Re-mesuré à 07:35 sur
+10 pages réelles (5 vente + 5 location) : **198/198 annonces extraites**, mais
+`listingsData` n'en sert plus que **24 sur 198 (12 %)**, et **zéro sur 8 des
+10 pages** — contre 6 % en vente et 1 % en location douze heures plus tôt. Le
+chemin par les cartes annexes porte **88 % du catalogue** : ce n'est plus un
+filet de secours, c'est le chemin principal. Sonde live : OK, couverture 19/19.
+Si les cartes annexes s'élaguent à leur tour, il ne restera que la fiche détail,
+bien plus coûteuse — c'est le risque à garder en tête.
+
+**Le seul vrai défaut trouvé, et il mord la règle 2 par la queue.**
+`agents/tests/test_ddproperty_blob_elague.py`, livré la nuit même avec le
+correctif, **plantait en `UnicodeEncodeError` dès l'essai 5 sur 8** lancé à la
+main sur ce poste : la console hérite de l'ACP (cp1252), pas de l'UTF-8. Mesure :
+les **28** vérifications passent, mais **14 n'étaient jamais ATTEINTES** — et le
+plantage tombant pile à l'essai 5, ces 14 sont **exactement** celles qui
+vérifient la sonde (essai 5 : elle se tait quand la page est entière ; 6 : elle
+parle quand la page est amputée ; 7 : reprise par la fiche détail ; 8 : page vide
+→ échec). Le test qui prouve qu'un garde-fou crie quand ça va mal ne pouvait pas
+le prouver. Et son code de sortie non nul faisait **passer le correctif pour un
+ÉCHEC** alors qu'il le validait.
+
+C'est le défaut déjà consigné le **2026-08-22/27** pour `ops/pouls.py` et
+`agents/orchestrator.py`, et déjà codifié par
+`agents/tests/test_console_utf8.py` — **13 tests sur 57** portent le garde
+`reconfigure(encoding="utf-8")`, ce nouveau ne l'avait pas. La production n'a
+jamais rien vu : `agents/core/shell.py` force l'encodage des **sous-processus**.
+Seul le lancement à la main était touché, c'est-à-dire toute vérification
+humaine. Corrigé par commit **`f3b84a7`** ; rejeu sur console par défaut :
+**28/28, code de sortie 0**.
+
+**Deux fausses pistes écartées en comptant d'abord** (règle 1) :
+- `extract-fazwaz` / `sitemap_non_regenere` était monté en sévérité haute les 16,
+  17 et 18/10 (`nouvelles=0`) — mais s'est **éteint seul** : le run du 20/10 rend
+  373 nouvelles, 0 erreur, 86 575 scannées. Le garde-fou a parlé quand ça allait
+  mal et s'est tu quand ça allait bien. Rien à corriger.
+- `propertyhub` et `hipflat` affichaient **exactement 2 000 actives par
+  deal_type** chacun. Deux sources aux `max_pages` très différents (2 600 vs 167)
+  atteignant le même chiffre rond appelait la vérification : c'est
+  `max_nouvelles: 2000`, présent dans les deux configs et délibéré (rattrapage du
+  stock initial étalé sur des semaines). Pas une anomalie.
+
+**Journaux :** 2 lignes d'erreur sur 120 fichiers / 7 jours, les deux étant cette
+sonde. Aucun `Traceback`, aucune erreur HTTP réelle.
+
+**Base :** `quick_check` **ok** (5,07 Go + 194 Mo de WAL, 277 s) · 212 715
+annonces / 138 004 actives · **0 délistage à tort** · sauvegarde clé du 20/10 ok,
+4 969,8 Mo, 3 relectures sur 3.
+
+### Ce qui n'a PAS été fait, et pourquoi
+
+- **Aucun rattrapage DDproperty.** Le cycle de 02:30 **tournait encore pendant
+  toute la séance** (`propertyhub` et `hipflat` en `--full`, premiers runs de leur
+  vie). Un scrap par-dessus aurait mis deux coureurs en concurrence, et la
+  consigne l'interdit en journée. **Conséquence assumée : la moisson DDproperty
+  du 20 au 21 est perdue.**
+- **Aucune règle de méthode touchée** : bornes, seuil d'anti-délistage, délai de
+  grâce, cadence, `max_nouvelles`, définition d'un calcul.
+- **Rien fusionné sur `main`** — l'arbre doit RESTER sur
+  `fix/ddproperty-listingsdata-elaguee`, le cycle lit l'arbre.
+- **Non mesuré, et ça reste à faire : combien des 57 tests plantent sur une
+  console cp1252 avant d'avoir fini.** Seul le test du périmètre du ticket a été
+  corrigé ; 44 n'ont pas le garde et n'ont pas été éprouvés. C'est la même classe
+  de défaut, et elle rend muet n'importe quel garde-fou vérifié à la main.
+- **Les 2 courriers transactionnels `bilan-comptes` restent en boîte**, dont l'un
+  avec un mot de passe en clair — décision de posture, inchangée depuis 03:00.
+- Le correctif **n'a toujours pas vu un recensement complet** sur la source
+  élaguée : 10 pages, pas 2 600.
+
+Compte rendu détaillé : [agents/audits/reparations-2026-10-21.md](../agents/audits/reparations-2026-10-21.md) (§ « Seconde passe »).
