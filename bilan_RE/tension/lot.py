@@ -167,7 +167,9 @@ def calculer(t1: date, cfg: dict, db: str = DB, limite: int | None = None, journ
 def ecrire(res: dict, dossier: str | None = None) -> str:
     dossier = dossier or SORTIE      # lu à l'appel : remplaçable dans les essais
     os.makedirs(dossier, exist_ok=True)
-    nom = os.path.join(dossier, f"scores-{res['fin_fenetre'][:7]}.json")
+    # Un fichier par JOUR depuis le passage au calcul quotidien (2026-10-20) :
+    # nommé au mois, chaque run écrasait le précédent et la série disparaissait.
+    nom = os.path.join(dossier, f"scores-{res['fin_fenetre'][:10]}.json")
     for chemin in (nom, os.path.join(dossier, "scores-latest.json")):
         tmp = chemin + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:

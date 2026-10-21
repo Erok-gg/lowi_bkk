@@ -189,6 +189,14 @@ def main():
     recens += [annonce(990_000 + j, condo=f"N{j}", debut=T1 - timedelta(days=5), src="recens")
                for j in range(300)]
     verifie("recensement écarté", not sante(recens, T1, CFG)["recens"]["gardee"])
+    #     Forçage : gardée jusqu'à sa date, garde-fou réarmé au-delà.
+    cfg_f = copy.deepcopy(CFG)
+    cfg_f["sante_sources"]["saines_forcees"] = [
+        {"source": "figee", "jusqu_au": T1.isoformat(), "raison": "test"}]
+    vf = sante(saine + figee, T1, cfg_f)["figee"]
+    verifie("forçage : source figée gardée, raison tracée", vf["gardee"] and vf["raisons"], str(vf))
+    cfg_f["sante_sources"]["saines_forcees"][0]["jusqu_au"] = (T1 - timedelta(days=1)).isoformat()
+    verifie("forçage expiré : garde-fou réarmé", not sante(saine + figee, T1, cfg_f)["figee"]["gardee"])
 
     # 12. Rayon : 1 km autour d'un point garde le voisin à 500 m, pas celui à 3 km.
     cs = coeur.cohortes([annonce(1, condo="P", debut=T1, lat=13.7300, lng=100.5600),

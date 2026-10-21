@@ -333,7 +333,8 @@ export default function Report({
   const mentions = (
     <p className={`text-xs ${P.faible}`}>
       Asking prices, not sold prices. Listing data as of {r.donnees_du ? date(r.donnees_du) : "—"}. Market scores:{" "}
-      {calc?.frequence_calcul === "mensuelle" ? "monthly calculation" : "calculation"}
+      {calc?.frequence_calcul === "quotidienne" ? "daily calculation" :
+        calc?.frequence_calcul === "mensuelle" ? "monthly calculation" : "calculation"}
       {calc?.fin_fenetre ? `, window ending ${date(calc.fin_fenetre)}` : " — not computed yet"}. Lowi takes nothing from
       the seller. Not investment advice.
     </p>
@@ -420,8 +421,11 @@ export default function Report({
 
       <Bloc titre="Ease of resale" id="liquidite" mode={mode} ouvert={pdf}
         resume={r.liquidite?.retenu ? <Score n={r.liquidite.retenu} mode={mode} /> :
-          <p className={`text-sm ${P.doux}`}>Not published yet: it needs about three months of clean market data to be
-            reliable. It will appear here automatically.</p>}>
+          // Le libellé « about three months » datait du 17/10, quand DDproperty
+          // était écarté ; depuis le forçage du 2026-10-20 (config v2), seul un
+          // effectif trop faible à tous les niveaux laisse ce bloc vide.
+          <p className={`text-sm ${P.doux}`}>Not enough resales observed around this unit yet to give a reliable
+            score. It will appear here automatically as data builds up.</p>}>
         <Chaines chaine={r.liquidite?.chaine} mode={mode} />
       </Bloc>
 

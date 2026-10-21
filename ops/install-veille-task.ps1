@@ -41,8 +41,13 @@ $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 20) `
     -MultipleInstances IgnoreNew
-# Interactive : `claude` lit ses identifiants dans le profil de l'utilisateur.
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+# S4U depuis le 2026-10-20 (etait Interactive) : session fermee, la veille ne
+# tournait plus du tout - aucun journal de veille du 17 au 19/10 alors que les
+# cycles tournaient. `claude` lit ses identifiants dans le profil, accessible en
+# S4U : prouve par social-leads, qui appelle `claude -p` depuis LowiBKK-Agents
+# (S4U) chaque nuit. Meme choix que install-agents-task.ps1 (2026-09-01).
+# Retour : remettre -LogonType Interactive et relancer ce script.
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Limited
 
 if ($PSCmdlet.ShouldProcess($nom, "Register-ScheduledTask")) {
     Register-ScheduledTask -TaskName $nom -Action $action -Trigger $trigger `
@@ -57,6 +62,7 @@ $x = [xml](Export-ScheduledTask -TaskName $nom)
 $argLine = $x.Task.Actions.Exec.Arguments
 Write-Host "  Arguments : $argLine"
 Write-Host "  Repetition : $($t.Triggers[0].Repetition.Interval) pendant $($t.Triggers[0].Repetition.Duration)"
+if ($t.Principal.LogonType -ne 'S4U') { Write-Host "`n  [ECHEC] LogonType $($t.Principal.LogonType), attendu S4U." -ForegroundColor Red; exit 1 }
 if ($argLine -match '\\"') { Write-Host "`n  [ECHEC] Guillemets echappes presents." -ForegroundColor Red; exit 1 }
 if ($t.Triggers[0].Repetition.Interval -ne 'PT30M') { Write-Host "`n  [ECHEC] Repetition absente." -ForegroundColor Red; exit 1 }
 Write-Host "`n  [OK] Tache relue." -ForegroundColor Green

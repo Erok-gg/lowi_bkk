@@ -87,6 +87,20 @@ MOTIFS_ERREUR = re.compile(r"\[erreur|Traceback|SONDE-ECHEC")
 #: cycle. La panne de fond, elle, reste détectée par son propre run `failed`.
 PREFIXE_JOURNAL_VEILLE = "veille-opus-"
 
+#: Demande de l'utilisateur (2026-10-20) : « ne pas laisser les robots sans
+#: activité plus de 24 h ». La veille ne regardait que le cycle du jour, et
+#: s'éteignait dès qu'il était fini : un agent sauté par un cycle « terminé »,
+#: ou un cycle jamais reparti le lendemain, n'était vu par personne. Mesuré au
+#: ledger : aucun run le 08/10 (nuit de maintenance), et aucun journal de veille
+#: du 17 au 19/10 alors que les cycles tournaient (tâche en Interactive,
+#: session fermée).
+INACTIVITE_MAX_H = 24
+#: Relancer LowiBKK-Agents n'est pas dangereux (MultipleInstances, verrous et
+#: `is_due` de l'orchestrateur), mais une relance toutes les 30 min sur une
+#: panne qui la fait échouer ne servirait à rien : une fois toutes les 6 h.
+RELANCE_ECART_MIN_H = 6
+AGENTS_JSON = ROOT / "agents" / "agents.json"
+
 
 def _ecrire(msg: str) -> None:
     JOURNAL.mkdir(parents=True, exist_ok=True)
@@ -406,6 +420,78 @@ def escalader(jour: str, preuves: dict, problemes: list[str], verdict: dict, lan
     return ticket
 
 
+# ─── Inactivité (> 24 h) ────────────────────────────────────────────────────
+
+def agents_quotidiens() -> list[str]:
+    """Agents que --due doit lancer chaque jour. Lanes vides = suspendu ou
+    manuel à dessein (livinginsider, storage…) : pas une inactivité."""
+    cfg = json.loads(AGENTS_JSON.read_text(encoding="utf-8"))
+    return [a["name"] for a in cfg["agents"]
+            if "daily" in (a.get("lanes") or []) and a.get("every_days", 1) == 1]
+
+
+def inactifs(maintenant: datetime, noms: list[str]) -> list[tuple[str, float]]:
+    """(agent, heures depuis son dernier DÉMARRAGE) au-delà du seuil. Un agent
+    jamais lancé est ignoré : `is_due` le prend au prochain cycle, et le
+    signaler ici crierait au loup à chaque ajout d'agent."""
+    cx = sqlite3.connect(f"file:{LEDGER}?mode=ro", uri=True, timeout=30)
+    derniers = dict(cx.execute("select agent, max(started_at) from agent_runs group by agent"))
+    cx.close()
+    out = []
+    for n in noms:
+        if not derniers.get(n):
+            continue
+        h = (maintenant - datetime.fromisoformat(derniers[n])).total_seconds() / 3600
+        if h > INACTIVITE_MAX_H:
+            out.append((n, round(h, 1)))
+    return out
+
+
+def quelque_chose_tourne(tache: dict) -> bool:
+    if tache.get("etat") == "Running":
+        return True
+    cx = sqlite3.connect(f"file:{LEDGER}?mode=ro", uri=True, timeout=30)
+    pids = [p for (p,) in cx.execute("select pid from agent_runs where status='running'")]
+    cx.close()
+    return any(p and Ledger._processus_vivant(p) for p in pids)
+
+
+def relancer_cycle(maintenant: datetime) -> str:
+    marque = ETAT / "relance-inactivite.json"
+    try:
+        derniere = datetime.fromisoformat(json.loads(marque.read_text(encoding="utf-8"))["le"])
+        if (maintenant - derniere).total_seconds() / 3600 < RELANCE_ECART_MIN_H:
+            return f"relance déjà tentée le {derniere:%d/%m %H:%M} — attente"
+    except (OSError, json.JSONDecodeError, KeyError, ValueError):
+        pass
+    r = subprocess.run(["schtasks", "/run", "/tn", "LowiBKK-Agents"], capture_output=True,
+                       text=True, errors="replace", timeout=60)
+    ETAT.mkdir(parents=True, exist_ok=True)
+    marque.write_text(json.dumps({"le": maintenant.isoformat(timespec="seconds"),
+                                  "code": r.returncode}), encoding="utf-8")
+    return f"LowiBKK-Agents relancée (schtasks code {r.returncode})"
+
+
+def controle_inactivite(preuves: dict, maintenant: datetime, escalade: bool) -> None:
+    """Indépendant du marqueur de fin de cycle : tourne à chaque passage."""
+    from agents.core import maintenance
+    if maintenance.active(maintenant) or quelque_chose_tourne(preuves["tache_agents"]):
+        return
+    morts = inactifs(maintenant, agents_quotidiens())
+    if not morts:
+        return
+    problemes = [f"{n} : aucun démarrage depuis {h} h (seuil {INACTIVITE_MAX_H} h), "
+                 "et rien ne tourne" for n, h in morts]
+    _ecrire("inactivité : " + " | ".join(problemes))
+    if not escalade:
+        _ecrire("relance et escalade désactivées (--sans-escalade)")
+        return
+    _ecrire(relancer_cycle(maintenant))
+    # Opus diagnostique POURQUOI le cycle a sauté ces agents ; la relance,
+    # elle, ne l'attend pas. Signature sans les heures (cf. _signature).
+    escalader(f"{maintenant:%Y-%m-%d}", preuves, problemes, {}, lancer=True)
+
+
 # ─── Passage ────────────────────────────────────────────────────────────────
 
 ECHECS_CONSOMMES = (": failed", ": interrompu", "processus", "constat haut", "pas parti")
@@ -434,6 +520,7 @@ def main() -> int:
     preuves = rassembler(maintenant)
     jour = preuves["debut_cycle_local"][:10]
     fin = ETAT / f"{jour}.json"
+    controle_inactivite(preuves, maintenant, escalade=not a.sans_escalade)
     if fin.exists() and not a.forcer:
         return 0                      # cycle du jour déjà vérifié : on dort
 

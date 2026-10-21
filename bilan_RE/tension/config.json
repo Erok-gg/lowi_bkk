@@ -1,6 +1,7 @@
 {
   "_comment": "Score de tension acheteur/vendeur (0-100). Méthode : docs/methodes-calculs.md §12. Changer une valeur = incrémenter config_version : le score d'une version n'est pas comparable à celui d'une autre.",
-  "config_version": 1,
+  "config_version": 2,
+  "_config_version_2": "2026-10-20 : sante_sources.saines_forcees (décision utilisateur « considère la base saine depuis le début »). Les scores v1 (DDproperty écarté) ne sont pas comparables aux v2.",
   "fenetre_jours": 28,
   "_fenetre": "28 j : assez pour ~3 100 sorties nettes sur Bangkok (mesuré 2026-09-14 → 10-12), assez court pour suivre l'évolution semaine par semaine.",
   "fiable_depuis": "2026-09-14",
@@ -47,6 +48,19 @@
     "jours_sans_retrait_max": 5,
     "croissance_stock_max": 0.5,
     "_sante": "Une source est écartée d'une fenêtre si : aucun retrait alors qu'elle a >= 200 actives ; >= 5 jours consécutifs sans retrait en fin de fenêtre (DDproperty à l'arrêt depuis le 13/10) ; stock en hausse de plus de 50 % sur la fenêtre (recensement, pas marché).",
+    "saines_forcees": [
+      {
+        "source": "ddproperty",
+        "jusqu_au": "2026-10-20",
+        "raison": "décision utilisateur du 2026-10-20 : base considérée saine depuis fiable_depuis"
+      },
+      {
+        "source": "fazwaz",
+        "jusqu_au": "2026-10-20",
+        "raison": "décision utilisateur du 2026-10-20 : base considérée saine depuis fiable_depuis"
+      }
+    ],
+    "_saines_forcees": "Pour les fenêtres finissant au plus tard à `jusqu_au`, la source est GARDÉE même si une règle automatique l'écarte ; la raison écartée reste tracée. Au-delà de cette date les règles automatiques s'appliquent de nouveau : le forçage couvre le passé, il ne désarme pas le garde-fou pour l'avenir. Mesuré avant la décision (scores du 18/10, fenêtre au 16/10, DDproperty écarté pour 5 j sans retrait) : 0 score de revente sur 4 851 lignes (« no reference yet ») et 81 % des tensions retombées au niveau Bangkok entier.",
     "exclusions_manuelles": [
       {
         "source": "propertyhub",
@@ -107,6 +121,7 @@
     "jalons_travaux": [],
     "_jalons_travaux": "VIDE À DESSEIN. Format : {\"age\": 15, \"libelle\": \"...\", \"source\": \"...\"}. Les âges typiques de gros entretien (façade, ascenseurs, étanchéité) ne sont pas mesurés ici : à renseigner par l'utilisateur avec une source. Ils s'affichent sur la projection, ils ne modifient PAS le score."
   },
-  "frequence_calcul": "mensuelle",
+  "frequence_calcul": "quotidienne",
+  "_frequence_calcul_2026-10-20": "Quotidienne en fin de cycle, décision utilisateur du 2026-10-20 (~50 min ajoutées au cycle). Ce n'est pas un changement de méthode : config_version inchangée par ce champ.",
   "_frequence_calcul": "Décision utilisateur 2026-10-17 : le travail par cohorte se fait une fois par mois, faute de puissance de calcul pour le refaire à chaque demande. Le rapport affiche « monthly calculation » et la date de fin de fenêtre ; il ne se présente jamais comme du temps réel."
 }

@@ -21,7 +21,9 @@ Ce que ce test vérifie :
      d'horloge pour un délai de 300 s) n'est pas confondu avec une panne ;
   7. la veille ne compte pas SON PROPRE compte rendu d'Opus comme une erreur du
      cycle (2026-10-06 : « zero SONDE-ECHEC » lu comme 1 ligne d'erreur, donc
-     un second Opus appelé pour une panne déjà réparée).
+     un second Opus appelé pour une panne déjà réparée) ;
+  8. un agent quotidien sans démarrage depuis plus de 24 h est signalé, même
+     après la fin du cycle (2026-10-20, demande utilisateur).
 
 Rejeu :  scraper/.venv/Scripts/python.exe agents/tests/test_veille_cycle.py
 """
@@ -171,6 +173,28 @@ def test_ne_se_surveille_pas_elle_meme():
         vc.LOGS = vrai_logs
 
 
+def test_inactivite_24h():
+    """8. (2026-10-20) Un agent quotidien sans démarrage depuis > 24 h est vu,
+    même après la fin du cycle ; un agent jamais lancé ou récent ne l'est pas."""
+    import sqlite3, tempfile
+    vrai = vc.LEDGER
+    with tempfile.TemporaryDirectory() as tmp:
+        db = os.path.join(tmp, "ledger.db")
+        cx = sqlite3.connect(db)
+        cx.execute("create table agent_runs (agent text, started_at text)")
+        m = datetime(2026, 10, 20, 14, 0, tzinfo=BKK)
+        cx.executemany("insert into agent_runs values (?, ?)", [
+            ("recent", (m - timedelta(hours=11)).isoformat()),
+            ("vieux", (m - timedelta(hours=30)).isoformat())])
+        cx.commit(); cx.close()
+        vc.LEDGER = vc.Path(db)
+        try:
+            assert vc.inactifs(m, ["recent", "vieux", "jamais"]) == [("vieux", 30.0)]
+            assert vc.inactifs(m, ["recent"]) == []          # se tait quand tout va bien
+        finally:
+            vc.LEDGER = vrai
+
+
 if __name__ == "__main__":
     test_fenetre_suit_la_tache()
     test_en_cours()
@@ -179,4 +203,5 @@ if __name__ == "__main__":
     test_signature_sans_chiffres()
     test_delai_gele_par_la_veille()
     test_ne_se_surveille_pas_elle_meme()
-    print("OK — test_veille_cycle : 7/7")
+    test_inactivite_24h()
+    print("OK — test_veille_cycle : 8/8")

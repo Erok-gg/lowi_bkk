@@ -129,7 +129,15 @@ def sante(annonces: list[coeur.Annonce], t1: date, cfg: dict) -> dict[str, dict]
         if v["actives_debut"] and v["actives_fin"] / v["actives_debut"] - 1 > s["croissance_stock_max"]:
             raisons.append("stock en hausse de plus de "
                            f"{s['croissance_stock_max']:.0%} sur la fenêtre (recensement ?)")
-        v["gardee"] = not raisons
+        forcee = next((f for f in s.get("saines_forcees", [])
+                       if f["source"] == src and t1 <= _d(f["jusqu_au"])), None)
+        if forcee and raisons:
+            # cf. config `_saines_forcees` : on garde la source, on ne cache pas
+            # pourquoi la règle l'aurait écartée.
+            raisons = [f"ignorée (forçage : {forcee['raison']}) — {r}" for r in raisons]
+            v["gardee"] = True
+        else:
+            v["gardee"] = not raisons
         v["raisons"] = raisons
         verdicts[src] = v
     return verdicts

@@ -433,6 +433,8 @@ Groupe `unit_key` = même immeuble × chambres × tranche de 5 m² × type. Une 
 ### Santé des sources, recalculée à chaque fenêtre
 Une source est écartée si elle ne retire rien alors qu'elle a au moins 200 actives, si elle reste 5 jours ou plus sans retrait en fin de fenêtre, si son stock gonfle de plus de 50 % (recensement), ou par exclusion manuelle datée (LivingInsider depuis le 16/09, Nestopa). **Constat au 2026-10-17 : aucune fenêtre n'a ses deux grandes sources saines.** Au 12/10, FazWaz est écarté (stock +73 %, rattrapage du sitemap) ; au 15/10, c'est DDproperty (5 jours sans retrait). Tant que ça dure, la composition du score change d'une semaine à l'autre et la série n'est pas comparable.
 
+**Mis à jour le 2026-10-20.** Remesuré avec les données à jour, les fenêtres finissant les 15, 17 et 19/10 gardent toutes deux grandes sources : DDproperty a délisté 2 529 annonces le 17/10. Cause des trous DDproperty, mesurée au ledger : chaque nuit sans retrait est un recensement arrêté au plafond `max_pages_recensement` (3 200 pages par flux, 6 400 lues), donc avant la fin du catalogue, ce qui interdit le délistage. **Décision de l'utilisateur** : la base est considérée saine depuis `fiable_depuis`. `sante_sources.saines_forcees` (config v2) garde DDproperty et FazWaz sur toutes les fenêtres jusqu'au 2026-10-20 ; au-delà, les règles automatiques reprennent. Le calcul devient **quotidien** en fin de cycle, et l'agent `scores-tension` alerte (constat haut → réparation) dès **3** jours sans retrait d'une grande source, deux jours avant l'exclusion.
+
 ### Tension : 6 signaux bruts, 5 familles pondérées
 | Famille | Signal | Sens (+ = vendeur) | Poids |
 |---|---|---|---|

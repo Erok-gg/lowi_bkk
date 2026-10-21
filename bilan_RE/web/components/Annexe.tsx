@@ -84,7 +84,8 @@ export default function Annexe({ r, doux, faible }: { r: Rapport; doux: string; 
       <Titre>Reference date, and revision</Titre>
       <p>
         Figures are computed over a rolling window ending on the dates shown above, and market scores are recalculated{" "}
-        {calc?.frequence_calcul === "mensuelle" ? "monthly" : "periodically"}. Earlier figures{" "}
+        {calc?.frequence_calcul === "quotidienne" ? "daily" :
+          calc?.frequence_calcul === "mensuelle" ? "monthly" : "periodically"}. Earlier figures{" "}
         <strong>are expected to change</strong> as later data arrives: a window that looked complete can be revised once
         withdrawals and re-listings are resolved. Comparisons between reports should always be read against the method
         version, printed above.
