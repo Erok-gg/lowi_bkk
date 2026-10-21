@@ -34,6 +34,23 @@ import json
 import os
 import sys
 
+# Ce test imprime des caracteres hors-ASCII dans ses messages de resultat.
+# Sans ce garde, le lancer a la main sur ce poste plantait en
+# UnicodeEncodeError : la console herite de l'ACP (cp1252), pas de l'UTF-8 --
+# defaut deja codifie par agents/tests/test_console_utf8.py (journal
+# 2026-08-22/27). Mesure le 2026-10-21 : les 28 verifications passent, mais 14
+# d'entre elles n'etaient jamais ATTEINTES depuis une console cp1252 -- le
+# plantage tombait pile a l'essai 5 sur 8, si bien que les 14 non atteintes
+# sont EXACTEMENT celles qui verifient la sonde (regle 2). Le code de sortie
+# non nul faisait de surcroit passer ce test pour un ECHEC du correctif
+# DDproperty alors qu'il le validait. La production ne voyait pas le defaut :
+# agents/core/shell.py force l'encodage des SOUS-PROCESSUS.
+for _flux in (sys.stdout, sys.stderr):
+    try:
+        _flux.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
+
 RACINE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(RACINE, "scraper"))
 
