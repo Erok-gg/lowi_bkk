@@ -5090,3 +5090,7 @@ nouveaux réglages.
 `max_nouvelles` 2000→4000 (propertyhub, hipflat), `max_pages` 150→300
 (ddproperty, propertyscout), `max_detail_visits` 1000→2000 (fazwaz) ; bandes
 `agents.json`. DDproperty vérifié en direct le 21/10 : sonde OK, 40/40, 0 erreur.
+
+### 2026-10-21 (suite) — LivingInsider remis en lane `daily`, mode « liste »
+
+Décision utilisateur, après l'entrée « LivingInsider réparé en mode liste ». `extract-livinginsider` → `lanes: ["daily"]`, motif `_repris` (le `_suspendu` reste en historique). Retour : `lanes: []`. Vérifié : `run-lane daily --all --dry-run` le liste ; `test_lanes`, `test_status_hors_lanes`, `test_fraicheur`, `test_livinginsider_cartes` passent. **Non fait** : premier run de production (au prochain cycle de nuit : ~640 nouvelles et ~25 min d'images attendues) ; aucun contournement du challenge ; les 216 loyers à prix de vente hérités du mode fiche restent en base.

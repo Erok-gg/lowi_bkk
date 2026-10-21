@@ -11,16 +11,21 @@
   "timeout_seconds": 30,
   "max_pages": 25,
   "respect_robots": true,
+  "mode": "liste",
+  "_mode_pourquoi": "2026-10-20 : 'liste' = on lit les cartes des pages de liste, aucune fiche ouverte. Mesure : fiches en 202 + x-amzn-waf-action (challenge AWS WAF) depuis le 25/09, liste location aussi le 20/10 ; liste vente en 200 avec prix/surface/chambres/SDB/etage/immeuble. 'fiche' = ancien chemin (visite de chaque fiche), sans contournement du challenge. Rollback : 'fiche'.",
   "searches": [
     {
-      "path": "/searchword_en/Condo/Buysell/{page}/property-listing-condo-for-sale.html",
+      "path_first": "/en/condo-buysell",
+      "path": "/en/condo-buysell/{page}",
       "deal_type": "sale"
     },
     {
-      "path": "/searchword_en/Condo/Rent/{page}/property-listing-condo-for-rent.html",
+      "path_first": "/en/condo-rent",
+      "path": "/en/condo-rent/{page}",
       "deal_type": "rent"
     }
   ],
+  "_searches_pourquoi": "Refonte du site vers le 17/09 : /searchword_en/Condo/<Buysell|Rent>/<n>/... sert toujours la page 1 (canonique /en/condo-buysell) et son ld+json ItemList est un bloc fige de 12 URL. Vraie pagination : /en/condo-buysell/<n> (1 599 pages en vente, flux national), 48 a 72 cartes par page dont ~7 'boostees' repetees.",
   "image": {
     "width": 1024,
     "height": 768,
