@@ -5218,3 +5218,40 @@ au-dessus du prix de marché »).
 `output/fazwaz-projets.json`, clés `raw_data.projet_*`) ;
 `scraper/config/fazwaz.json` → `projets` (`visiter`, `max_par_run` 300,
 `rafraichir_jours` 30). Retour : `"visiter": false`.
+
+## 2026-10-21 — Tension v3 : naissance par identifiant ; la liquidité retombe à 0 (à arbitrer)
+
+**Mesuré.** `first_seen` datait notre découverte : au 18/10, stock vente
+DDproperty 3 996 → 40 562 entre t−90 j et t1, FazWaz 5 753 → 13 444, dont
+10 341 et 9 024 annonces nouvelles dans des immeubles DÉJÀ suivis — un
+périmètre constant par immeuble n'aurait donc rien corrigé. Les identifiants de
+DDproperty, FazWaz, PropertyScout, PropertyHub et Nestopa sont des compteurs
+(maximum mensuel strictement croissant). Naissance = premier jour où la
+frontière d'identifiants dépasse celui de l'annonce. Validation : 99,2 % des
+`posted_at` DDproperty ≥ naissance − 2 j, écart médian 0 j (91 127 annonces).
+Retard de découverte p90 : 30 j DDproperty, 32 j FazWaz ; PropertyScout p50
+29 j, non expliqué. PropertyHub : `createdAt` cohérent avec l'ordre des
+identifiants (4,4 % d'inversions), utilisé.
+
+**Fait (config v3, commits bbc431e, 40cfc4a).** Offre au même périmètre (stock
+passé = annonces qui existaient, sources suivies à t−90 j) ; âges depuis la
+naissance, entrée sous observation à la première vue. Effet au 18/10 : offre
+Bangkok −0,99 → −0,15, écoulement inchangé, rang des districts corrélé à 0,57.
+Défaut trouvé en relisant, corrigé : Hipflat (identifiant haché) n'avait pas
+de date de début de suivi et serait entré dans l'offre comme stock nouveau.
+
+**Défaut causé par ce changement, détecté par la surveillance du jour même.**
+Recalcul v3 (fenêtre au 19/10) : scores de revente publiés **199 → 0**, tension
+à maille fine 34,2 → 29,9 %. `scores-tension` a levé `regression_publication`
+(constat haut). Diagnostic, Bangkok à prix du marché (4 530 cohortes, 172
+sorties identiques) : âge médian de sortie **34 j (v2) → 94 j (v3)** — la v2
+sous-estimait la durée d'un facteur ~3 ; effectif à risque minimal avant 90 j
+382 → 129. Par district il passe sous `risque_min` = 10 : moins de 5 districts
+publiables, plus de référence, plus de score de revente.
+
+**Non fait, et pourquoi.** Pas de retour à la v2 pour la liquidité : ce serait
+publier des durées fausses d'un facteur 3. Pas d'abaissement de `risque_min`.
+Correctif à arbitrer (méthode = décision utilisateur). Le score v2 du cycle du
+21/10 a été écrasé par le recalcul v3 (même nom de fichier, même fin de
+fenêtre). L'escalade Opus déclenchée par le constat porte la consigne « ne rien
+changer aux règles de méthode ». `created_at` PropertyScout non capté.
