@@ -440,7 +440,7 @@ Une source est écartée si elle ne retire rien alors qu'elle a au moins 200 act
 |---|---|---|---|
 | Écoulement | sorties ÷ cohortes à risque, par mois | + | 0,35 |
 | Durée | âge médian de sortie, **Kaplan-Meier avec censure et troncature à gauche** | − | 0,20 |
-| Offre | −ln(stock t ÷ stock t−90 j) | + | 0,15 |
+| Offre | −ln(stock t ÷ stock t−90 j), **même périmètre aux deux dates** (v3, voir ci-dessous) | + | 0,15 |
 | Prix | part des cohortes avec une baisse sur 30 j (−) et prix/m² à panier constant sur 90 j (+), moyennés | ± | 0,15 |
 | Vendeurs | cohortes actives par immeuble | − | 0,15 |
 
@@ -454,6 +454,19 @@ Postulat de l'utilisateur : **on revend à la valeur de marché**. Seules compte
 
 ### Prix/m² face aux comparables
 Stock actif en fin de fenêtre : immeuble tous lots, immeuble mêmes chambres et ±15 % de surface, puis 1 km et district. Médiane, p25–p75, part des comparables moins chers, verdict. Sous 5 comparables : pas de verdict.
+
+### Date de naissance d'une annonce (config v3, 2026-10-21)
+`first_seen` date notre **découverte**, pas la mise en ligne. Sur la fenêtre au 18/10, 10 % des annonces DDproperty et FazWaz ont été trouvées plus de 30 jours après leur création, et le stock en vente DDproperty passait de 3 996 à 40 562 entre t−90 j et t1, presque entièrement par rattrapage de couverture. Le signal offre lisait ça comme un marché qui s'effondre.
+
+**Méthode.** Les identifiants de DDproperty, FazWaz, PropertyScout, PropertyHub et Nestopa sont des compteurs. La **frontière** d'une source à la date d est le plus grand identifiant vu jusqu'à d. Une annonce est née le premier jour où la frontière a dépassé son identifiant, jamais après sa première vue. Hipflat (identifiant haché) garde sa première vue.
+
+**Validation.** Sur 91 127 annonces DDproperty datables, **99,2 %** ont un `posted_at` (date de remontée, donc postérieure à la création) supérieur ou égal à la naissance estimée moins 2 j, avec un écart médian de **0 j**. PropertyScout : retard médian de découverte de 29 j, non expliqué, donc datation moins éprouvée.
+
+**Usage.** (1) Offre : le stock passé compte les annonces qui **existaient** à t−90 j, même découvertes depuis, et les deux stocks ne retiennent que les sources déjà suivies à t−90 j (PropertyHub et Hipflat en sont exclues jusqu'au 2027-01-18). (2) Durée et liquidité : les âges partent de la naissance, et l'entrée sous observation est la première vue (troncature à gauche exacte). (3) Écoulement : inchangé, une sortie n'étant observable qu'après la découverte.
+
+**Effet mesuré au 18/10.** Offre Bangkok −0,99 → **−0,15**. Étendue des districts −1,40…−0,69 → −0,24…−0,09. Corrélation de rang v2/v3 : 0,57, l'ancien classement suivait la couverture. Écoulement inchangé.
+
+**Biais restant, non mesuré.** Une annonce née avant t−90 j et retirée avant qu'on la voie manque au stock passé. L'offre reste donc légèrement tirée vers « l'offre gonfle ».
 
 ### Ce que ces scores ne disent pas
 Ce sont des **prix affichés** et des **retraits d'annonces**, pas des ventes. Les poids sont des hypothèses de départ, à recalibrer par validation prédictive (le score à t annonce-t-il les baisses et les délais à t + 1 mois ?) dès 3 mois d'historique.

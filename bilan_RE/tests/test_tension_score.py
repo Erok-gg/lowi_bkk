@@ -198,6 +198,22 @@ def main():
     cfg_f["sante_sources"]["saines_forcees"][0]["jusqu_au"] = (T1 - timedelta(days=1)).isoformat()
     verifie("forçage expiré : garde-fou réarmé", not sante(saine + figee, T1, cfg_f)["figee"]["gardee"])
 
+    # 11 bis. Naissance (v3) : une annonce découverte après t−90 j mais créée
+    #     avant compte dans le stock passé ; une source suivie après t−90 j
+    #     n'entre pas dans l'offre ; sans date de création, rien ne change.
+    t_off = T1 - timedelta(days=CFG["recul_offre_jours"])
+    tard = annonce(1, condo="L", debut=T1 - timedelta(days=10))
+    f0 = coeur.faits(coeur.cohortes([copy.copy(tard)])[0], T1, CFG)
+    verifie("sans naissance : découverte tardive = offre nouvelle", not f0.active_recul)
+    tard.cree, tard.suivi_depuis = t_off - timedelta(days=30), t_off - timedelta(days=60)
+    f1 = coeur.faits(coeur.cohortes([tard])[0], T1, CFG)
+    verifie("naissance : existait à t−90 j", f1.active_recul and f1.offre_fin)
+    verifie("naissance : âge compté depuis la création", f1.age_fin >= 120, str(f1.age_fin))
+    neuve = annonce(2, condo="M", debut=T1 - timedelta(days=1), src="nouvelle")
+    neuve.suivi_depuis = T1 - timedelta(days=1)
+    f2 = coeur.faits(coeur.cohortes([neuve])[0], T1, CFG)
+    verifie("source suivie après t−90 j : hors périmètre de l'offre", not f2.offre_fin and not f2.active_recul)
+
     # 12. Rayon : 1 km autour d'un point garde le voisin à 500 m, pas celui à 3 km.
     cs = coeur.cohortes([annonce(1, condo="P", debut=T1, lat=13.7300, lng=100.5600),
                          annonce(2, condo="Q", debut=T1, lat=13.7345, lng=100.5600),

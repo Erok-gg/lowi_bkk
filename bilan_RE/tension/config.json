@@ -1,6 +1,8 @@
 {
   "_comment": "Score de tension acheteur/vendeur (0-100). Méthode : docs/methodes-calculs.md §12. Changer une valeur = incrémenter config_version : le score d'une version n'est pas comparable à celui d'une autre.",
-  "config_version": 2,
+  "config_version": 3,
+  "_config_version_3": "2026-10-21 : naissance = identifiant séquentiel (donnees.naissances). L'offre compare deux stocks au même périmètre (annonces qui EXISTAIENT à t−90 j, sources déjà suivies), les âges partent de la création. Mesuré au 18/10, Bangkok : offre −0,99 (stock ×2,7, rattrapage de couverture) → −0,15 ; écoulement inchangé. Validation : 99,2 % des posted_at DDproperty postérieurs à la création estimée (−2 j), écart médian 0 j. Scores v3 non comparables aux v2.",
+  "naissance": "identifiant",
   "_config_version_2": "2026-10-20 : sante_sources.saines_forcees (décision utilisateur « considère la base saine depuis le début »). Les scores v1 (DDproperty écarté) ne sont pas comparables aux v2.",
   "fenetre_jours": 28,
   "_fenetre": "28 j : assez pour ~3 100 sorties nettes sur Bangkok (mesuré 2026-09-14 → 10-12), assez court pour suivre l'évolution semaine par semaine.",

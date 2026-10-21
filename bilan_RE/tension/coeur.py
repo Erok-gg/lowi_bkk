@@ -63,9 +63,30 @@ class Annonce:
     prix: list[tuple[date, float]] = field(default_factory=list)   # observations datées
     annee: int | None = None              # livraison de l'IMMEUBLE (pas de l'annonce)
     charges: float | None = None          # charges de copropriété THB/m²/mois, si connues
+    # Date de CRÉATION estimée par l'identifiant séquentiel de la source
+    # (donnees.naissances) ; None = inconnue, on retombe sur `debut` (première
+    # vue). Pourquoi : `debut` date notre DÉCOUVERTE, pas la mise en ligne. Mesuré
+    # le 2026-10-21 (vente, fenêtre au 18/10) : le stock DDproperty passe de
+    # 3 996 à 40 562 entre t−90 j et t1, presque tout du rattrapage de couverture.
+    cree: date | None = None
+    # Premier jour où NOUS suivions cette source : avant, l'absence d'une
+    # annonce ne dit rien (PropertyHub et Hipflat, ajoutées le 2026-10-20).
+    suivi_depuis: date | None = None
+
+    @property
+    def naissance(self) -> date:
+        return min(self.cree, self.debut) if self.cree else self.debut
 
     def active(self, t: date) -> bool:
         return self.debut <= t and (self.fin is None or self.fin > t)
+
+    def existait(self, t: date) -> bool:
+        """En ligne à t, qu'on l'ait déjà vue ou non : sert au stock passé,
+        pas au risque de sortie (une sortie n'est observable qu'après la vue)."""
+        return self.naissance <= t and (self.fin is None or self.fin > t)
+
+    def suivie(self, t: date) -> bool:
+        return self.suivi_depuis is None or self.suivi_depuis <= t
 
     def prix_a(self, t: date) -> float | None:
         """Dernier prix observé à la date t (ou avant)."""
@@ -90,6 +111,7 @@ class Cohorte:
         self.lat = statistics.median(la) if la else None
         self.lng = statistics.median(ln) if ln else None
         self.debut = min(x.debut for x in a)
+        self.naissance = min(x.naissance for x in a)
         an = [x.annee for x in a if x.annee]
         self.annee = statistics.mode(an) if an else None
 
@@ -142,12 +164,13 @@ class Faits:
     entree: float           # âge (j) à l'entrée sous observation — troncature à gauche
     age_fin: float          # âge à la sortie ou à la censure
     active_fin: bool
-    active_recul: bool      # active à t1 − recul_offre
+    active_recul: bool      # existait à t1 − recul_offre (périmètre de l'offre)
     baisse: bool
     ratio_prix: float | None    # ln(prix/m² t1 / prix/m² t1−recul), panier constant
     prix_m2: float | None = None   # au dernier jour vu dans la fenêtre (sortie ou t1)
     age_immeuble: int | None = None
     chambres: int | None = None
+    offre_fin: bool | None = None  # active à t1, périmètre de l'offre (None = active_fin)
 
 
 def faits(c: Cohorte, t1: date, cfg: dict) -> Faits | None:
@@ -157,15 +180,22 @@ def faits(c: Cohorte, t1: date, cfg: dict) -> Faits | None:
     if not vue:
         return None
     ds = c.date_sortie(t0, t1, cfg["grace_repost_jours"])
-    entree = max(0, (t0 - c.debut).days)
+    # Âges comptés depuis la NAISSANCE ; l'entrée sous observation est la
+    # première vue (ou t0) : troncature à gauche exacte pour une annonce
+    # découverte tard. Sans `cree`, naissance = debut et rien ne change.
+    entree = max(0, (max(t0, c.debut) - c.naissance).days)
     fin = ds if ds else t1
     t_off = t1 - timedelta(days=cfg["recul_offre_jours"])
+    # Offre : même périmètre aux deux dates — seules les sources déjà suivies à
+    # t_off, et le stock passé compte les annonces qui EXISTAIENT alors.
+    off_fin = any(x.active(t1) and x.suivie(t_off) for x in c.annonces)
+    off_recul = any(x.existait(t_off) and x.suivie(t_off) for x in c.annonces)
     t_px = t1 - timedelta(days=cfg["recul_prix_jours"])
     p1, p0 = c.prix_m2(t1), c.prix_m2(t_px)
     return Faits(
         condo=c.condo, a_risque=c.active(t0), sortie=ds is not None,
-        entree=float(entree), age_fin=float(max((fin - c.debut).days, entree)),
-        active_fin=c.active(t1), active_recul=c.active(t_off),
+        entree=float(entree), age_fin=float(max((fin - c.naissance).days, entree)),
+        active_fin=c.active(t1), active_recul=off_recul, offre_fin=off_fin,
         baisse=c.active(t1) and c.a_baisse(t1 - timedelta(days=cfg["fenetre_baisses_jours"]), t1),
         ratio_prix=math.log(p1 / p0) if p1 and p0 else None,
         prix_m2=c.prix_m2(ds - timedelta(days=1)) if ds else p1,
@@ -240,7 +270,8 @@ def signaux(fs: list[Faits], cfg: dict) -> dict:
     out = {"n": n, "sorties": sorties}
     out["ecoulement"] = sorties / n * 30 / cfg["fenetre_jours"] if n else None
     out["duree"] = kaplan_meier_mediane([(f.entree, f.age_fin, f.sortie) for f in fs])
-    fin, recul = sum(f.active_fin for f in fs), sum(f.active_recul for f in fs)
+    fin = sum(f.active_fin if f.offre_fin is None else f.offre_fin for f in fs)
+    recul = sum(f.active_recul for f in fs)
     out["offre"] = -math.log(fin / recul) if fin and recul else None
     actives = [f for f in fs if f.active_fin]
     out["baisses"] = sum(f.baisse for f in actives) / len(actives) if actives else None
