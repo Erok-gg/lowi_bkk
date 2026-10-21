@@ -11,6 +11,7 @@ import json
 import os
 import sqlite3
 import statistics
+import zlib
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 
@@ -73,6 +74,19 @@ def naissances(c: sqlite3.Connection) -> tuple[dict[str, date], dict[str, date]]
         for d, n, lid in v:
             # premier jour où la frontière atteint n ; jamais après la 1re vue
             cree[lid] = min(jours[bisect.bisect_left(front, n)], d)
+    # PropertyHub n'est suivi que depuis le 2026-10-20 : la frontière ne date
+    # rien d'antérieur. Son `createdAt` (≠ `refreshed_at`, la remontée) est une
+    # vraie date de création : mesuré le 2026-10-21 sur 4 000 annonces, triées
+    # par createdAt l'identifiant ne décroît que sur 4,4 % des paires voisines.
+    for lid, raw in c.execute("select id, raw_data from listings where source = 'propertyhub'"):
+        try:
+            if isinstance(raw, bytes):
+                raw = zlib.decompress(raw).decode()
+            ca = _d((json.loads(raw or "{}").get("created_at") or "")[:10] or None)
+        except (ValueError, zlib.error, AttributeError):
+            continue
+        if ca:
+            cree[lid] = min(ca, cree.get(lid, ca))
     return cree, debut_suivi
 
 
