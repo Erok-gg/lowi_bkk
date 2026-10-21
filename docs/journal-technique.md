@@ -4908,3 +4908,144 @@ autres agents font de cette source » ; `agents/README.md` à jour.
 
 Tests : lanes, cadence, metrics, fraicheur, watch_health_mail_zero,
 watch_health_sitemap passent.
+
+## 2026-10-20/21 — Scores débloqués, calcul quotidien surveillé, veille sans trou de 24 h
+
+**Demande.** « Considère la base saine depuis le début, commence à donner des
+résultats » ; « ne pas laisser les robots sans activité plus de 24 h » ; scores
+« tous les jours à la fin des cycles », un défaut appelle la réparation.
+
+**Mesuré avant d'agir.**
+- Rien ne bloquait « 3 mois » dans le code. Les scores du 18/10 (fenêtre au
+  16/10) avaient **DDproperty écarté** (5 j sans retrait) : **0 score de revente
+  sur 4 851** lignes (« no reference yet »), tension à maille fine sur **1,6 %**.
+- Cause des nuits DDproperty sans retrait (13, 14, 15, 18/10) : `pages_lues` =
+  **6 400** exactement, soit le plafond `max_pages_recensement` (3 200 × 2 flux).
+  Parcours « partiel », donc délistage interdit. Flux location ~3 090 pages
+  (2 899 en août) ; le flux vente touche aussi le plafond certaines nuits alors
+  que son catalogue finit vers 2 600-2 970 : la détection de fin rate parfois.
+- Veille : **aucun journal du 17 au 19/10** alors que les cycles tournaient —
+  tâche `LowiBKK-VeilleClaude` en `Interactive`, muette session fermée.
+  Aucun run le 08/10 (maintenance déclarée).
+
+**Fait.**
+- `bilan_RE/tension/config.json` **v2** : `sante_sources.saines_forcees`
+  (DDproperty, FazWaz) pour les fenêtres jusqu'au 2026-10-20 ; au-delà le filtre
+  automatique reprend, la raison écartée reste tracée. Recalcul (25 min,
+  2 628 immeubles) : tension à maille fine **38,8 %**, **198** scores de revente.
+- `scores-tension` : **quotidien** (était 30 j), fichier daté par jour
+  (~9 Mo/jour), libellés « daily » dans le rapport et l'annexe. Cinq contrôles,
+  tous en constat **haut** (donc Opus via la veille) : délistage à l'arrêt
+  ≥ 3 j sur une grande source, source écartée, immeubles en erreur, fenêtre
+  périmée > 2 j, régression de publication (−15 points ou revente ÷ 2).
+- `ops/veille-cycle.py` : contrôle d'inactivité à chaque passage, même cycle
+  fini — un agent quotidien sans démarrage depuis > 24 h alors que rien ne
+  tourne → `schtasks /run LowiBKK-Agents` (≤ 1 fois / 6 h) + escalade Opus.
+  Tâche passée en **S4U** (même choix que LowiBKK-Agents). Vérifié : passage du
+  21/10 journalisé session fermée, escalade de la sonde DDproperty faite.
+- Tests : tension 40/40, veille 8/8, surveillance scores 3/3 (silence quand
+  tout va bien, alerte sur chaque défaut).
+
+**Non fait, et pourquoi.**
+- Plafond `max_pages_recensement` **non relevé** : volume de scrap = décision
+  utilisateur (4 000 pages ≈ +14 min/flux au pire). La détection de fin de
+  catalogue défaillante n'est pas diagnostiquée.
+- Délistage FazWaz par à-coups : cause non mesurée.
+- Leviers 3 (offre à périmètre constant) et 4 (score par source) : non lancés,
+  en attente d'arbitrage.
+- La veille ne réveille pas le poste (sinon réveil toutes les 30 min) : c'est
+  le réveil de 02:30 de LowiBKK-Agents qui garantit un passage par jour.
+- Les scores v2 ne sont pas comparables aux v1.
+
+## 2026-10-21 — LivingInsider réparé en mode « liste » ; scrapling face au challenge AWS WAF
+
+Demande : « réparer le scrapper et vérifier si scrapling peut nous aider ».
+Suite de l'entrée du 2026-10-20 (datation de la panne). Code touché :
+`scraper/adapters/livinginsider.py`, `scraper/config/livinginsider.json`,
+`agents/skills/extract-livinginsider/SKILL.md`, nouveau test
+`agents/tests/test_livinginsider_cartes.py`. **Rien committé, base de
+référence non touchée, `agents.json` non touché** (la source reste hors lanes).
+
+**1. Scrapling peut-il franchir le challenge ? (mesuré, une dizaine de requêtes)**
+- `StealthyFetcher` et `DynamicFetcher` de scrapling 0.4.15 **ne se chargent
+  pas** : ils importent `patchright`, absent du venv. Pas installé (changement
+  d'environnement de production, et décision de posture).
+- Même moteur testé directement (Playwright + Edge système, le Chromium
+  Playwright 1248 ne correspond pas au paquet installé, qui attend 1234) :
+  - **headless → 403 dès la page de liste**, pire que curl_cffi (le WAF
+    reconnaît le navigateur sans tête) ;
+  - **fenêtre visible → challenge résolu** : 1ʳᵉ fiche 202 puis 200 après
+    exécution du JS, cookie `aws-waf-token` posé, fiches suivantes 200 direct
+    avec le bloc « Floor Size » ; **~9 s par fiche**.
+- Donc : scrapling **aide déjà** pour le parsing (`Adaptor`, utilisé pour lire
+  les cartes) ; pour le challenge, il ne servirait qu'en **contournement
+  assumé** (navigateur, idéalement `patchright` qui masque le mode sans tête —
+  non mesuré). Coût estimé pour ~800 fiches/nuit : ~2 h à 9 s, une fenêtre de
+  navigateur sur PC2. **Non fait : c'est la décision de posture laissée à
+  l'utilisateur (règle 5).**
+
+**2. Réparation sans contournement : lecture des cartes de liste.**
+- Pagination réelle `/en/condo-buysell/<n>` (ancienne URL = toujours la p1).
+  Liste **vente en 200** ; liste **location en 202 challenge** (ancien et
+  nouveau chemin, constaté le 20/10 — le WAF s'est étendu depuis le 25/09).
+- Les cartes portent prix, surface, chambres, SDB, étage, immeuble, photo :
+  plus aucune fiche ouverte. **La dédup incrémentale devient possible**
+  (2ᵉ passage mesuré : 49/60 sautées).
+- **Filtre Bangkok** : les cartes ne disent pas où est le bien (vérifié : ni
+  province, ni district, ni payload structuré dans les 1,4–2,1 Mo). On garde
+  les immeubles déjà connus à Bangkok des autres sources (5 335 noms
+  normalisés) ; khet et coordonnées viennent de l'immeuble
+  (`raw_data.coords = "referentiel_immeuble"`).
+- Cartes « Sell&Rent » : deux prix arrondis (« ฿ 5.6M » + « ฿ 22K /mo ») →
+  deux annonces (vente + location, même id). **Seul accès aux loyers** tant que
+  la liste location est bloquée : 53 loyers sur le scan.
+- Identifiants préfixés `LV` comme en mode fiche : vérifié, les annonces
+  connues retombent sur leur ligne (8/60 au premier essai, 136 au scan complet).
+- Détection : `est_challenge()` (corps < 20 Ko contenant `awsWafCookie`) ;
+  ligne `[WAF-CHALLENGE]` au log, la recherche s'arrête net (aucune relance) ;
+  `sonder()` échoue en `[SONDE-ECHEC]` si la page 1 vente est un challenge ou
+  sans carte lisible (l'ancienne sonde se contentait de l'ItemList figé).
+- Délistage : `ids_hors_couverture()` protège tout un type d'annonce bloqué
+  (location) et les annonces dont l'immeuble n'est pas au référentiel (écrites
+  en mode fiche, invisibles ici par construction).
+- Ancien chemin conservé : `"mode": "fiche"` (rollback d'une clé). Il ne
+  contourne rien : une fiche challengée est marquée `_indisponible`.
+
+**Mesuré — scan `--full --no-images` sur une base de travail** (copie des
+9 318 lignes LivingInsider, `LOWI_OUTPUT_DIR` dans le scratchpad) :
+25 pages, **1 212 cartes distinctes, 825 retenues** (387 hors référentiel),
+**8,2 min**, 0 erreur ; 642 nouvelles, 47 prix changés, 183 délistées (vente,
+immeuble connu, absentes des 25 pages), 357 protégées ; location active
+264 → 314, rien délisté. Ventes : 950 k à 165 M THB, aucune sous 800 k. Avec
+images (essai à 60) : ~1,9 s/image, domaine `image.livinginsider.com` non
+filtré → ~25 min de plus pour ~800 nouvelles au premier passage, puis
+quelques dizaines par nuit.
+
+**Défauts trouvés en testant, corrigés :**
+- Nom d'immeuble lu « Condo » (étiquette de catégorie) sur 1 carte sur 6 :
+  le titre affiché diffère de son attribut dès qu'il y a un emoji → lecture
+  dans le DOM (bloc qui suit le titre). Retenues : 66 → 83 sur 120.
+- **49 ventes sur 801 à 2,4–119 THB** au 1ᵉʳ scan complet : prix « ฿ 5.6M »
+  lu sans son suffixe, et titres contenant « | … | ฿39.9M » découpés par le
+  séparateur « | ». → morceau de prix en plein-match avec suffixe M/K/`/mo`,
+  séparateur `\x1f`. Les deux cas sont dans le test.
+
+**Constaté, non traité :**
+- **216 lignes de location LivingInsider en base de référence portent un prix
+  de vente** (> 1 M THB, 5 actives) : héritage du mode fiche sur les annonces
+  vente-et-location (ex. `rent:LV1150013` à 119 M, 389 k en carte). Le scan les
+  corrige au passage pour celles revues ; les autres restent. Correction de
+  masse = décision de donnée.
+- 1 loyer à 48 THB sur 53 (`rent:LV3169788`) : cause non élucidée (carte non
+  sauvegardée) ; hors bornes `listings_sane`, donc hors statistiques.
+- ~8 immeubles de Bangkok réels manqués sur 120 cartes (Via Botani, Park 24,
+  Waterford Diamond, Dusit Residences…), absents du référentiel. Les ajouter
+  à la main ou par géocodage = à arbitrer.
+- La fenêtre de 25 pages sur un flux national trié par « boost » continue de
+  délister ce qui sort de la fenêtre (~180/nuit) : même biais qu'en mode fiche,
+  non corrigé.
+- Le chronomètre classe les pages de liste en `attente_fiche` (motif d'URL
+  dans `fetch.py`, non touché) — cosmétique.
+- **Remise en lane** (`agents.json`, `lanes: []` + `_suspendu`) **non faite** :
+  le fichier porte des modifications non committées d'autres séances, et la
+  reprise est une décision utilisateur. Premier run de production non lancé.
