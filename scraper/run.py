@@ -288,7 +288,12 @@ def main() -> None:
                     # `_sans_image` : la liste montre que la source n'a AUCUNE photo
                     # (Hipflat, ~1 carte sur 3 au test du 2026-10-20) — sans ce
                     # drapeau, la fiche serait rouverte à chaque run pour rien.
-                    and (store.has_images(lid) or stub.get("_sans_image"))):
+                    and (store.has_images(lid) or stub.get("_sans_image")
+                         # `image.retenter: false` (PropertyHub) : la couverture
+                         # morte (403 S3, 29/82 mesurées) ne ressuscite pas ; la
+                         # retenter rouvrirait l'annonce à chaque run, pour ~50 000
+                         # requêtes inutiles par passage une fois le stock rattrapé.
+                         or not cfg.get("image", {}).get("retenter", True))):
                 store.touch_listing(lid)
                 n_unchanged += 1
                 n_skipped += 1

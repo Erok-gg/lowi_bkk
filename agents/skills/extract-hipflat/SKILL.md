@@ -44,3 +44,23 @@ lu par les deux bouts (`price_asc`, `price_desc`). Au plus `max_nouvelles`
 - ~1 carte sur 3 sans photo (placeholder) : drapeau `_sans_image`, pas de
   réouverture de fiche.
 - Nom d'immeuble absent si la fiche n'a pas de lien `/en/projects/`.
+
+## Ce que les autres agents font de cette source (vérifié le 2026-10-20)
+- **watch-health** : bandes `nouvelles` 1–4500 lues dans `agents.json`.
+  Pendant le rattrapage, `nouvelles` plafonne au budget (≈ 4 000) ; une fois
+  le stock rattrapé, le flux retombe et le verdict `derive` (medium, sans
+  mail) peut sortir quelques runs, le temps que la médiane suive.
+- **fraîcheur** (`ops/fraicheur.py`) : fenêtre de confirmation dérivée de
+  `every_days` → 96 h pour une cadence de 3 j (48 h pour les quotidiennes).
+- **remonter-supabase** : source **exclue** (`--exclure-sources`), décision
+  utilisateur du 2026-10-20 ; ses lignes gardent `dirty_since`.
+- **scores-tension** : exclusion manuelle « rattrapage » dans
+  `bilan_RE/tension/config.json` — une source partie de 0 ne déclenche
+  aucune règle automatique de santé.
+- **study / bilan acheteur** : lisent la base locale sans filtre de source —
+  la source entre dans les médianes dès la première nuit (rupture de série à
+  arbitrer).
+- **organize** : paires candidates formées **à l'intérieur** d'une source ; les
+  doublons inter-sources ne sont pas traités.
+- **watch-health, images** : seuil par défaut (10) ; les cartes sans photo
+  portent `_sans_image` et ne sont jamais téléchargées.

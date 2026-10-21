@@ -49,6 +49,16 @@
     "_sante": "Une source est écartée d'une fenêtre si : aucun retrait alors qu'elle a >= 200 actives ; >= 5 jours consécutifs sans retrait en fin de fenêtre (DDproperty à l'arrêt depuis le 13/10) ; stock en hausse de plus de 50 % sur la fenêtre (recensement, pas marché).",
     "exclusions_manuelles": [
       {
+        "source": "propertyhub",
+        "depuis": "2026-10-20",
+        "raison": "rattrapage du stock initial (max_nouvelles 2 000/run) : le stock part de 0, aucune regle automatique ne se declenche (actives_debut = 0)"
+      },
+      {
+        "source": "hipflat",
+        "depuis": "2026-10-20",
+        "raison": "rattrapage du stock initial (max_nouvelles 2 000/run) : le stock part de 0, aucune regle automatique ne se declenche (actives_debut = 0)"
+      },
+      {
         "source": "livinginsider",
         "depuis": "2026-09-16",
         "raison": "AWS WAF : plus aucune fiche lue"

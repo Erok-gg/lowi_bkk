@@ -26,6 +26,8 @@
     "format": "webp",
     "quality": 80,
     "max_per_listing": 1,
+    "retenter": false,
+    "_retenter_pourquoi": "2026-10-20 : ~35 % des couvertures renvoient 403 (S3 AccessDenied, 29/82 mesure ; le site construit la meme URL). true = l annonce sans photo est rouverte a chaque run (dedup exige une image).",
     "telecharger": true,
     "televerser": false
   }

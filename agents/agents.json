@@ -281,8 +281,13 @@
         "traces_erreur": [
           0,
           5
+        ],
+        "erreurs_images": [
+          0,
+          2500
         ]
-      }
+      },
+      "_erreurs_images_pourquoi": "Couvertures absentes du CDN (S3 AccessDenied, le site construit la meme URL) : 29/82 = 35 % sur 3 echantillons du 2026-10-20 (6/25, 9/30, 14/27). Jusqu'a ~1 400 echecs pour 4 000 nouvelles ; au-dela de 2 500 (~62 %), watch-health releve images_perdues."
     },
     {
       "name": "extract-hipflat",

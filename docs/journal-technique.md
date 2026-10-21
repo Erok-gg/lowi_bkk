@@ -4849,3 +4849,62 @@ annonces / 138 004 actives · **0 délistage à tort** · sauvegarde clé du 20/
   élaguée : 10 pages, pas 2 600.
 
 Compte rendu détaillé : [agents/audits/reparations-2026-10-21.md](../agents/audits/reparations-2026-10-21.md) (§ « Seconde passe »).
+
+## 2026-10-20 (suite) — PropertyHub / Hipflat : ce que les agents en aval savaient (ou pas) de ces sources
+
+**Demande** : vérifier que les agents connectés aux nouvelles sources ont les
+bonnes consignes. Revue de tout ce qui lit la base ou le ledger par source.
+**Quatre défauts trouvés, tous corrigés** — chacun aurait crié au loup ou
+faussé un chiffre dès les premières nuits :
+
+1. **`ops/fraicheur.py`** jugeait toutes les sources sur 48 h. En
+   `every_days: 3`, la part confirmée oscille 100 % → ~0 % entre deux
+   passages : deux nuits sur trois sous la moitié de la médiane, alerte
+   garantie sur une cadence voulue (règle 2). → fenêtre **par source** =
+   `(every_days + 1) × 24 h`, plancher 48 h, lue dans `agents.json`. Vérifié :
+   96 h pour les deux nouvelles, **48 h inchangé** pour les 5 autres (relevé
+   réel : ddproperty 91,5 %, fazwaz 100 %, propertyscout 100 %, nestopa 18,9 %).
+2. **`watch-health`** relève `images_perdues` dès 10 échecs d'image, pour toute
+   source. Or **29/82 = 35 %** des couvertures PropertyHub sont absentes du CDN
+   (réponse S3 `AccessDenied`, sur 3 échantillons : 6/25, 9/30, 14/27 ; la page
+   détail renvoie les mêmes fichiers morts, le site construit la même URL) —
+   ~1 400 échecs attendus pour 4 000 nouvelles. → bande optionnelle
+   `bandes.erreurs_images` par agent (PropertyHub : 0–2 500, soit ~62 %), défaut
+   10 conservé. Vérifié : 900 échecs → `ok` ; 2 000 → `images_perdues` ;
+   autre source, 12 → `images_perdues` comme avant.
+3. **Couvertures mortes retentées à chaque run** : la dédup exige une image en
+   base, donc chaque annonce sans photo était rouverte à chaque passage —
+   ~50 000 requêtes inutiles par passage une fois le stock rattrapé. →
+   `image.retenter: false` (config PropertyHub), respecté par `run.py`.
+   Vérifié : 13/13 annonces connues en dédup au passage suivant.
+4. **`scores-tension`** : une source qui part de 0 annonce ne déclenche
+   **aucune** règle de santé (`actives_debut = 0` → ni « aucun retrait » ni
+   « stock +50 % ») et serait **gardée** dans les scores pendant son
+   rattrapage. → exclusion manuelle « rattrapage » des deux sources dans
+   `bilan_RE/tension/config.json` (miroir de la décision prise pour Supabase).
+   À lever en même temps que l'exclusion de la remontée.
+
+**Vérifié sans défaut** : `organize` forme ses paires **à l'intérieur** d'une
+source (rien de spécifique à faire) ; `agents/core/metrics.py` agrège bien le
+`then` (vente + location) ; `watch-health` lit les bandes `nouvelles` dans
+`agents.json`. SKILL.md des deux agents complétés d'une section « ce que les
+autres agents font de cette source » ; `agents/README.md` à jour.
+
+**Signalé, non modifié (règle 5)** :
+- `study/run_study.py` et le bilan acheteur lisent la base locale **sans
+  filtre de source** : les deux sources entrent dans les médianes dès la
+  première nuit, à un volume qui croît de ~4 000 annonces par passage pendant
+  des semaines — rupture de série. Exclure, pondérer ou marquer la rupture est
+  une décision de méthode.
+- `watch-health` sortira probablement `derive` (medium, sans mail) quelques
+  runs quand le rattrapage finira et que `nouvelles` retombera sous 25 % de sa
+  médiane — attendu, non corrigé.
+- Annonces Hipflat dans une tranche de prix jamais affichée : ni confirmées
+  ni délistées, leur part « fraîche » restera structurellement plus basse
+  (stable, donc la médiane relative la tolère).
+- `bilan_RE/web/lib/rapport.ts` (`PORTAILS`) n'accepte pas encore d'URL
+  PropertyHub/Hipflat en entrée du bilan : c'est une fonction produit, hors
+  périmètre des agents.
+
+Tests : lanes, cadence, metrics, fraicheur, watch_health_mail_zero,
+watch_health_sitemap passent.

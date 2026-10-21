@@ -110,23 +110,51 @@ def _sources_suspendues() -> set[str]:
     return out
 
 
+def _fenetres() -> dict[str, int]:
+    """Fenêtre de confirmation PAR SOURCE, en heures : (every_days + 1) × 24,
+    jamais moins de FENETRE_H.
+
+    Ajouté le 2026-10-20 avec PropertyHub et Hipflat, en `every_days: 3`. Avec
+    48 h pour tout le monde, leur part confirmée oscille 100 % → ~0 % entre deux
+    passages : deux nuits sur trois sous la moitié de leur médiane, alerte
+    garantie sur une cadence voulue (règle 2). La fenêtre suit la cadence
+    déclarée ; les sources quotidiennes gardent 48 h, inchangé."""
+    try:
+        registre = json.loads((ROOT / "agents" / "agents.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    out: dict[str, int] = {}
+    for a in registre.get("agents", []):
+        cmd = a.get("cmd") or []
+        if a.get("famille") == "Extraction" and "--source" in cmd:
+            i = cmd.index("--source")
+            if i + 1 < len(cmd):
+                jours = float(a.get("every_days") or 1)
+                out[cmd[i + 1]] = max(FENETRE_H, int((jours + 1) * 24))
+    return out
+
+
 def _maintenant() -> datetime:
     return datetime.now(timezone.utc)
 
 
 def mesurer() -> dict:
     """Relevé du jour : par source, la part d'actives confirmées récemment."""
-    seuil = (_maintenant() - timedelta(hours=FENETRE_H)).isoformat()
+    fenetres = _fenetres()
     releve = {"mesure_a": _maintenant().isoformat(timespec="seconds"),
               "fenetre_h": FENETRE_H, "sources": {}}
     cx = sqlite3.connect(f"file:{BASE}?mode=ro", uri=True, timeout=60)
     try:
-        for source, actives, frais in cx.execute(
-                "select source, count(*), "
-                "sum(case when last_seen >= ? then 1 else 0 end) "
-                "from listings where status='active' group by source", (seuil,)):
+        for source, actives in cx.execute(
+                "select source, count(*) from listings where status='active' "
+                "group by source").fetchall():
+            h = fenetres.get(source, FENETRE_H)
+            seuil = (_maintenant() - timedelta(hours=h)).isoformat()
+            frais = cx.execute(
+                "select count(*) from listings where status='active' and source=? "
+                "and last_seen >= ?", (source, seuil)).fetchone()[0]
             releve["sources"][source] = {
-                "actives": actives, "frais": frais or 0,
+                "actives": actives, "frais": frais or 0, "fenetre_h": h,
                 "pct": round(100 * (frais or 0) / actives, 1) if actives else 0.0}
     finally:
         cx.close()
@@ -267,7 +295,7 @@ def verifier(chute: float = CHUTE_ALERTE) -> int:
             if cour["pct"] < med * chute:
                 _crier(
                     f"fraicheur_effondree_{source}",
-                    f"{source} : {cour['pct']} % d'actives confirmées < {FENETRE_H} h "
+                    f"{source} : {cour['pct']} % d'actives confirmées < {cour.get('fenetre_h', FENETRE_H)} h "
                     f"(médiane habituelle {med:.1f} %)",
                     f"{source} tient {cour['actives']} annonces pour actives, mais "
                     f"seules {cour['frais']} ({cour['pct']} %) ont été confirmées "
