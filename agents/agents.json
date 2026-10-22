@@ -350,9 +350,11 @@
         "scraper/run.py",
         "--source",
         "dotproperty",
+        "--deal-type",
+        "sale",
         "--full",
         "--jusqua",
-        "02:00",
+        "23:30",
         "--store",
         "sqlite"
       ],
@@ -360,13 +362,29 @@
       "bandes": {
         "nouvelles": [
           1,
-          6500
+          12000
         ],
         "traces_erreur": [
           0,
           5
         ]
-      }
+      },
+      "then": [
+        [
+          "@py",
+          "scraper/run.py",
+          "--source",
+          "dotproperty",
+          "--deal-type",
+          "rent",
+          "--full",
+          "--jusqua",
+          "02:00",
+          "--store",
+          "sqlite"
+        ]
+      ],
+      "_then_pourquoi": "2026-10-22 : sans limite de nouvelles annonces, un run unique passerait la nuit sur les ventes et n'atteindrait jamais les locations. Vente 21:00-23:30, location jusqu'a 02:00 (environ 2 h 30 chacune)."
     },
     {
       "name": "extract-livinginsider",

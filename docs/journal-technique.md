@@ -5312,3 +5312,35 @@ exclusion `remonter-supabase`), `ops/install-soir-task.ps1` (tâche
 `LowiBKK-Soir`, `WakeToRun`, sans `StartWhenAvailable`),
 `agents/tests/test_lanes.py` (lane annexe déclarée + garde-veille),
 `bilan_RE/tension/config.json`, `lib/sources.ts`, `ops/verifie-synchro.py`.
+
+## 2026-10-22 (suite) — DotProperty : le maximum d'annonces dès cette nuit
+
+### 1. Causes
+Demande : profiter de toute la fenêtre de cette nuit pour rapporter le plus
+d'annonces DotProperty possible.
+
+### 2. Conséquences
+- La limite de 3 000 nouvelles annonces par soir est levée : seule l'heure
+  d'arrêt borne désormais le travail.
+- La nuit est partagée : **ventes de 21:00 à 23:30, locations de 23:30 à
+  02:00**. Sans ce partage, la soirée entière passerait sur les ventes et les
+  locations ne seraient jamais lues.
+- Attendu (estimé à ~3 secondes par nouvelle annonce, d'après l'essai du
+  jour) : de l'ordre de **3 000 ventes et 3 000 locations**, soit ~6 000
+  annonces cette nuit, au lieu de 3 000.
+- Aucun délistage DotProperty tant que les listes ne sont pas lues en entier
+  dans leur créneau.
+
+### 3. Plan
+Fait. À relire demain matin : nombre réel d'annonces rapportées pour chaque
+type, et heure d'arrêt effective. Pour revenir à une limite : remettre 3 000
+dans la configuration.
+
+### 4. Méthode
+Simulation de la lane du soir : vente puis location, avec leurs heures
+d'arrêt. Test des lanes passé.
+
+### Références techniques
+`scraper/config/dotproperty.json` (`max_nouvelles` 50000) ; `agents/agents.json`,
+`extract-dotproperty` : `cmd` vente `--jusqua 23:30`, `then` location
+`--jusqua 02:00`, bande `nouvelles` 1–12000.
