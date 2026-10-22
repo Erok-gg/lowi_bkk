@@ -382,6 +382,160 @@ def _ventes_portail(c, ann: dict, aujourdhui: date) -> dict | None:
     return out
 
 
+#: Mention de rénovation dans le titre ou la description d'une annonce.
+#: 1,5 % des locations actives la portent (1 038 / 70 591, mesure du 2026-10-22).
+RENOVE_RE = re.compile(r"\brenovat(?:ed|ion)\b|\bremodel(?:l)?ed\b|รีโนเวท", re.I)
+#: Tranches d'étage affichées à titre indicatif. L'étage ne PONDÈRE pas
+#: l'estimation : à immeuble et chambres égaux, son effet mesuré est
+#: négligeable (+0,09 % du loyer/m² par étage en médiane, 396 groupes,
+#: écart interquartile −0,21 / +0,47 %, mesure du 2026-10-22).
+TRANCHES_ETAGE = ((1, 9, "1-9"), (10, 24, "10-24"), (25, 200, "25+"))
+
+
+def _locations(c, ann: dict, cfg: dict, rayon: bool = False) -> list[tuple]:
+    """Locations actives de l'immeuble (ou du rayon), copies comptées une fois :
+    (loyer, surface, chambres, étage, rénovée)."""
+    b = cfg["bornes_loyer"]
+    sel = ("select price, area_sqm, bedrooms, d_etage, title, description, lat, lng, condo_norm from listings {idx} "
+           "where deal_type = 'rent' and status = 'active' and price between ? and ? "
+           "and area_sqm between ? and ? ")
+    bornes = (b["loyer_min"], b["loyer_max"], b["surface_min"], b["surface_max"])
+    if not rayon:
+        rows = c.execute(sel.format(idx="indexed by idx_listings_condo_norm") + "and condo_norm = ?",
+                         (*bornes, ann["cle"])).fetchall()
+    else:
+        if ann["lat"] is None:
+            return []
+        dl = cfg["rayon_km"] / 111.0
+        rows = [r for r in c.execute(sel.format(idx="") + "and lat between ? and ? and lng between ? and ?",
+                                     (*bornes, ann["lat"] - dl, ann["lat"] + dl,
+                                      ann["lng"] - dl, ann["lng"] + dl)).fetchall()
+                if coeur.distance_km(ann["lat"], ann["lng"], r[6], r[7]) <= cfg["rayon_km"]]
+    u = {}
+    for p, s, ch, et, ti, de, _, _, cn in rows:
+        renove = bool(RENOVE_RE.search(f"{ti or ''} {de or ''}"))
+        u.setdefault((cn, ch, round(s), et, round(p, -2)), (p, s, ch, et, renove, cn))
+    return list(u.values())
+
+
+def _loyer_estime(c, ann: dict, cfg: dict) -> dict | None:
+    """Loyer que le futur propriétaire peut demander pour CE lot.
+
+    Méthode retenue après essai sur 4 000 locations réelles (2026-10-22) : le
+    loyer au m² des locations de même immeuble, même nombre de chambres et
+    surface à ±15 %, multiplié par la surface du lot — erreur médiane 8,2 %
+    (80 % des cas sous 16,9 %). Le loyer médian de même taille sans passer par
+    le m² fait 8,3 %, le m² de tout l'immeuble 8,8 %. Repli, dans l'ordre :
+    immeuble entier (9,8 %), puis même chambres et taille dans le rayon (non
+    testé, confiance basse)."""
+    surf, ch = ann["surface"], ann["chambres"]
+    if not surf:
+        return None
+    meme = lambda x: x[2] == ch and abs(x[1] - surf) <= TOL_SURFACE * surf
+    imm = _locations(c, ann, cfg)
+    niveaux = [("building_same", "Same building, same bedrooms and size", [x for x in imm if meme(x)], "high"),
+               ("building", "Same building, all units", imm, "medium")]
+    choix = next(((k, nom, v, conf) for k, nom, v, conf in niveaux if len(v) >= MIN_COMPARABLES), None)
+    if not choix:
+        proches = [x for x in _locations(c, ann, cfg, rayon=True) if meme(x)]
+        if len(proches) >= MIN_COMPARABLES:
+            choix = ("radius_same", f"Within {cfg['rayon_km']:g} km, same bedrooms and size", proches, "low")
+    if not choix:
+        return {"statut": "not enough comparables", "n_immeuble": len(imm)}
+    cle, nom, v, conf = choix
+    m2 = sorted(x[0] / x[1] for x in v)
+    q = statistics.quantiles(m2, n=4)
+    med = statistics.median(m2)
+    loyer = med * surf
+    etages = []
+    for lo, hi, lib in TRANCHES_ETAGE:
+        t = [x[0] / x[1] for x in v if x[3] is not None and lo <= x[3] <= hi]
+        etages.append({"tranche": lib, "n": len(t),
+                       "loyer": statistics.median(t) * surf if len(t) >= 3 else None})
+    return {"statut": "ok", "niveau": cle, "libelle": nom, "confiance": conf, "n": len(v),
+            "loyer_m2": med, "loyer": loyer, "fourchette": [q[0] * surf, q[2] * surf],
+            "rendement_brut": loyer * 12 / ann["prix"] if ann["prix"] else None,
+            "etage_lot": ann["etage"], "par_etage": etages,
+            "note": "Floor has little effect on rent per m² in our data; shown for information only."}
+
+
+def _renovation(c, ann: dict, cfg: dict) -> dict | None:
+    """Combien d'annonces semblables se disent rénovées, et le loyer s'en
+    ressent-il ? Même immeuble et chambres d'abord, sinon même chambres dans le
+    rayon. À l'échelle de Bangkok l'effet médian est nul (+0,2 %, 134 groupes
+    comparables, mesure du 2026-10-22) mais dépasse +10 % dans 37 d'entre eux :
+    c'est une question d'immeuble, d'où un calcul par immeuble."""
+    ch = ann["chambres"]
+    r = cfg["renovation"]
+    seuil = r["prime_sensible"]
+
+    def prime_immeuble(v):
+        oui = [x[0] / x[1] for x in v if x[4]]
+        non = [x[0] / x[1] for x in v if not x[4]]
+        if len(oui) >= r["min_renovees"] and len(non) >= r["min_autres"]:
+            return statistics.median(oui) / statistics.median(non) - 1
+        return None
+
+    verdict = lambda p: ("renovation lifts the rent noticeably" if p >= seuil
+                         else "renovation does not lift the rent noticeably")
+    imm = [x for x in _locations(c, ann, cfg) if x[2] == ch]
+    if imm:
+        p = prime_immeuble(imm)
+        n_ren = sum(1 for x in imm if x[4])
+        if p is not None or n_ren >= r["min_renovees"]:
+            return {"niveau": "building", "libelle": "Same building, same bedrooms", "n": len(imm),
+                    "n_renovees": n_ren, "part": n_ren / len(imm), "prime": p, "n_immeubles": 1,
+                    "verdict": verdict(p) if p is not None else "not enough renovated units to compare"}
+    # Rayon : JAMAIS rénovées contre non rénovées toutes adresses confondues.
+    # Essai du 2026-10-22 : −32 % et −34 % sur deux immeubles, parce que les
+    # rénovées sont surtout dans les immeubles anciens, moins chers. On compare
+    # dans chaque immeuble du rayon, puis on prend la médiane de ces écarts.
+    zone = [x for x in _locations(c, ann, cfg, rayon=True) if x[2] == ch]
+    if not zone:
+        return None
+    par = defaultdict(list)
+    for x in zone:
+        par[x[5]].append(x)
+    primes = [p for p in (prime_immeuble(v) for v in par.values()) if p is not None]
+    n_ren = sum(1 for x in zone if x[4])
+    out = {"niveau": "radius", "libelle": f"Within {cfg['rayon_km']:g} km, same bedrooms", "n": len(zone),
+           "n_renovees": n_ren, "part": n_ren / len(zone), "prime": None, "n_immeubles": len(primes),
+           "verdict": "not enough renovated units to compare"}
+    if len(primes) >= r["min_immeubles_rayon"]:
+        out["prime"] = statistics.median(primes)
+        out["verdict"] = verdict(out["prime"])
+    return out
+
+
+def _frais_achat(ann: dict, cfg: dict) -> dict | None:
+    """Frais d'une acquisition en Thaïlande, sur le prix demandé.
+
+    Règles du Department of Lands et du Revenue Department, telles que
+    pratiquées (le partage acheteur / vendeur est un USAGE, négociable). Les taux
+    vivent dans config.json (`frais_achat`). La base légale est la valeur
+    d'expertise du Department of Lands, inconnue ici et en général inférieure au
+    prix : calculés sur le prix, les montants sont donc un plafond. À faire
+    valider par un avocat thaï (journal-juridique)."""
+    p = ann["prix"]
+    if not p:
+        return None
+    f = cfg["frais_achat"]
+    lignes = []
+    for x in f["lignes"]:
+        taux = x.get("taux")
+        lignes.append({"poste": x["poste"], "taux": taux,
+                       "montant": round(p * taux) if taux is not None else None,
+                       "montant_min": x.get("montant_min"), "montant_max": x.get("montant_max"),
+                       "payeur": x["payeur"], "note": x.get("note"),
+                       "etrangers_seulement": x.get("etrangers_seulement", False),
+                       "cas": x.get("cas", "always")})
+    acheteur = sum(l["montant"] for l in lignes if l["payeur"] == "buyer" and l["cas"] == "always"
+                   and l["montant"] is not None)
+    return {"base": p, "lignes": lignes, "total_acheteur": acheteur,
+            "total_acheteur_pct": acheteur / p,
+            "avertissement": f["avertissement"]}
+
+
 def construire(url: str, db: str = DB) -> dict:
     cfg = config()
     c = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
@@ -441,6 +595,11 @@ def construire(url: str, db: str = DB) -> dict:
             "sorties_prix": immeuble.sorties_au_meme_prix(c, ann, cfg, aujourdhui),
             "mois_de_stock": immeuble.mois_de_stock_serie(c, ann, cfg, aujourdhui),
             "tension": tension, "liquidite": liquidite,
+            # calculés pour tous ; la page n'affiche loyer et rénovation qu'au
+            # profil « investisseur » (menu de la page d'accueil)
+            "loyer_estime": _loyer_estime(c, ann, cfg),
+            "renovation": _renovation(c, ann, cfg),
+            "frais_achat": _frais_achat(ann, cfg),
             "scores_calcul": {k: (sc or {}).get(k) for k in ("fin_fenetre", "calcule_le", "frequence_calcul",
                                                              "config_version", "sources_gardees")},
             "drapeaux": _drapeaux(c, ann, comp, hist, chg, (en_vente, max(recenses, en_vente)))}

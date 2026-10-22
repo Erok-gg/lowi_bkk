@@ -41,6 +41,22 @@ export const EXPLICATIONS = {
     "Automatic checks: a price per m² more than 40% below the building (often an error, leasehold or a bait listing); a " +
     "unit in the Thai quota, which a foreigner cannot own freehold in their own name; a quota not stated; sources that " +
     "disagree on the completion year; an area that is very small for the number of bedrooms.",
+  loyer:
+    "We take the units for rent right now in the same building with the same number of bedrooms and a size within ±15%, " +
+    "compute their rent per m², and apply the median to this unit's size. Without 5 such units we use the whole building, " +
+    "then units of the same bedrooms and size within 1 km. Tested on 4,000 current rentals, the first method lands within " +
+    "8% of the advertised rent in half of the cases and within 17% in 80% of them. The range is the middle half of the " +
+    "comparables. Floor is shown for information: in our data it barely changes the rent per m² within a building. " +
+    "Gross yield is twelve months of rent divided by the asking price, before fees, vacancy and tax.",
+  renovation:
+    "We count the comparable rentals whose title or description says the unit was renovated. To tell whether renovation " +
+    "lifts the rent, we only compare renovated and other units inside the same building, because renovated units are " +
+    "mostly found in older, cheaper buildings. Around this unit, we take the median of these within-building gaps. We call " +
+    "the effect noticeable from +10% of rent per m².",
+  frais:
+    "Thai transfer costs, applied to the asking price. By law they are computed on the Land Department's appraised value, " +
+    "which is usually lower: these amounts are therefore a ceiling. Who pays what is a custom, not a rule, and is set in " +
+    "the sale agreement. Check with a Thai lawyer before signing.",
   limites:
     "This report uses asking prices and listing exits observed on publicly available sources, not land-office transactions. " +
     "A listing that leaves the market may have sold, been rented out or been withdrawn. Market scores are recalculated " +

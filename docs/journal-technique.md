@@ -5344,3 +5344,57 @@ d'arrêt. Test des lanes passé.
 `scraper/config/dotproperty.json` (`max_nouvelles` 50000) ; `agents/agents.json`,
 `extract-dotproperty` : `cmd` vente `--jusqua 23:30`, `then` location
 `--jusqua 02:00`, bande `nouvelles` 1–12000.
+
+## 2026-10-22 (suite) — Bilan acheteur : loyer estimé et rénovation pour les investisseurs, frais d'achat pour tous
+
+### 1. Causes
+Demande : quand la personne choisit « I invest in properties » sur la page
+d'accueil, le bilan doit estimer le loyer qu'elle pourra demander et dire si
+une rénovation fait monter le loyer. Pour tout le monde, un bloc de frais
+d'achat.
+
+### 2. Conséquences
+- **Loyer estimé.** Calculé à partir des locations du même immeuble, de même
+  taille et de même nombre de chambres. Testé sur 4 000 locations réelles : il
+  tombe à moins de 8 % du loyer affiché dans la moitié des cas, à moins de
+  17 % dans 80 % des cas. Rendement brut affiché.
+- **Étage.** Il est montré par tranches mais ne change pas l'estimation :
+  dans nos données, à immeuble égal, il ne fait presque pas varier le loyer au
+  m² (moins de 1 % pour dix étages).
+- **Rénovation.** On compte les annonces comparables qui se disent rénovées et
+  on compare leur loyer à celui des autres, **dans le même immeuble
+  seulement**. Une première version comparait tout le quartier et trouvait
+  −32 % : les logements rénovés sont surtout dans les immeubles anciens, moins
+  chers. Corrigé avant livraison.
+- **Frais d'achat.** Taux légaux appliqués au prix demandé, avec qui paie
+  d'habitude. Ce sont des plafonds (la loi part d'une valeur d'expertise en
+  général plus basse). Exemple : 1 % pour l'acheteur dans le cas courant.
+- Le profil est gardé dans le navigateur ; le même rapport montre donc les
+  blocs investisseur à une personne et pas à une autre.
+
+### 3. Plan
+- Fait : calculs, affichage page et PDF, lecture des menus d'accueil, test des
+  frais, méthode documentée.
+- À décider : le seuil de 10 % qui fait dire « la rénovation augmente
+  sensiblement le loyer » (proposé, pas arbitré).
+- À faire valider : les frais d'achat, par un avocat thaï (consigné au
+  journal juridique).
+- Non fait : traduction thaï / chinois des nouveaux blocs (en anglais, comme
+  le reste du rapport) ; les rapports déjà calculés n'ont pas les nouveaux
+  blocs tant qu'ils ne sont pas recalculés.
+
+### 4. Méthode
+Mesures sur les 70 591 locations actives (étage, rénovation), essai de quatre
+façons d'estimer un loyer sur 4 000 locations tirées au hasard, trois bilans
+générés sur de vraies annonces, puis la page affichée avec les deux profils :
+le profil investisseur montre loyer et rénovation, l'autre non ; les frais
+apparaissent dans les deux. Vérification de types et tests du moteur passés.
+
+### Références techniques
+`bilan_RE/tension/rapport.py` (`_loyer_estime`, `_renovation`, `_frais_achat`,
+`_locations`), `bilan_RE/tension/config.json` (`bornes_loyer`, `renovation`,
+`frais_achat`), `bilan_RE/web/components/Report.tsx` (`LoyerBloc`,
+`RenovationBloc`, `FraisBloc`), `bilan_RE/web/lib/profil.ts` (cookie
+`lowi_profil`), `bilan_RE/web/lib/types.ts`, `explications.tsx`,
+`AnalyseForm.tsx`, `app/beta/page.tsx`, `app/beta/r/[id]/page.tsx` et `pdf/`,
+`bilan_RE/tests/test_frais_achat.py`, `docs/methodes-calculs.md` §13.

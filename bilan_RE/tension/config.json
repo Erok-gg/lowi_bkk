@@ -104,6 +104,42 @@
     ]
   },
   "rayon_km": 1.0,
+  "bornes_loyer": {
+    "loyer_min": 3000,
+    "loyer_max": 500000,
+    "surface_min": 15,
+    "surface_max": 500,
+    "_bornes_loyer": "Alignées sur lib/market-bounds.ts (loyer 3 k–500 k, surface 15–500 m²) — ne pas diverger."
+  },
+  "renovation": {
+    "prime_sensible": 0.10,
+    "min_renovees": 2,
+    "min_autres": 3,
+    "min_immeubles_rayon": 3,
+    "_renovation": "2026-10-22, PROPOSÉ (règle 5, à arbitrer) : la rénovation « augmente sensiblement le loyer » si le loyer/m² médian des annonces rénovées dépasse de 10 % celui des autres, à immeuble et chambres égaux, avec au moins 2 rénovées et 3 autres. Mesure du jour : effet médian +0,2 % sur 134 groupes, > +10 % dans 37."
+  },
+  "frais_achat": {
+    "_frais_achat": "2026-10-22. Taux légaux du Department of Lands et du Revenue Department ; partage acheteur/vendeur = usage courant, négociable. Base légale = valeur d'expertise (inconnue, en général inférieure au prix) : calculé sur le prix demandé, donc un plafond. À FAIRE VALIDER par un avocat thaï (bilan_RE/docs/journal-juridique.md).",
+    "avertissement": "Indicative estimate on the asking price. Official fees are based on the Land Department's appraised value, usually lower. Who pays what is a custom and can be negotiated. Check with a Thai lawyer before signing.",
+    "lignes": [
+      {"poste": "Transfer fee (half of 2%)", "taux": 0.01, "payeur": "buyer",
+       "note": "2% of the appraised value, usually split 50/50 between buyer and seller."},
+      {"poste": "Transfer fee (seller's half)", "taux": 0.01, "payeur": "seller", "cas": "negotiated",
+       "note": "Sometimes paid in full by the buyer: check the sale agreement."},
+      {"poste": "Specific business tax", "taux": 0.033, "payeur": "seller", "cas": "negotiated",
+       "note": "If the seller has owned the unit for less than 5 years (otherwise stamp duty 0.5%). Usually the seller's cost; a 'net price' deal can shift it to the buyer."},
+      {"poste": "Withholding tax", "taux": null, "payeur": "seller", "cas": "negotiated",
+       "note": "Seller's income tax, depends on how long they owned the unit and on the appraised value."},
+      {"poste": "Mortgage registration", "taux": null, "payeur": "buyer", "cas": "mortgage",
+       "note": "1% of the loan amount, only if you borrow in Thailand."},
+      {"poste": "Foreign exchange transaction form", "taux": null, "payeur": "buyer", "cas": "foreigner", "etrangers_seulement": true,
+       "note": "Funds must come from abroad in foreign currency to register a foreign-quota unit. Small bank fee."},
+      {"poste": "Sinking fund", "taux": null, "payeur": "buyer", "cas": "new",
+       "note": "One-off contribution when buying new from the developer, set per m² by the building."},
+      {"poste": "Legal due diligence", "taux": null, "montant_min": 30000, "montant_max": 60000, "payeur": "buyer", "cas": "optional",
+       "note": "Optional but advised: title check, contract review. Indicative market range."}
+    ]
+  },
   "liquidite": {
     "_liquidite": "Facilité de revente AU PRIX DU MARCHÉ (postulat utilisateur), et son évolution avec l'âge de l'immeuble. Méthode : docs/methodes-calculs.md §12.",
     "tolerance_prix": 0.1,

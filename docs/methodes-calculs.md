@@ -470,3 +470,35 @@ Stock actif en fin de fenêtre : immeuble tous lots, immeuble mêmes chambres et
 
 ### Ce que ces scores ne disent pas
 Ce sont des **prix affichés** et des **retraits d'annonces**, pas des ventes. Les poids sont des hypothèses de départ, à recalibrer par validation prédictive (le score à t annonce-t-il les baisses et les délais à t + 1 mois ?) dès 3 mois d'historique.
+
+## 13. Bilan acheteur — loyer estimé, rénovation, frais d'achat (ajouté le 2026-10-22)
+
+**Loyer estimé** (affiché au profil « investisseur ») = médiane du loyer/m² des
+locations actives du **même immeuble, mêmes chambres, surface ±15 %** × surface
+du lot. Replis : immeuble entier, puis mêmes chambres et taille dans 1 km
+(confiance basse). Minimum 5 comparables, copies comptées une fois, bornes
+loyer 3 k–500 k et surface 15–500 m². Fourchette = p25–p75 × surface.
+Rendement brut = loyer × 12 / prix demandé.
+*Choix mesuré* (4 000 locations tirées au hasard, valeur prédite contre loyer
+affiché) : m²-même-taille × surface 8,2 % d'erreur médiane (80 % sous 16,9 %),
+loyer médian même taille 8,3 %, m² immeuble entier 8,8 %, sans même taille
+9,8 %. **L'étage ne pondère pas** : pente médiane +0,09 %/étage dans 396
+groupes immeuble × chambres (IQR −0,21 / +0,47) ; montré par tranches (1-9,
+10-24, 25+) à titre indicatif.
+
+**Rénovation** = part des locations comparables dont le titre ou la
+description dit « renovated » (1,5 % des locations actives). L'effet sur le
+loyer ne se mesure **qu'à l'intérieur d'un immeuble** (≥ 2 rénovées, ≥ 3
+autres) ; dans le rayon, médiane des écarts par immeuble (≥ 3 immeubles). Une
+comparaison toutes adresses confondues donnait −32 / −34 % : les rénovées
+sont surtout dans des immeubles anciens. Seuil « sensible » : +10 % (proposé,
+à arbitrer). À l'échelle de Bangkok : +0,2 % en médiane, > +10 % dans 37
+groupes sur 134.
+
+**Frais d'achat** (tous profils) : taux légaux (droit de mutation 2 %, taxe
+spécifique 3,3 % ou droit de timbre 0,5 %, retenue à la source vendeur,
+inscription d'hypothèque 1 % du prêt) appliqués au **prix demandé** — la base
+légale est la valeur d'expertise, en général inférieure : ce sont des plafonds.
+Le partage acheteur / vendeur est un usage. Total « acheteur » = postes
+certains seulement (moitié du droit de mutation). Taux dans
+`bilan_RE/tension/config.json` → `frais_achat`. À valider par un avocat thaï.

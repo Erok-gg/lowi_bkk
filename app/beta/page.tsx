@@ -18,9 +18,10 @@ export const dynamic = "force-dynamic";
  * et le chemin du retour est le même interrupteur (règle 7).
  *
  * Refonte du 2026-10-22 : bloc club deal + FAQ à la place des quatre cartes,
- * pied de page à quatre éléments, trois menus de profil. Les menus ne sont lus
- * par rien pour l'instant (aucun envoi, aucun stockage) : c'est de la mise en
- * page, pas de la segmentation.
+ * pied de page à quatre éléments, trois menus de profil. Depuis le 2026-10-22,
+ * « Nationality » et « Purpose » sont relus par AnalyseForm au moment de l'envoi et
+ * gardés dans un cookie (bilan_RE/web/lib/profil.ts) : le profil investisseur
+ * ajoute au rapport le loyer estimé et la rénovation. Rien n'est stocké côté serveur.
  */
 
 // Textes en anglais seul : le bloc club deal et la FAQ n'ont pas de traduction relue.
@@ -72,11 +73,11 @@ export default async function BetaPage() {
         <div className="mt-10 w-full max-w-2xl text-left">
           {/* Une seule ligne, y compris sur mobile (3 colonnes égales, texte tronqué). */}
           <div className="mb-3 grid grid-cols-3 gap-2">
-            <select aria-label="Nationality" defaultValue="foreigner" className={SELECT}>
+            <select id="profil-nat" aria-label="Nationality" defaultValue="foreigner" className={SELECT}>
               <option value="foreigner">I am a foreigner</option>
               <option value="thai">I am a Thai national</option>
             </select>
-            <select aria-label="Purpose" defaultValue="invest" className={SELECT}>
+            <select id="profil-but" aria-label="Purpose" defaultValue="invest" className={SELECT}>
               <option value="invest">I invest in properties</option>
               <option value="live">I&apos;m looking for my new home</option>
               <option value="sell">I sell my property</option>

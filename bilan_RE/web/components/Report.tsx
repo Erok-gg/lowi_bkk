@@ -11,7 +11,8 @@
  * Refonte du 2026-10-22. Règles : bilan_RE/docs/regles-construction-ui.md.
  */
 import { useState } from "react";
-import type { Bande, Chaine, Comparaison, MoisDeStock, Niveau, Rapport, SortiesPrix } from "@/bilan_RE/web/lib/types";
+import type { Bande, Chaine, Comparaison, FraisAchat, LoyerEstime, MoisDeStock, Niveau, Profil, Rapport, Renovation,
+  SortiesPrix } from "@/bilan_RE/web/lib/types";
 import { EXPLICATIONS } from "./explications";
 import Annexe from "./Annexe";
 import PdfGate from "./PdfGate";
@@ -79,6 +80,94 @@ function Bloc({ titre, id, mode, ouvert = false, children, resume }: {
         )}
       </div>
     </section>
+  );
+}
+
+/** Loyer que le futur propriétaire peut demander (profil investisseur). */
+function LoyerBloc({ l, mode }: { l: LoyerEstime; mode: Mode }) {
+  const P = palette(mode);
+  if (l.statut !== "ok")
+    return <p className={`text-sm ${P.doux}`}>Not enough comparable rentals around this unit to estimate a rent.</p>;
+  return (
+    <>
+      <p className="text-2xl font-semibold tabular-nums">
+        {thb(l.loyer)} <span className={`text-sm font-normal ${P.doux}`}>/ month</span>
+      </p>
+      <p className={`mt-1 text-sm ${P.doux}`}>
+        Likely range {thb(l.fourchette[0])} – {thb(l.fourchette[1])} · {Math.round(l.loyer_m2).toLocaleString("en-US")} THB/m²
+        {l.rendement_brut !== null && <> · gross yield <span className="font-semibold text-ink">{(l.rendement_brut * 100).toFixed(1)}%</span></>}
+      </p>
+      <p className={`mt-1 text-xs ${P.faible}`}>
+        Based on {l.n} rentals: {l.libelle.toLowerCase()}
+        {l.confiance === "low" ? " (low confidence: no rentals of this type in the building)" : ""}.
+      </p>
+      {l.par_etage.some((e) => e.loyer !== null) && (
+        <table className="mt-3 w-full text-sm">
+          <thead><tr className={P.doux}><th className="text-left font-normal">Floor</th>
+            <th className="text-right font-normal">Rent for this size</th><th className="text-right font-normal">Rentals</th></tr></thead>
+          <tbody>
+            {l.par_etage.map((e) => (
+              <tr key={e.tranche}>
+                <td>{e.tranche}</td>
+                <td className="text-right tabular-nums">{e.loyer !== null ? thb(e.loyer) : "—"}</td>
+                <td className={`text-right ${P.faible}`}>{e.n}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p className={`mt-2 text-[11px] ${P.faible}`}>{l.note}</p>
+    </>
+  );
+}
+
+/** Rénovation : part des annonces comparables « rénovées » et effet sur le loyer. */
+function RenovationBloc({ v, mode }: { v: Renovation; mode: Mode }) {
+  const P = palette(mode);
+  return (
+    <>
+      <p className="text-sm">
+        <span className="text-xl font-semibold tabular-nums">{v.n_renovees}</span> of {v.n} comparable rentals
+        ({Math.round(v.part * 100)}%) say the unit was renovated · {v.libelle.toLowerCase()}.
+      </p>
+      <p className="mt-2 text-sm font-medium">
+        {v.prime !== null ? <>{v.verdict[0].toUpperCase() + v.verdict.slice(1)}: {pct(v.prime)} rent per m²
+          {v.niveau === "radius" ? ` (median over ${v.n_immeubles} buildings)` : ""}.</> :
+          <span className={P.doux}>Too few renovated units to measure the effect on rent here.</span>}
+      </p>
+    </>
+  );
+}
+
+/** Frais d'achat — tous profils. Les lignes « étranger » ne sortent que pour un étranger (ou sans profil). */
+function FraisBloc({ f, profil, mode }: { f: FraisAchat; profil?: Profil; mode: Mode }) {
+  const P = palette(mode);
+  const lignes = f.lignes.filter((l) => !(l.etrangers_seulement && profil?.nat === "thai"));
+  const montant = (l: FraisAchat["lignes"][number]) =>
+    l.montant !== null ? thb(l.montant)
+      : l.montant_min ? `${thb(l.montant_min)} – ${thb(l.montant_max ?? l.montant_min)}` : "varies";
+  return (
+    <>
+      <p className="text-sm">
+        Usually paid by the buyer: <span className="text-xl font-semibold tabular-nums">{thb(f.total_acheteur)}</span>{" "}
+        <span className={P.doux}>({(f.total_acheteur_pct * 100).toFixed(1)}% of the asking price), at most.</span>
+      </p>
+      <table className="mt-3 w-full text-sm">
+        <thead><tr className={P.doux}><th className="text-left font-normal">Item</th>
+          <th className="text-right font-normal">Amount</th><th className="text-right font-normal">Usually paid by</th></tr></thead>
+        <tbody>
+          {lignes.map((l) => (
+            <tr key={l.poste} className="align-top">
+              <td className="py-1 pr-2">{l.poste}{l.taux !== null ? ` · ${(l.taux * 100).toFixed(1)}%` : ""}
+                {l.note && <span className={`block text-[11px] ${P.faible}`}>{l.note}</span>}</td>
+              <td className="py-1 text-right tabular-nums">{montant(l)}</td>
+              <td className="py-1 text-right">{l.payeur}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className={`mt-2 text-[11px] ${P.faible}`}>{f.avertissement}</p>
+    </>
   );
 }
 
@@ -415,10 +504,13 @@ export default function Report({
   r,
   mode = "web",
   acces,
+  profil,
 }: {
   r: Rapport;
   mode?: Mode;
   acces?: { langue: Langue; connecte: boolean; possede: boolean };
+  /** Menus de la page d'accueil. Absent = profil inconnu : pas de blocs investisseur. */
+  profil?: Profil;
 }) {
   const P = palette(mode);
   const pdf = mode === "pdf";
@@ -534,6 +626,18 @@ export default function Report({
           </>
         )}
       </Bloc>
+
+      {profil?.but === "invest" && r.loyer_estime && (
+        <Bloc titre="Rent you can ask" id="loyer" mode={mode} ouvert
+>
+          <LoyerBloc l={r.loyer_estime} mode={mode} />
+        </Bloc>
+      )}
+      {profil?.but === "invest" && r.renovation && (
+        <Bloc titre="Renovation" id="renovation" mode={mode} ouvert={pdf}>
+          <RenovationBloc v={r.renovation} mode={mode} />
+        </Bloc>
+      )}
 
       <Bloc titre="The listing's history" id="histoire" mode={mode} ouvert={pdf}
         resume={<p className={`text-sm ${P.doux}`}>First seen on {date(h.premier_vu)}</p>}>
@@ -653,6 +757,12 @@ export default function Report({
           </>
         )}
       </Bloc>
+
+      {r.frais_achat && (
+        <Bloc titre="Buying costs" id="frais" mode={mode} ouvert={pdf}>
+          <FraisBloc f={r.frais_achat} profil={profil} mode={mode} />
+        </Bloc>
+      )}
 
       <Bloc titre={`Red flags (${r.drapeaux?.length ?? 0})`} id="drapeaux" mode={mode} ouvert>
         {r.drapeaux?.length ? (

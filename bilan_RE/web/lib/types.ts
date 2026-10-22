@@ -133,4 +133,58 @@ export type Rapport = {
     sources_gardees: string[] | null;
   };
   drapeaux?: { niveau: "high" | "medium" | "low"; texte: string }[];
+  /** Calculés pour tous ; affichés seulement au profil « investisseur ». */
+  loyer_estime?: LoyerEstime | null;
+  renovation?: Renovation | null;
+  /** Affiché quel que soit le profil. */
+  frais_achat?: FraisAchat | null;
 };
+
+export type LoyerEstime =
+  | { statut: "not enough comparables"; n_immeuble: number }
+  | {
+      statut: "ok";
+      niveau: "building_same" | "building" | "radius_same";
+      libelle: string;
+      confiance: "high" | "medium" | "low";
+      n: number;
+      loyer_m2: number;
+      loyer: number;
+      fourchette: [number, number];
+      rendement_brut: number | null;
+      etage_lot: number | null;
+      par_etage: { tranche: string; n: number; loyer: number | null }[];
+      note: string;
+    };
+
+export type Renovation = {
+  niveau: "building" | "radius";
+  libelle: string;
+  n: number;
+  n_renovees: number;
+  part: number;
+  prime: number | null;
+  n_immeubles: number;
+  verdict: string;
+};
+
+export type FraisAchat = {
+  base: number;
+  lignes: {
+    poste: string;
+    taux: number | null;
+    montant: number | null;
+    montant_min?: number | null;
+    montant_max?: number | null;
+    payeur: "buyer" | "seller";
+    note: string | null;
+    etrangers_seulement: boolean;
+    cas: "always" | "negotiated" | "mortgage" | "foreigner" | "new" | "optional";
+  }[];
+  total_acheteur: number;
+  total_acheteur_pct: number;
+  avertissement: string;
+};
+
+/** Profil choisi dans les menus de la page d'accueil (cookie `lowi_profil`). */
+export type Profil = { but: "invest" | "live" | "sell"; nat: "foreigner" | "thai" };

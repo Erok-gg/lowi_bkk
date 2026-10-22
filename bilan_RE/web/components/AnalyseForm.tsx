@@ -22,6 +22,11 @@ export default function AnalyseForm({ langue = "en" }: { langue?: Langue }) {
   async function envoyer(e: React.FormEvent) {
     e.preventDefault();
     if (!url.trim()) return setPhase({ t: "error", msg: t("form_need_link") });
+    // Profil des menus de la page d'accueil (s'ils existent sur la page) : lu par
+    // le rapport et le PDF via le cookie, cf. lib/profil.ts. Un an, tout le site.
+    const but = (document.getElementById("profil-but") as HTMLSelectElement | null)?.value;
+    const nat = (document.getElementById("profil-nat") as HTMLSelectElement | null)?.value;
+    if (but && nat) document.cookie = `lowi_profil=${but}|${nat}; path=/; max-age=31536000; samesite=lax`;
     setPhase({ t: "loading", id: "" });
     debut.current = Date.now();
     const r = await fetch("/api/beta/analyse", {
