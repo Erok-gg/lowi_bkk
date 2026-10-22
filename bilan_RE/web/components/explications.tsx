@@ -49,10 +49,9 @@ export const EXPLICATIONS = {
     "comparables. Floor is shown for information: in our data it barely changes the rent per m² within a building. " +
     "Gross yield is twelve months of rent divided by the asking price, before fees, vacancy and tax.",
   renovation:
-    "We count the comparable rentals whose title or description says the unit was renovated. To tell whether renovation " +
-    "lifts the rent, we only compare renovated and other units inside the same building, because renovated units are " +
-    "mostly found in older, cheaper buildings. Around this unit, we take the median of these within-building gaps. We call " +
-    "the effect noticeable from +10% of rent per m².",
+    "Coming soon. We will count the comparable rentals advertised as renovated and compare their rent with other units of " +
+    "the same building. With the few renovated units most buildings have today, the difference is still too close to " +
+    "chance to state a result.",
   frais:
     "Thai transfer costs, applied to the asking price. By law they are computed on the Land Department's appraised value, " +
     "which is usually lower: these amounts are therefore a ceiling. Who pays what is a custom, not a rule, and is set in " +

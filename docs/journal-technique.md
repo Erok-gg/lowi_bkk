@@ -5398,3 +5398,34 @@ apparaissent dans les deux. Vérification de types et tests du moteur passés.
 `lowi_profil`), `bilan_RE/web/lib/types.ts`, `explications.tsx`,
 `AnalyseForm.tsx`, `app/beta/page.tsx`, `app/beta/r/[id]/page.tsx` et `pdf/`,
 `bilan_RE/tests/test_frais_achat.py`, `docs/methodes-calculs.md` §13.
+
+## 2026-10-22 (suite) — Bilan acheteur : bloc « rénovation » mis en attente
+
+### 1. Causes
+Le seuil qui permet de dire « la rénovation augmente sensiblement le loyer »
+devait être choisi. En le mesurant, il est apparu que le problème n'est pas le
+seuil mais le peu de logements rénovés par immeuble.
+
+### 2. Conséquences
+- Sur 101 immeubles comparables, on conclurait « augmente » presque aussi
+  souvent en choisissant au hasard des logements **non** rénovés : 31 % contre
+  24 % au seuil de 10 %, 12 % contre 11 % au seuil de 20 %.
+- Décision : le bloc affiche « Coming soon » pour le profil investisseur. Le
+  loyer estimé et les frais d'achat restent affichés.
+
+### 3. Plan
+- Fait : bloc en attente, texte d'explication adapté, méthode notée.
+- À décider plus tard, deux pistes chiffrées : exiger au moins 3 logements
+  rénovés et 5 autres par immeuble (35 immeubles mesurables, 29 % de « oui »
+  contre 16 % au hasard), ou un test par tirage au sort dans chaque immeuble
+  (13 % de « oui », au plus 10 % au hasard).
+- Le calcul tourne toujours dans le moteur ; seul l'affichage est coupé.
+
+### 4. Méthode
+Pour chaque immeuble, écart de loyer au m² entre logements rénovés et autres,
+comparé à 1 680 tirages où l'étiquette « rénové » est donnée au hasard à des
+logements qui ne le sont pas. Page vérifiée avec le profil investisseur.
+
+### Références techniques
+`bilan_RE/web/components/Report.tsx` (`RenovationBloc` non branché, bloc
+« Coming soon »), `explications.tsx` (`renovation`), `docs/methodes-calculs.md` §13.

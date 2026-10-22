@@ -494,6 +494,13 @@ comparaison toutes adresses confondues donnait −32 / −34 % : les rénovées
 sont surtout dans des immeubles anciens. Seuil « sensible » : +10 % (proposé,
 à arbitrer). À l'échelle de Bangkok : +0,2 % en médiane, > +10 % dans 37
 groupes sur 134.
+**En attente (2026-10-22, décision utilisateur) : le bloc affiche « Coming
+soon ».** Raison mesurée sur 101 immeubles : le verdict « augmente » sort
+presque aussi souvent en étiquetant au hasard des logements NON rénovés
+(+10 % : 31 % contre 24 % au hasard ; +20 % : 12 % contre 11 %). Pistes
+chiffrées : effectifs ≥ 3 rénovées / ≥ 5 autres (35 immeubles mesurables,
+29 % contre 16 % au hasard) ou test par tirage au sort dans l'immeuble (13 %
+retenus, ≤ 10 % au hasard par construction).
 
 **Frais d'achat** (tous profils) : taux légaux (droit de mutation 2 %, taxe
 spécifique 3,3 % ou droit de timbre 0,5 %, retenue à la source vendeur,

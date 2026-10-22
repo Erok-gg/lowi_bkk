@@ -121,8 +121,13 @@ function LoyerBloc({ l, mode }: { l: LoyerEstime; mode: Mode }) {
   );
 }
 
-/** Rénovation : part des annonces comparables « rénovées » et effet sur le loyer. */
-function RenovationBloc({ v, mode }: { v: Renovation; mode: Mode }) {
+/** Rénovation : part des annonces comparables « rénovées » et effet sur le loyer.
+ *  EN ATTENTE (2026-10-22, décision utilisateur) : le bloc affiche « Coming soon ».
+ *  Mesure qui l'a motivé : avec 2 rénovées contre 3 autres par immeuble, le verdict
+ *  « augmente le loyer » sort presque aussi souvent au hasard (24 % contre 31 % à
+ *  +10 %). La règle reste à choisir ; le calcul tourne toujours côté moteur.
+ *  Exporté pour rester compilé tant qu'il n'est pas rebranché. */
+export function RenovationBloc({ v, mode }: { v: Renovation; mode: Mode }) {
   const P = palette(mode);
   return (
     <>
@@ -635,7 +640,10 @@ export default function Report({
       )}
       {profil?.but === "invest" && r.renovation && (
         <Bloc titre="Renovation" id="renovation" mode={mode} ouvert={pdf}>
-          <RenovationBloc v={r.renovation} mode={mode} />
+          <p className={`text-sm ${P.doux}`}>
+            Coming soon: how many similar units are advertised as renovated, and whether renovation lets you ask a
+            noticeably higher rent.
+          </p>
         </Bloc>
       )}
 
