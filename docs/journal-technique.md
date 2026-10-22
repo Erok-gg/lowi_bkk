@@ -5050,6 +5050,12 @@ quelques dizaines par nuit.
   le fichier porte des modifications non committées d'autres séances, et la
   reprise est une décision utilisateur. Premier run de production non lancé.
 
+### 2026-10-21 — premier cycle réel avec la cadence adaptative, et la piste « charge appauvrie pour robot » sur DDproperty
+
+**Mesuré au chronomètre, cycle du 2026-10-20 19:30 UTC vs celui de la veille** (attente sur les pages liste+fiche, par requête) : FazWaz 2,38 → **0,43 s**, PropertyScout 2,83 → **0,97 s**, Nestopa 3,39 → **0,30 s**. Aucune relance, aucun délai dépassé, ni 429 ni 403. Les valeurs sous le plancher de 1 s sont normales : `_throttle()` déduit le temps déjà écoulé depuis la requête précédente (réseau + parsing). **DDproperty non mesurable** : run en échec de sonde (élagage de `listingsData`, voir l'entrée précédente du jour).
+
+**Piste vérifiée : DDproperty nous servait-il une charge appauvrie parce qu'il nous jugeait robotiques ?** ~680 requêtes DDproperty à ~1 s avaient été envoyées le 20/10 en journée (séries longues), et l'élagage est apparu dans la nuit qui a suivi. La séance de réparation ne l'avait pas envisagé. Mesuré ce jour, même page de liste, trois empreintes : curl_cffi `chrome` → 200, **20/20** `listingsData` ; curl_cffi `safari` → 200, **20/20** ; `requests` + UA Chrome 126 → **403** (6 Ko). La charge est donc complète en ce moment, quelle que soit l'empreinte navigateur, alors que la séance du matin mesurait 6 % et 1 %. L'élagage est intermittent et ne dépend pas de l'empreinte TLS. **Non exclu** : un traitement par adresse IP (impossible à tester depuis ce poste). **Fait mesuré au passage** : `requests` est désormais refusé en 403 par DDproperty, ce qui confirme qu'on ne peut plus revenir à ce backend sur cette source.
+
 ## 2026-10-21 — Charge des scrapers doublée, et règle d'écriture des comptes rendus
 
 ### 1. Causes
@@ -5256,6 +5262,159 @@ Correctif à arbitrer (méthode = décision utilisateur). Le score v2 du cycle d
 fenêtre). L'escalade Opus déclenchée par le constat porte la consigne « ne rien
 changer aux règles de méthode ». `created_at` PropertyScout non capté.
 
+## 2026-10-21 (12:15) — Réparation autonome, troisième passe : rien à réparer
+
+**Causes.** Les escalades de 10:00 et 11:00 ont buté sur la limite d'usage du
+compte ; trois tickets restaient ouverts. L'un reprenait DDproperty (déjà
+corrigée) et la chute des scores 199 → 0 (méthode v3, à arbitrer). Les deux
+autres déclaraient LivingInsider muette : la source a été remise en rotation à
+08:55, après le départ du cycle, et le contrôle de 10:54 a lu la nouvelle
+configuration.
+**Conséquences.** Aucune perte. LivingInsider relancée à 11:00 : 839 lues,
+640 nouvelles, 0 erreur ; location toujours bloquée par l'anti-robot du site,
+protégée du retrait (366 hors couverture).
+**Plan.** Tickets et escalade clos, 2 alertes envoyées. Non fait : aucun code
+touché (pas de défaut nouveau) ; contrôle de fin de cycle laissé tel quel (cas
+d'une configuration modifiée en plein cycle, isolé) ; scores de revente et 2
+courriers transactionnels laissés à l'utilisateur ; aucun scrap en journée.
+**Méthode.** Registre des runs + historique git ; base : intégrité ok,
+214 730 annonces / 140 103 actives ; sauvegarde clé ok 3/3. Détail :
+`agents/audits/reparations-2026-10-21.md` § Troisième passe.
+
+## 2026-10-22 — Date de création déclarée par le portail (PropertyScout) et relevé multi-portails
+
+**Causes.** `first_seen` ne dit que notre premier passage. Sur PropertyScout il
+retardait l'ancienneté d'une annonce de 2 semaines à 3 ans (suivi commencé le
+24/06/2026, découverte tardive). Le portail affiche pourtant « Date Listed ».
+
+**Conséquences.** Mesuré : sur 10 fiches réparties sur toute la plage
+d'identifiants, la date croît strictement avec l'identifiant → vraie date de
+création (le `posted_at` de DDproperty, lui, est une remontée). Après rattrapage,
+4 020 annonces PropertyScout ont une date ; écart moyen `first_seen` − date =
+372 j sur les actives (max 3 091 j : une annonce datée de 2018, à regarder). Le
+bilan de l'annonce test passe de ~110 à 445 jours en ligne. `first_seen` n'est PAS
+modifié.
+
+**Plan — fait.** Colonne locale `listed_at_source` (SQLite uniquement, hors
+`COLONNES_LISTING` : aucune migration Supabase) ; `COLONNES_LOCALES`,
+`_migrate()`, `normalize.py`, adaptateur PropertyScout (`extsourceCreatedAt`, à
+défaut `createdAt`) ; rattrapage sans réseau depuis `page_text`
+(`bilan_RE/ops/remplir-date-source.py`) ; règle `min(first_seen, date source)` dans
+`bilan_RE/tension/rapport.py` (`SOURCES_DATE_FIABLE`, PropertyScout seul) ;
+migration + rollback `bilan_RE/migrations/2026-10-22_date_source{,_rollback}.sql`.
+**Retour arrière** : vider `SOURCES_DATE_FIABLE` (bilan), puis retirer la colonne
+du code et du `_migrate`, puis le rollback SQL.
+
+**Méthode.** État avant : 62 colonnes, 220 007 lignes. Après : 63 colonnes,
+220 007 lignes. `agents/tests/test_stores_alignes.py` passe (volet Postgres
+exécuté : colonnes locales absentes du serveur). Bilan relancé sur l'annonce test.
+Le test de la règle (la faire échouer exprès) n'a pas été écrit.
+
+**Non fait / non vérifié.** Aucun test automatique dédié ; la date 2018 non
+inspectée ; FazWaz et les autres sources non testées pour `SOURCES_DATE_FIABLE` ;
+le prochain scrap PropertyScout n'a pas encore tourné avec le nouvel adaptateur
+(l'extraction de `extsourceCreatedAt` est vérifiée sur une page, pas sur une
+exécution réelle) ; les captures `__NEXT_DATA__` ne sont pas gardées ; prix initial
+du bilan toujours borné à notre premier relevé (5,99 M en 07/2026 pour une annonce
+de 08/2025). Correction de méthode : les relevés multi-portails du 17 et du 22/10
+sous-lisaient les pages (JSON embarqué, ex. 28 ventes conclues FazWaz) — voir
+`bilan_RE/docs/benchmark-plateformes.md`.
+
+## 2026-10-22 — Lecture distante de la base de PC2 pour Vercel (code livré, tunnel NON posé)
+
+**Causes.** Vercel n'avait aucun chemin vers `bangkok.db` (un fichier). Choix de l'utilisateur : tunnel Cloudflare + petite API sur PC2, plutôt que la remontée vers Supabase.
+
+**Conséquences.** Rien n'est encore exposé ni branché : sans les variables `LOWI_REMOTE_API` et `LOWI_API_TOKEN` côté Vercel, le site se comporte comme avant. Une fois branché, il lit PC2 en direct, et retombe sur Supabase si PC2 est éteint ou le tunnel coupé.
+
+**Plan.** Fait : service de lecture seule (`ops/api-lecture.py`, écoute 127.0.0.1 uniquement, jeton obligatoire, base ouverte en lecture seule, cache de 15 min) et branche distante dans `lib/listings-db.ts` avec repli Supabase. Reste (attend l'utilisateur) : installer `cloudflared`, créer le tunnel nommé, générer le jeton dans `scraper/.env`, poser les 2 variables sur Vercel, lancer le service en tâche planifiée. Retour arrière : retirer `LOWI_REMOTE_API` de Vercel.
+
+**Méthode.** Mesuré : à froid `/listings` = 15 Mo, 31 s (trop long pour Vercel) ; avec cache chaud 0,04 s. Jeton absent → 401. `npm run typecheck` passe. Non vérifié : le trajet complet via tunnel et Vercel, le comportement du repli en conditions réelles, la facture Vercel (règle 9 : 15 Mo tirés par instance et par heure).
+
+Références techniques : `ops/api-lecture.py`, `lib/listings-db.ts` (`fromRemote`). Les pages `bilan_RE/web` ne sont pas couvertes.
+
+**Annulation (2026-10-22, même séance).** La voie « tunnel Cloudflare + API sur PC2 » est abandonnée à la demande de l'utilisateur, qui ne peut pas l'engager. Retiré : le service de lecture, la branche distante de la couche de lecture, le binaire téléchargé, le jeton. Rien n'avait été posé sur Vercel ni chez Cloudflare. Les mesures ci-dessus (31 s à froid, 15 Mo) restent valables si l'idée revient.
+
+**À améliorer plus tard (2026-10-22).** Le chargement complet des annonces par chaque instance Vercel (≈ 22 Mo mesurés à froid) est la vraie source de volume, pas le choix de la source de données. Trois pistes chiffrées dans CLAUDE.md (règle 9). Non fait : lecture de l'usage réel Vercel/Supabase.
+
+## 2026-10-22 (suite) — Ventes conclues des portails : collectées, tenues à l'écart, affichées comme source faible
+
+**Causes.** Demande de l'utilisateur : ajouter au scrap les prix de vente
+conclus que publient les portails, les garder séparés, et, s'ils entrent au
+bilan, les étiqueter « source faible ». Le benchmark du jour montrait ces données
+dans le JSON embarqué de la page d'immeuble FazWaz, que le scrap lit déjà.
+
+**Conséquences.** Aucune requête de plus : la page d'immeuble FazWaz était déjà
+lue pour le nombre de logements. 29 ventes sur Knightsbridge Prime Sathorn,
+chacune avec date, prix, surface, étage, chambres, quota. FazWaz écrit aussi sa
+propre synthèse (29 ventes, 159 000 THB/m², 715 jours en moyenne avant vente,
+vendu 7 % sous le prix affiché) : capturée telle quelle. Mesuré : 6 immeubles sur
+10 en ont, 4 à 17 ventes sur 8 ans ; l'origine n'est pas indiquée. Les
+entrées du cache d'immeubles sans clé « ventes » sont relues en priorité dans le
+budget existant (300 pages par run) : rattrapage étalé sur ~15 runs, sans pic.
+
+**Plan — fait.** `scraper/pipeline/ventes_portail.py` (lecture) ; tables locales
+`ventes_portail` et `ventes_portail_projets` (créées par `_migrate`, appliquées à
+`bangkok.db`, migration + rollback dans `bilan_RE/migrations/2026-10-22_ventes_portail*.sql`) ;
+`fazwaz.py` (`ventes_portail()`, relecture des entrées anciennes) ; `run.py`
+(écriture non fatale en fin de run) ; bilan : bloc « Reported sales » étiqueté
+« Weak source », sans nommer le portail, médiane seulement à partir de 5 ventes
+comparables sur 36 mois (`rapport.py`, `types.ts`, `Report.tsx`, `explications.tsx`).
+Tables jamais jointes à `listings`, jamais dans une médiane de marché, jamais
+poussées vers Supabase. **Retour arrière** : renvoyer `None` dans
+`_ventes_portail`, retirer l'appel de `run.py` et la création dans `_migrate`,
+puis le rollback SQL.
+
+**Méthode.** Essai `agents/tests/test_ventes_portail.py` (parseur, format cassé,
+rejouabilité, étiquette, seuil de médiane, base temporaire) et
+`test_stores_alignes.py` : passent. `npm run typecheck` : propre. Bilan relancé
+sur l'annonce test : bloc présent, 4 ventes comparables < 5, donc pas de médiane
+(le garde-fou parle). Les 29 ventes de Knightsbridge ont été chargées dans la base
+réelle depuis la page déjà lue (même code que le scrap).
+
+**Non fait / non vérifié.** Aucun run de production du scrap FazWaz avec le
+nouveau code ; l'affichage n'a pas été vu dans un navigateur (typecheck seul) ;
+Hipflat : sa page d'immeuble (testée sur 1 projet) donne des moyennes et tendances
+en prose, en USD, **pas de lignes de ventes** — extracteur non écrit, d'autres
+projets à sonder (le benchmark du 17/10 en comptait 6/10) ; PropertyScout
+« Market stats » : API non identifiée (extension Chrome non connectée) ; DDproperty
+et LivingInsider non lus ; `/api/` et `/graphql` de FazWaz et
+`/api/v1/projects/` de Hipflat **non appelés** (interdits par robots.txt) ;
+l'origine des prix (registre foncier ou saisie d'agent) reste inconnue ; droits
+d'usage à valider (backlog 38) avant tout affichage public.
+
+## 2026-10-22 (fin) — Validation de la collecte des ventes conclues par un run réel
+
+**Causes.** La collecte FazWaz des ventes conclues n'avait été testée que sur une
+page enregistrée et une base temporaire. Demande : la valider par un run réel court.
+
+**Conséquences.** (1) Run de production, mode sitemap : bloqué à dessein, la
+protection du 04/10 refuse de relire un sitemap déjà lu (plus frais : 22/10
+02:21) et réessaie dans 15 min ; arrêté, rien écrit. (2) Run de production en
+mode liste (6 annonces) : les 6 étaient déjà connues à prix inchangé, donc fiche
+non rouverte et page d'immeuble non lue — l'écriture en fin de run s'est exécutée
+sans erreur (« 0 vente lue »), base de production inchangée (29 ventes, 1 immeuble).
+(3) Run réel dans un dossier de sortie isolé (méthode prévue par `LOWI_OUTPUT_DIR`,
+base vide donc fiches rouvertes) : 6 pages d'immeuble lues, **34 ventes écrites
+pour 6 immeubles, 6 synthèses de portail, 6 sur 6 étiquetées « faible »**,
+0 erreur. Les 6 immeubles de cet échantillon avaient tous des ventes (contre 6 sur
+10 dans le relevé du 22/10 : l'échantillon est trop petit pour conclure).
+
+**Plan.** Rien à corriger. Le rattrapage des 336 immeubles du cache se fera dans
+le budget existant (300 pages par run) aux prochains scraps réels.
+
+**Méthode.** Journaux `ops/logs/essai-ventes-portail*.log`, comptes lus dans les
+bases avant/après.
+
+**Non fait / non vérifié.** Aucune vente nouvelle n'est entrée dans la base de
+production par le scrap (les 29 viennent du chargement manuel de Knightsbridge) ;
+le chemin sitemap n'a pas été exercé de bout en bout ; en arrêtant le run bloqué,
+la commande d'arrêt par motif a aussi fermé 4 processus d'interpréteur de commandes
+de cette session (aucun scrap de production ne tournait).
+
+## 2026-10-22 — réparation autonome : rien à réparer
+
+**Causes.** Cycle de 02:30 complet (5 extracteurs, 5 147 annonces), 0 ticket, 0 escalade, 0 erreur dans les journaux des 30 dernières heures. **Conséquences.** Base 220 007 / 138 110 actives ; sauvegarde clé vérifiée 3 fois. **Plan.** Aucune modification. **Non fait :** `quick_check` complet non relancé (trop long, la sauvegarde relue 3 fois en tient lieu) ; 2 courriers `bilan-comptes` laissés dans `queue/mail` (non-alertes, dont un mot de passe en clair) — à arbitrer ; « scores de revente 199 → 0 » reste à décider. **Méthode.** Lecture du témoin, du tableau d'agents, des journaux, comptage direct en base. Détail : `agents/audits/reparations-2026-10-22.md`.
+
 ## 2026-10-22 — DotProperty devient une source, scrapée le soir de 21:00 à 02:00
 
 ### 1. Causes
@@ -5460,3 +5619,136 @@ deux fichiers de police embarqués.
 (`HankenGrotesk-latin.woff2`, `JetBrainsMono-latin.woff2`, sous-ensemble latin,
 polices variables, licence SIL OFL 1.1). Erreur d'origine :
 `Cannot read properties of null (reading '1')`, `@next/font/dist/google/loader.js:122`.
+
+
+## 2026-10-23 — La veille de nuit a réveillé Opus pour une panne qui n'existait pas, et deux garde-fous étaient muets
+
+### 1. Causes
+À 04:30, la veille du cycle a signalé qu'une collecte d'annonces était
+« suspendue ». Elle ne l'était pas. Trois mesures prises pendant qu'elle
+tournait : son carnet de bord grossissait de 2 119 caractères en 25 secondes,
+elle en était à la page 164 sur 300 de sa deuxième étape sur quatre, et ses
+trente dernières exécutions donnent une durée médiane de 5 h 27 (de 2 h 46 à
+20 h) alors qu'elle n'en était qu'à 2 h 06. Elle a terminé ses quatre étapes
+sans incident.
+
+Le réveil pour rien tient à deux défauts de fabrication, indépendants.
+
+Premier défaut : la porte qui décide de déranger quelqu'un cherchait des mots
+dans du texte libre. La veille est en deux étages — un programme rassemble les
+preuves et décide, un assistant rapide les relit et commente en français libre.
+Pour ne pas déranger à chaque remarque, la porte ne retenait que les
+formulations graves, et cherchait pour cela le mot « processus », qui chez le
+programme n'apparaît que dans « processus absent ». L'assistant avait écrit
+« processus vivant » — le contraire exact — et le mot passait quand même.
+Vérifié : deux tournures anodines sur deux ouvraient l'escalade, dont « le
+processus tourne normalement ». Le garde-fou criait au loup sur une phrase qui
+disait que tout allait bien.
+
+Second défaut : le dossier de preuves ne portait aucun repère de durée.
+« En cours depuis deux heures » n'était pas interprétable, faute de savoir
+combien de temps cette collecte dure d'habitude — et elle ne rend ses comptes
+qu'à la fin, si bien que l'absence de compte rendu à mi-course est la normale.
+
+Troisième défaut, trouvé en cherchant le premier : les trois surveillances qui
+regardent depuis l'EXTÉRIEUR du cycle — le battement de fin de cycle, la veille
+elle-même, le contrôle de fraîcheur — écrivaient bien leur fiche de
+signalement, mais ne l'inscrivaient pas au registre. Or le tableau de bord lit
+le registre, pas les fiches. Mesure : 46 signalements de sévérité haute déposés
+par ces trois outils depuis leur mise en service, 0 inscrit. Ce matin, le
+tableau de bord annonçait « aucune alerte en cours » avec une alerte grave en
+attente depuis sept heures. C'est le défaut jumeau du précédent : une
+surveillance muette et une surveillance qui crie au loup apprennent toutes
+deux à ne plus regarder (règle 2 ; trois s'étaient déjà révélés inertes le même
+jour en août).
+
+Quatrième défaut, mineur : la liste des contrôles à rejouer du test de la
+veille était recopiée à la main. Les deux contrôles ajoutés ce matin n'y
+figuraient pas — ils ne s'exécutaient pas, et l'affichage annonçait « 8/8 ».
+
+### 2. Conséquences
+Sur les données : aucune. Rien perdu, rien corrompu, aucune annonce supprimée ;
+le cycle de nuit s'est déroulé de bout en bout. Contrôle d'intégrité complet
+sans défaut sur la base de référence, 228 722 annonces dont 146 980 actives,
+les huit sources vues dans les délais de leur propre cadence. La sauvegarde sur
+clé du dernier cycle a réussi : 5 234,7 Mo copiés, relus trois fois avec le même
+décompte (220 007 annonces, 138 110 actives) avant retrait de l'ancienne copie.
+
+Sur la surveillance, c'est plus sérieux : le tableau de bord affichait « aucune
+alerte » depuis la mise en service de ces trois outils, quelle que soit la
+réalité. Et un Opus de nuit a été consommé pour rien.
+
+### 3. Plan
+Fait et vérifié, sur la branche `fix/veille-escalade-prose-haiku` (commits
+`d47de34` et `b4ec774`, non fusionnés sur `main`) :
+- la porte d'escalade ne reconnaît plus que les formulations que le programme
+  écrit lui-même ; les ajouts de l'assistant sont consignés au CHANGELOG —
+  donc mesurables — mais ne déclenchent plus d'escalade tant que le cycle
+  tourne, et remontent comme avant une fois le cycle fini. Le modèle constate,
+  le code décide (journal du 2026-07-31) ;
+- chaque run en cours arrive désormais avec son temps de course et la durée
+  habituelle mesurée de son agent (médiane, plus court, plus long sur 30 runs),
+  et la consigne dit explicitement qu'un run dans sa plage habituelle est
+  normal ;
+- les trois surveillances extérieures inscrivent leurs signalements au
+  registre ;
+- `agents/tests/test_escalades_declarees.py` (nouveau) relit les APPELS dans
+  les sources et refuse de passer si un quatrième appelant oubliait ; il
+  vérifie aussi qu'il trouve bien les appels (≥ 8), sans quoi il passerait vert
+  en ne mesurant rien. 11 appels vérifiés, 2,1 s ;
+- le lanceur de `test_veille_cycle.py` déduit sa liste. 10/10.
+
+Pour revenir en arrière : la branche n'est pas fusionnée, un `git checkout` du
+fichier concerné suffit. Aucune migration, aucun schéma touché.
+
+Laissé à l'arbitrage, avec les chiffres (règle 5) :
+- à partir de quelle durée considérer une collecte comme bloquée. Repère fourni,
+  seuil non posé : le poser serait décider de la posture.
+- la cadence de rattrapage des deux sources ajoutées le 2026-10-20 : 4 000
+  annonces par passage, tous les 3 jours, pour ~200 000 de stock initial, soit
+  ~150 jours. Réglage voulu et documenté dans leurs configs ; seul le rythme
+  mérite peut-être d'être rediscuté.
+
+### 4. Ce qui n'a PAS été fait, et pourquoi
+- **Aucun seuil de durée posé** : décision de posture, elle appartient à
+  l'utilisateur.
+- **Aucune règle de méthode touchée** : ni bornes de plausibilité, ni délai de
+  grâce, ni garde-fou anti-délistage, ni cadence, ni définition de calcul.
+- **Rien fusionné sur `main`.**
+- **Les trois courriers en attente n'ont pas été envoyés.** Ce ne sont pas des
+  alertes mais du courrier transactionnel de la beta (agent `bilan-comptes`) :
+  deux « rapport prêt » et un envoi de mot de passe, tous pointant vers
+  `http://localhost:3001`, donc des liens morts hors du poste. L'un porte un
+  mot de passe en clair. Les router vers la boîte d'alertes du projet aurait
+  été une erreur d'adressage doublée d'une diffusion de secret. Ils restent en
+  place. Aucune alerte de sévérité haute n'était en attente d'envoi.
+- **La collecte en cours n'a pas été interrompue** : observée, pas touchée.
+- **Non vérifié** : l'effet des correctifs sur un vrai cycle. Ils ne seront
+  éprouvés en conditions réelles qu'au prochain départ de nuit.
+
+### 5. Trois alertes des jours précédents, vérifiées sans suite
+- `extract-ddproperty` / structure du blob changée (2026-10-20) : déjà réparé
+  par `5d9fce2` sur la branche de travail courante. Runs 964 et 968 : 12 768 et
+  12 764 annonces scannées, 0 erreur HTTP, 0 trace d'erreur. Non récurrent.
+- `extract-fazwaz` / sitemap non régénéré (16, 17 et 18/10) : éteint depuis le
+  déplacement du départ à 02:30. Runs 911 à 988 : 710, 347, 373, 277 et 102
+  nouvelles. Non récurrent.
+- `scores-tension` / scores de revente 199 → 0 (2026-10-21) : conséquence
+  attendue du passage de la config de tension en v3 le même jour (naissance par
+  identifiant séquentiel, décision utilisateur), survenu entre les runs 959 et
+  961 à vingt minutes d'intervalle. Pas une panne. L'alerte compare à la valeur
+  précédente, donc elle s'est tue d'elle-même (0 → 0 au run 981). Reste à
+  trancher, et NON tranché ici : faut-il taire ce garde-fou quand
+  `config_version` change ? Comparer deux versions est comparer des
+  incomparables — la config le déclare elle-même — mais changer quand une alerte
+  parle est une décision de posture.
+
+### Références techniques
+`ops/veille-cycle.py` (`doit_escalader`, `ECHECS_CONSOMMES`, `PREFIXE_HAIKU`,
+`duree_habituelle`, `CONSIGNE_HAIKU`), `ops/pouls.py`, `ops/fraicheur.py`
+(`ledger=` sur `escalation.create`, dont la docstring promettait déjà la
+déclaration). Ticket :
+`agents/queue/done/2026-10-22T213012-veille-claude-cycle_probleme.json`.
+Compte rendu : `agents/audits/reparations-2026-10-23.md`. Run 989,
+`pragma quick_check` = ok, `agents/logs/extract-ddproperty-2026-10-22T193004.log*`
+(4 phases).
