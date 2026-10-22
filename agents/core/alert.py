@@ -55,7 +55,8 @@ def alert(agent: str, subject: str, body: str, severity: str = "high") -> None:
     os.makedirs(MAILBOX, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%S")
     payload = {
-        "to": "schoenauer.anthony@gmail.com",
+        # Boîte dédiée au projet depuis le 2026-10-21 (alertes séparées du courrier perso).
+        "to": "lowi.platform@gmail.com",
         "subject": f"[Lowi BKK] {subject}",
         "body": body,
         "agent": agent,
