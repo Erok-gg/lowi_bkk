@@ -153,3 +153,43 @@ Une phrase de synthèse conclut (« 3 signals of 4 point to buyers »).
 4. **Simulateur de location** : loyer visé, meublé, durée du bail, gestion ; l'effet du loyer sur le délai est **mesuré** par position face à la médiane de l'immeuble.
 5. **Simulateur après rénovation** : prime mesurée par appariement dans l'immeuble (rénové/meublé contre brut) ; coût saisi par l'utilisateur ; effet sur le délai de vente. Limites : meublé connu sur 27 % des ventes ; « rénové » à extraire par regex et à valider à la main.
 **Architecture** (recommandation, non décidée) : un rapport = un objet figé avec un identifiant ; même objet en gratuit et en payant ; PDF par mail généré depuis la même photo ; « Refresh » = nouvelle version ; les sélecteurs lisent la matrice déjà calculée ; calcul sur PC2 puis remontée dans Supabase (Vercel ne joint pas PC2).
+
+## 2026-10-22 — refonte de la page rapport, de la landing et de l'écran de chargement
+
+**Causes.** Avant de montrer le bilan à des professionnels, l'utilisateur a demandé une page plus lisible
+(une version par support : écran Full HD, mobile, impression), une landing plus institutionnelle, et des
+informations qui manquaient : adresse, charges comparées, mois de stock, sorties d'annonces, alertes.
+
+**Conséquences.**
+- Landing : badge retiré, nouveau titre et sous-titre, 3 menus de profil (non branchés : rien n'est lu ni envoyé),
+  erreurs distinctes selon ce qui est collé (« source non prise en charge » / « annonce absente de la base, revenez
+  demain »), bloc club deal noir et blanc, FAQ, pied de page à quatre éléments.
+- Chargement : logo centré, trois cases retirées, barre épaissie avec repères 25/50/75 % en négatif.
+- Rapport : en-tête pleine largeur, colonnes CSS (plus de trou entre blocs), carrés à 30 % d'opacité et losange
+  pour le bien, trois chiffres sans bordure dont « en vente / lots recensés », historique avec portail + favicon +
+  lien tant que l'annonce est en ligne, bloc immeuble (âge, équipements, deux graphiques de charges), sorties
+  d'annonces à ±15 % du prix au m², graphique « mois de stock », 12 alertes possibles au lieu de 4.
+- Méthode : **config v4**, effectifs minimums par niveau (Bangkok toujours noté, CBD 500 groupes, district 100,
+  rayon 1 km 50, immeuble 10 % de ses lots recensés). Scores v4 non comparables aux v3 ; l'ancien fichier est
+  conservé sous `scores-latest.v3-avant-config-v4.json.bak` (retour arrière : le recopier en `scores-latest.json`
+  et remettre `config_version` à 3 et retirer `minimum_par_niveau`).
+
+**Plan.** Fait : tout ce qui précède, typecheck propre, 44 essais de la méthode passent, rendu vérifié à l'écran
+(PC, 1280 px). Recalcul du lot quotidien lancé en v4. Reste : vérifier le rendu mobile (390 px) et la page PDF
+(la fenêtre de test n'a pas pu être redimensionnée), relire les résultats du lot v4.
+**Non fait, et pourquoi.**
+- Photos des 10 premières annonces : le journal juridique (§2) interdit de republier des photos ; attendre la décision.
+- Agent en charge de la vente : le journal juridique (§3, PDPA) interdit d'afficher son nom ; attendre la décision.
+- « Résultats calculés sur 3 mois » : faux — fenêtre réelle de 28 jours (tension) et 90 jours (sorties) ; le texte dit la vérité.
+- Série « mois de stock » sur 2 ans : impossible (données propres depuis le 14/09/2026). Repère officiel : REIC T2 2026,
+  39 mois, Grand Bangkok, une seule valeur. Aucune donnée CBRE trouvée. Notre mesure (≈ 20 mois pour Bangkok)
+  n'est pas comparable : retraits d'annonces contre écoulement du stock neuf.
+- Minimums de SORTIES par niveau (0 Bangkok, 10 ailleurs, 3 immeuble) : choix de l'assistant, à valider.
+- Valeurs aberrantes (>3× ou <1/3 de la médiane du niveau) : règle large posée par l'assistant, à valider.
+- Équipements : « Restaurant » et « Bar » sont présents sur 99,6 % des annonces FazWaz (gabarit) et sont ignorés.
+- Charges connues pour 29 % des immeubles seulement (FazWaz) : sous 10 comparables, pas de graphique.
+
+**Méthode.** Chaque nouveau calcul a été exécuté sur l'annonce Wattana Suite (13 s à chaud, 19 s au premier appel) ;
+les couvertures (charges, équipements, lots) ont été mesurées sur la base avant d'écrire le code.
+**Références techniques.** `bilan_RE/tension/immeuble.py`, `rapport.py`, `coeur.py`, `lot.py`, `config.json`,
+`bilan_RE/web/components/Report.tsx`, `AnalysisLoader.tsx`, `app/beta/page.tsx`.

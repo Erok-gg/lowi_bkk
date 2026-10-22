@@ -10,6 +10,13 @@ export const EXPLICATIONS = {
     "same building with the same number of bedrooms and a size within ±15%, then within 1 km, then the district. Copies of " +
     "the same unit published more than once count once. Each dot is one comparable unit; the dashed line is " +
     "the median. With fewer than 5 comparables we show no verdict. These are asking prices, not sold prices.",
+  ventes:
+    "Some listing portals publish the sales they recorded in a building. We show them next to, never inside, our own " +
+    "figures, and label them as a weak source: we cannot verify where the prices come from, a building typically has about " +
+    "two such sales a year, and the figures describe the portal's own database. We only show a median when at least 5 sales " +
+    "of the same bedroom count and a size within ±15% were reported in the last 36 months; otherwise the sales are listed " +
+    "one by one. The portal's own summary line (average days before sale, discount to the listed price) is quoted as " +
+    "published, not recalculated.",
   histoire:
     "We follow the same unit across the publicly available sources we aggregate. Two listings are treated as the same unit when they share the floor (when " +
     "known), the size within 1 m² and the price within 5%, and appear within 14 days of each other. Reposts by agents are " +

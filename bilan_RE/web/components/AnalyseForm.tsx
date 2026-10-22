@@ -42,7 +42,11 @@ export default function AnalyseForm({ langue = "en" }: { langue?: Langue }) {
       if (fini || !j) return;
       setPhase((p) => (p.t === "loading" ? { ...p, s: j } : p));
       const assez = Date.now() - debut.current > 6500; // un tour de défilement lisible
-      if ((j.etat === "ready" || j.etat === "not_found") && assez) {
+      if (j.etat === "not_found" && assez) {
+        // portail reconnu mais annonce absente de la base : le prochain scrap l'ajoutera
+        fini = true;
+        setPhase({ t: "error", msg: "This listing is not in the database. Come back tomorrow at the same time, it will work." });
+      } else if (j.etat === "ready" && assez) {
         fini = true;
         router.push(`/beta/r/${phase.id}`);
       } else if (j.etat === "error") {
@@ -64,14 +68,14 @@ export default function AnalyseForm({ langue = "en" }: { langue?: Langue }) {
   if (phase.t === "loading") return <AnalysisLoader s={phase.s} />;
 
   return (
-    <form onSubmit={envoyer} className="w-full">
+    <form onSubmit={envoyer} noValidate className="w-full">
       <label htmlFor="url" className="sr-only">
         {t("form_label")}
       </label>
       <div className="flex flex-col gap-3 sm:flex-row">
         <input
           id="url"
-          type="url"
+          type="text"
           inputMode="url"
           autoComplete="off"
           value={url}
@@ -79,7 +83,7 @@ export default function AnalyseForm({ langue = "en" }: { langue?: Langue }) {
             setUrl(e.target.value);
             if (phase.t === "error") setPhase({ t: "idle" });
           }}
-          placeholder="https://www.ddproperty.com/en/property/…"
+          placeholder="Paste your link here"
           className="h-14 w-full rounded-xl border border-rule bg-surface sm:flex-1 px-4 text-base text-ink placeholder:text-faint focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/40"
         />
         <button

@@ -406,13 +406,17 @@ def libelle(p10: float, p50: float, p90: float, cfg: dict, modele: "Modele | Non
 
 
 def evaluer(fs: list[Faits], parent: dict | None, ref: dict, cfg: dict,
-            modele: "Modele | None" = None) -> dict:
-    """Le résultat complet d'une maille : ce que le bilan affiche, effectifs compris."""
+            modele: "Modele | None" = None, minimum: dict | None = None) -> dict:
+    """Le résultat complet d'une maille : ce que le bilan affiche, effectifs compris.
+
+    `minimum` = {"cohortes", "sorties"} propre au NIVEAU (config v4, 2026-10-22) ;
+    absent, c'est le minimum global de la config."""
     m = modele or TENSION
     brut = m.signaux(fs, cfg)
     sig = retour_moyenne(brut, parent, cfg["retour_moyenne_k"], m.sens)
     res = {"n_cohortes": brut["n"], "n_sorties": brut["sorties"], "brut": brut, "signaux": sig}
-    if brut["n"] < cfg["minimum"]["cohortes"] or brut["sorties"] < cfg["minimum"]["sorties"]:
+    mini = minimum or cfg["minimum"]
+    if brut["n"] < mini["cohortes"] or brut["sorties"] < mini["sorties"]:
         res.update(score=None, libelle="not enough data", p10=None, p90=None, detail=None)
         return res
     sc, detail = score(sig, ref, cfg, m)

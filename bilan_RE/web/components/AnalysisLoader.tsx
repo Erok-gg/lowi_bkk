@@ -45,47 +45,36 @@ export default function AnalysisLoader({ s }: { s?: Suivi }) {
   }, [enFile]);
   const courant = i % ETAPES.length;
   const tours = Math.floor(i / ETAPES.length);
+  const pct = Math.min(96, ((i + 1) / ETAPES.length) * 100);
   return (
     <div className="w-full rounded-2xl border border-rule bg-surface p-6" aria-live="polite">
-      <div className="mb-5 flex items-center gap-3">
-        <span className="font-logo text-2xl text-gold-ink">
+      <div className="mb-6 flex flex-col items-center gap-1.5 text-center">
+        <span className="font-logo text-3xl text-gold-ink">
           l<span className="logo-spin-o">o</span>wi
         </span>
         <span className="text-sm text-muted">
-          {enFile ? "Waiting for a free slot…" : "Analysing the listing…"}
+          {enFile
+            ? `Waiting for a free slot… (${s?.position} of ${s?.en_attente})`
+            : "Analysing the listing…"}
+          {s?.restant_s != null && (
+            <span className="font-semibold tabular-nums text-ink"> · {duree(s.restant_s)} left</span>
+          )}
         </span>
-        {s?.restant_s != null && (
-          <span className="ml-auto text-sm font-semibold tabular-nums text-ink">{duree(s.restant_s)} left</span>
-        )}
       </div>
-      {s && (
-        <div className="mb-4 grid grid-cols-3 gap-2 text-center">
-          <div className="rounded-lg bg-sunken p-2">
-            <p className="text-[11px] text-faint">{enFile ? "Your place in line" : "Status"}</p>
-            <p className="text-sm font-semibold tabular-nums text-ink">
-              {enFile ? `${s.position} of ${s.en_attente}` : "computing"}
-            </p>
-          </div>
-          <div className="rounded-lg bg-sunken p-2">
-            <p className="text-[11px] text-faint">Reports running</p>
-            <p className="text-sm font-semibold tabular-nums text-ink">
-              {s.en_cours} / {s.max_parallele}
-            </p>
-          </div>
-          <div className="rounded-lg bg-sunken p-2">
-            <p className="text-[11px] text-faint">Reports processed</p>
-            <p className="text-sm font-semibold tabular-nums text-ink">
-              {s.traites_total.toLocaleString("en-US")}
-              <span className="font-normal text-faint"> · {s.traites_aujourdhui} today</span>
-            </p>
-          </div>
-        </div>
-      )}
-      <div className="h-1 w-full overflow-hidden rounded bg-sunken">
+      {/* Les repères sont écrits dans la couleur du fond de la carte, posés PAR-DESSUS
+          la piste : invisibles sur la piste claire, ils apparaissent quand la barre
+          verte passe dessous. 0 % et 100 % ne sont pas affichés. */}
+      <div className="relative h-5 w-full overflow-hidden rounded-full bg-sunken">
         <div
-          className="h-1 bg-brand transition-all duration-700"
-          style={{ width: `${Math.min(96, ((i + 1) / ETAPES.length) * 100)}%` }}
+          className="absolute inset-y-0 left-0 bg-brand transition-all duration-700"
+          style={{ width: `${pct}%` }}
         />
+        {[25, 50, 75].map((g) => (
+          <span key={g} className="absolute inset-y-0 z-10 flex items-center" style={{ left: `${g}%` }}>
+            <span className="h-full w-px bg-surface" />
+            <span className="ml-1 text-[10px] font-semibold tabular-nums leading-none text-surface">{g}%</span>
+          </span>
+        ))}
       </div>
       <ul className="mt-5 space-y-3">
         {ETAPES.map((e, k) => {

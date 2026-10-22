@@ -1,15 +1,17 @@
 "use client";
 /**
  * Report — le bilan d'une annonce, en trois rendus à partir des mêmes données :
- *   · mobile (< 1024 px) : une colonne, blocs repliables, barres des signaux au
- *     dépliage seulement, bouton PDF collé en bas ;
- *   · PC (≥ 1024 px, pensé pour 1920 × 1080) : colonne gauche collante
- *     (identité, verdict, chiffres clés, bouton PDF), blocs en deux colonnes ;
- *   · PDF (mode="pdf") : fond clair, tout déplié, explications imprimées.
- * Règles : bilan_RE/docs/regles-construction-ui.md.
+ *   · mobile (< 1024 px) : une colonne, blocs repliables, UNE barre par bloc de
+ *     comparaison (pastilles pour changer de niveau), bouton PDF sous le titre ;
+ *   · PC (≥ 1024 px, pensé pour 1920 × 1080) : en-tête pleine largeur, puis blocs
+ *     en colonnes CSS (2 à partir de 1280 px) — la hauteur suit le contenu, il n'y
+ *     a plus de ligne de grille qui laisse un trou sous le bloc le plus court ;
+ *   · PDF (mode="pdf") : une colonne, tout déplié, explications imprimées, sans le
+ *     dépliant « mois de stock ».
+ * Refonte du 2026-10-22. Règles : bilan_RE/docs/regles-construction-ui.md.
  */
 import { useState } from "react";
-import type { Chaine, Comparaison, Niveau, Rapport } from "@/bilan_RE/web/lib/types";
+import type { Bande, Chaine, Comparaison, MoisDeStock, Niveau, Rapport, SortiesPrix } from "@/bilan_RE/web/lib/types";
 import { EXPLICATIONS } from "./explications";
 import Annexe from "./Annexe";
 import PdfGate from "./PdfGate";
@@ -22,39 +24,26 @@ const k = (v: number) => Math.round(v / 1000).toLocaleString("en-US") + "k";
 const pct = (v: number) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(Math.round(v * 100)) + "%";
 const date = (s: string) =>
   new Date(s + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+const court = (nom: string) => nom.replace(", Bangkok", "").replace(" District", "");
+
+/** Rouge foncé des prix demandés (demande du 2026-10-22) : lisible sur blanc, 8,6:1. */
+const ROUGE = "text-[#8e1b1b]";
 
 /**
- * Palette par rendu. Depuis le thème « Ledger » (vert/or/blanc) les DEUX rendus
- * sont clairs : l'écran et le papier ne diffèrent plus que par le fond (blanc
- * franc à l'impression) et par ce qui est déplié.
- *
- * Les couleurs de classe passent par les jetons (`bg-surface`, `text-muted`…)
- * et suivent donc le thème. Les trois couleurs SVG, elles, sont lues dans
- * `palettes.ledger` : `var()` n'est pas interprété dans un attribut de
- * présentation SVG (`fill="rgb(var(--x))"` ne peint rien), et recopier les hex
- * ici les aurait fait dériver de `config/theme.ts`.
+ * Palette par rendu. Les couleurs de classe passent par les jetons et suivent le
+ * thème ; les couleurs SVG sont lues dans `palettes.ledger` (`var()` n'est pas
+ * interprété dans un attribut de présentation SVG).
  */
 function palette(mode: Mode) {
   const L = palettes.ledger;
   const svg = { piste: L.sunken, point: L.faint, accent: L.brand };
-  // En PDF, NI la page NI les cartes ne portent de fond : la feuille est deja
-  // blanche, et un aplat blanc par-dessus masquait entierement le filigrane
-  // (constate a l'ecran le 2026-10-20 — la capture etait au pixel pres la meme
-  // avec et sans filigrane). Les cartes gardent leur filet or, qui suffit a les
-  // detourer sur du blanc.
+  // En PDF, NI la page NI les cartes ne portent de fond : un aplat blanc masquait
+  // le filigrane (constaté le 2026-10-20). Les cartes gardent leur filet or.
   return mode === "pdf"
     ? { page: "text-ink", carte: "border border-rule", doux: "text-muted",
         faible: "text-faint", fond2: "bg-sunken", ...svg }
     : { page: "text-ink", carte: "bg-surface border border-rule", doux: "text-muted",
         faible: "text-faint", fond2: "bg-sunken", ...svg };
-}
-
-/** Pastille d'un libellé de score — en jetons, donc juste dans les deux thèmes. */
-function couleurLibelle(l: string) {
-  if (l.includes("buyer") || l.includes("hard")) return "bg-warn/15 text-warn";
-  if (l.includes("seller") || l.includes("easy")) return "bg-pos/15 text-pos";
-  if (l.includes("not enough") || l.includes("no reference")) return "bg-faint/15 text-faint";
-  return "bg-info/15 text-info";
 }
 
 function Bloc({ titre, id, mode, ouvert = false, children, resume }: {
@@ -66,7 +55,7 @@ function Bloc({ titre, id, mode, ouvert = false, children, resume }: {
   const P = palette(mode);
   const pdf = mode === "pdf";
   return (
-    <section className={`${P.carte} break-inside-avoid rounded-2xl p-5`}>
+    <section className={`${P.carte} mb-4 block w-full break-inside-avoid rounded-2xl p-5`}>
       <button type="button" onClick={() => setOpen(!open)} disabled={pdf} aria-expanded={pdf || open}
         className="flex w-full items-center justify-between gap-3 text-left lg:pointer-events-none">
         <h2 className="text-base font-semibold">{titre}</h2>
@@ -93,6 +82,24 @@ function Bloc({ titre, id, mode, ouvert = false, children, resume }: {
   );
 }
 
+/** Pastilles de choix du niveau — mobile seulement (une barre à la fois). */
+function Pastilles({ noms, choix, set, mode, off = [] }: {
+  noms: string[]; choix: string; set: (n: string) => void; mode: Mode; off?: string[];
+}) {
+  const P = palette(mode);
+  return (
+    <div className="mb-3 flex flex-wrap gap-1.5 lg:hidden">
+      {noms.map((n) => (
+        <button key={n} type="button" onClick={() => set(n)} disabled={off.includes(n)}
+          className={`rounded-full border px-3 py-1 text-xs ${n === choix ? "border-brand bg-brand/15 text-ink" : "border-rule " + P.doux}
+            ${off.includes(n) ? "opacity-40" : ""}`}>
+          {n}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Score({ n, mode }: { n: (Niveau & { niveau?: string }) | null | undefined; mode: Mode }) {
   const P = palette(mode);
   if (!n || n.score === null)
@@ -102,12 +109,12 @@ function Score({ n, mode }: { n: (Niveau & { niveau?: string }) | null | undefin
       <div className="flex items-baseline gap-2">
         <span className="font-data text-5xl">{n.score}</span>
         <span className={P.doux}>/ 100</span>
-        <span className={`ml-auto rounded-md px-2.5 py-1 text-xs ${couleurLibelle(n.libelle)}`}>{n.libelle}</span>
       </div>
       <Echelle n={n} mode={mode} />
       <p className={`mt-1 text-xs ${P.faible}`}>
-        Likely range {n.p10}–{n.p90} · {n.niveau ? `${n.niveau} · ` : ""}n = {n.n_cohortes.toLocaleString("en-US")} unit
-        groups, {n.n_sorties} exits
+        Likely range {n.p10}–{n.p90}{n.niveau ? ` · ${court(n.niveau)}` : ""} · based on{" "}
+        {n.n_cohortes.toLocaleString("en-US")} groups of comparable units, {n.n_sorties.toLocaleString("en-US")} of
+        which left the market
       </p>
     </div>
   );
@@ -132,52 +139,106 @@ function Echelle({ n, mode }: { n: Niveau; mode: Mode }) {
   );
 }
 
-function Chaines({ chaine, mode }: { chaine: Chaine | null | undefined; mode: Mode }) {
+function Ligne({ nom, brut, mode }: { nom: string; brut: Niveau; mode: Mode }) {
   const P = palette(mode);
-  if (!chaine) return null;
+  // fourchette trop large = pas de chiffre affiché, même si le calcul en a un
+  const v = brut.libelle === "not enough data" ? { ...brut, score: null } : brut;
   return (
-    <div className="mt-4 space-y-2">
-      <p className={`text-xs ${P.doux}`}>Compared at every level</p>
-      {Object.entries(chaine).map(([nom, brut]) => {
-        // fourchette trop large = pas de chiffre affiché, même si le calcul en a un
-        const v = brut.libelle === "not enough data" ? { ...brut, score: null } : brut;
-        return (
-        <div key={nom} className="grid grid-cols-[minmax(0,9rem)_1fr_2.5rem] items-center gap-2 text-xs">
-          <span className="truncate">{nom.replace(", Bangkok", "").replace(" District", "")}</span>
-          <div className="h-2 rounded" style={{ background: P.piste }}>
-            {v.score !== null && (
-              <div className="h-2 rounded" style={{ width: `${v.score}%`, background: P.accent }} />
-            )}
-          </div>
-          <span className={`text-right tabular-nums ${v.score === null ? P.faible : ""}`}>{v.score ?? "—"}</span>
-          <span className={`col-span-3 -mt-1 ${P.faible}`}>
-            {v.score === null ? "not enough data · " : `${v.libelle} · `}n = {v.n_cohortes}
-          </span>
-        </div>
-        );
-      })}
+    <div className="grid grid-cols-[minmax(0,9rem)_1fr_2.5rem] items-center gap-2 text-xs">
+      <span className="truncate">{court(nom)}</span>
+      <div className="h-2 rounded" style={{ background: P.piste }}>
+        {v.score !== null && <div className="h-2 rounded" style={{ width: `${v.score}%`, background: P.accent }} />}
+      </div>
+      <span className={`text-right tabular-nums ${v.score === null ? P.faible : ""}`}>{v.score ?? "—"}</span>
+      <span className={`col-span-3 -mt-1 ${P.faible}`}>
+        {v.score === null ? "not enough data · " : ""}{v.n_cohortes.toLocaleString("en-US")} groups of comparable units
+      </span>
     </div>
   );
 }
 
-function Reglette({ c, prix, mode }: { c: Comparaison; prix: number; mode: Mode }) {
+/** Tous les niveaux sur PC et en PDF ; un seul, choisi par pastille, sur mobile. */
+function Chaines({ chaine, mode }: { chaine: Chaine | null | undefined; mode: Mode }) {
   const P = palette(mode);
-  if (!c.points || c.points.length < 5) return null;
-  const lo = Math.min(c.points[0], prix), hi = Math.max(c.points[c.points.length - 1], prix);
-  const x = (v: number) => 8 + ((v - lo) / Math.max(1, hi - lo)) * 304;
+  const noms = chaine ? Object.keys(chaine) : [];
+  const [sel, setSel] = useState(() => [...noms].reverse().find((n) => chaine![n].score !== null) ?? noms[noms.length - 1]);
+  if (!chaine) return null;
+  const tous = (
+    <div className="space-y-2">
+      {noms.map((n) => <Ligne key={n} nom={n} brut={chaine[n]} mode={mode} />)}
+    </div>
+  );
   return (
-    <svg viewBox="0 0 320 52" className="w-full" role="img"
-      aria-label={`${c.n} comparable units from ${k(c.points[0])} to ${k(c.points[c.points.length - 1])} THB per m², this listing at ${k(prix)}`}>
-      <line x1="8" y1="24" x2="312" y2="24" stroke={P.piste} strokeWidth="2" />
-      {c.points.map((v, i) => (
-        <circle key={i} cx={x(v)} cy={24 + ((i % 3) - 1) * 5} r="3.2" fill={P.point} opacity="0.75" />
+    <div className="mt-4">
+      <p className={`mb-2 text-xs ${P.doux}`}>Compared at every level</p>
+      {mode === "pdf" ? tous : (
+        <>
+          <Pastilles noms={noms.map(court)} choix={court(sel)} set={(n) => setSel(noms.find((x) => court(x) === n)!)} mode={mode} />
+          <div className="lg:hidden"><Ligne nom={sel} brut={chaine[sel]} mode={mode} /></div>
+          <div className="hidden lg:block">{tous}</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Bande d'échantillon : un carré translucide (30 %) par unité — les chevauchements
+ * foncent, donc la densité se lit —, la médiane en tirets AU-DESSUS de
+ * l'échantillon mais SOUS le losange du bien analysé, les extrêmes à gauche et à
+ * droite de la barre (demande du 2026-10-22).
+ */
+function Strip({ points, mediane, valeur, fmt, aria, mode }: {
+  points: number[]; mediane?: number | null; valeur: number | null; fmt: (v: number) => string;
+  aria: string; mode: Mode;
+}) {
+  const P = palette(mode);
+  const tous = valeur === null ? points : [...points, valeur];
+  const lo = Math.min(...tous), hi = Math.max(...tous);
+  const X0 = 46, X1 = 274;
+  const x = (v: number) => X0 + ((v - lo) / Math.max(1e-9, hi - lo)) * (X1 - X0);
+  const cy = 40;
+  return (
+    <svg viewBox="0 0 320 62" className="w-full" role="img" aria-label={aria}>
+      <line x1={X0} y1={cy} x2={X1} y2={cy} stroke={P.piste} strokeWidth="2" />
+      {points.map((v, i) => (
+        <rect key={i} x={x(v) - 3} y={cy - 3 + ((i % 3) - 1) * 6} width="6" height="6" fill={P.accent} opacity="0.3" />
       ))}
-      {c.mediane && <line x1={x(c.mediane)} y1="8" x2={x(c.mediane)} y2="40" stroke={P.point} strokeDasharray="3 3" />}
-      <circle cx={x(prix)} cy="24" r="7" fill={P.accent} stroke={palettes.ledger.surface} strokeWidth="2" />
-      <text x="8" y="50" fontSize="9" fill={P.point}>{k(lo)}/m²</text>
-      {c.mediane && <text x={x(c.mediane)} y="6" fontSize="9" fill={P.point} textAnchor="middle">median</text>}
-      <text x="312" y="50" fontSize="9" fill={P.point} textAnchor="end">{k(hi)}/m²</text>
+      {mediane != null && (
+        <>
+          <line x1={x(mediane)} y1="12" x2={x(mediane)} y2="30" stroke={P.point} strokeWidth="1.2" strokeDasharray="3 3" />
+          <text x={x(mediane)} y="9" fontSize="9" fill={P.point} textAnchor="middle">median</text>
+        </>
+      )}
+      <text x={X0 - 6} y={cy + 3} fontSize="9" fill={P.point} textAnchor="end">{fmt(lo)}</text>
+      <text x={X1 + 6} y={cy + 3} fontSize="9" fill={P.point}>{fmt(hi)}</text>
+      {valeur !== null && (
+        <rect x={x(valeur) - 6} y={cy - 6} width="12" height="12" transform={`rotate(45 ${x(valeur)} ${cy})`}
+          fill="#ffffff" stroke={P.accent} strokeWidth="2" />
+      )}
     </svg>
+  );
+}
+
+function NiveauPrix({ c, prix, mode }: { c: Comparaison; prix: number; mode: Mode }) {
+  const P = palette(mode);
+  return (
+    <div className="mb-4">
+      <p className="mb-1 text-sm font-semibold">{c.niveau} <span className={`font-normal ${P.faible}`}>· n = {c.n}</span></p>
+      {c.mediane && c.points && c.points.length >= 5 ? (
+        <>
+          <Strip points={c.points} mediane={c.mediane} valeur={prix} fmt={(v) => k(v)}
+            aria={`${c.n} comparable units from ${k(c.points[0])} to ${k(c.points[c.points.length - 1])} THB per m², this listing at ${k(prix)}`}
+            mode={mode} />
+          <p className={`text-xs ${P.doux}`}>
+            Median {k(c.mediane)}/m² · middle half {k(c.p25!)}–{k(c.p75!)} · this listing {k(prix)} ({pct(c.ecart!)})
+            {c.exclus ? ` · ${c.exclus} extreme value${c.exclus > 1 ? "s" : ""} left out` : ""}
+          </p>
+        </>
+      ) : (
+        <p className={`text-xs ${P.faible}`}>Not enough comparable units ({c.n}).</p>
+      )}
+    </div>
   );
 }
 
@@ -192,57 +253,52 @@ function verdict(r: Rapport): string {
       : `Priced ${pct(c.ecart).replace("−", "")} ${c.ecart < 0 ? "below" : "above"} ${c.niveau.toLowerCase()}`);
   morceaux.push(`listed for ${h.jours_en_ligne} days${h.baisses ? ` with ${h.baisses} price cut${h.baisses > 1 ? "s" : ""}` : ""}`);
   const t = r.tension?.retenu;
-  if (t) morceaux.push(`in a ${t.libelle.replace(" market", "")} market (${t.niveau.replace(", Bangkok", "")})`);
+  if (t) morceaux.push(`in a ${t.libelle.replace(" market", "")} market (${court(t.niveau)})`);
   const s = morceaux.join(", ");
   return s.charAt(0).toUpperCase() + s.slice(1) + ".";
 }
 
-/**
- * `acces` : l'état du compte, résolu par la page serveur (le composant est côté
- * navigateur et ne peut pas lire les cookies). Absent → bouton PDF ouvert comme
- * avant, ce qui garde la version imprimable et les tests inchangés.
- */
-/**
- * MoisDeStock — « le marché en mois de stock », le dépliant pédagogique de la
- * tension (demandé le 2026-10-19 : « je trouve cela facile à comprendre »).
- *
- * Les trois bandes (< 3 / 4–6 / > 6 mois) sont le repère classique du métier,
- * et il est donné comme tel : c'est une grille de LECTURE, pas notre mesure.
- * Nous ne pouvons pas encore l'afficher sur l'annonce, et le dire est plus
- * utile que de l'inventer (règle 1, mesuré le 2026-10-17, journal-donnees) :
- *   · nos mois de stock se calculent sur des RETRAITS d'annonces, pas sur des
- *     ventes notariées comme le repère d'origine ;
- *   · net des republications, les 36 districts publiables vont de 5,7 à 28,9
- *     mois, médiane 13,0 : avec la grille absolue, 35 sur 36 seraient « buyer's
- *     market » et la jauge ne dirait plus rien ;
- *   · le délistage DDproperty est à l'arrêt depuis le 13/10, donc aucune
- *     fenêtre n'a encore ses deux grandes sources saines en même temps.
- * D'où un score RELATIF de 0 à 100, et cette explication pour le relier à la
- * grille que tout le monde connaît.
- */
-function MoisDeStock({ mode }: { mode: Mode }) {
+/** Sorties d'annonces au même prix : « parties », jamais « vendues » (on ne sait pas). */
+function Sorties({ s, mode }: { s: SortiesPrix | null | undefined; mode: Mode }) {
   const P = palette(mode);
-  const pdf = mode === "pdf";
+  if (!s) return null;
+  return (
+    <div className={`mt-4 rounded-lg ${P.fond2} p-3 text-xs leading-relaxed ${P.doux}`}>
+      <p className="mb-1 font-semibold">Units at a similar price per m² (±{Math.round(s.tolerance * 100)}%), within {s.rayon_km} km</p>
+      {s.n_parties > 0 ? (
+        <p>
+          In the last {s.jours} days, <strong>{s.n_parties}</strong> such listings left the market and{" "}
+          <strong>{s.n_actives}</strong> are still online. Median time online before leaving:{" "}
+          <strong>{s.mediane_jours} days</strong>; {Math.round((s.part_30j ?? 0) * 100)}% left within 30 days.
+        </p>
+      ) : (
+        <p>No comparable listing left the market in the last {s.jours} days; {s.n_actives} are online.</p>
+      )}
+      <p className={`mt-1 ${P.faible}`}>
+        “Left” means sold or withdrawn: no source says which. Time online counts from the day we first saw the listing.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * MoisDeStock — le dépliant pédagogique (2026-10-19) et, depuis le 2026-10-22, un
+ * petit graphique : mois de stock de Bangkok et de l'immeuble, avec un intervalle
+ * d'imprécision, et le repère officiel REIC. Absent du PDF (demande du 2026-10-22).
+ * Les trois bandes (< 3 / 4–6 / > 6 mois) sont un repère de LECTURE du métier, pas
+ * notre mesure (règle 1) : nos mois de stock se calculent sur des retraits
+ * d'annonces, pas sur des ventes notariées.
+ */
+function MoisDeStockBloc({ m, mode }: { m: MoisDeStock | undefined; mode: Mode }) {
+  const P = palette(mode);
   const BANDES = [
-    {
-      t: "High tension",
-      m: "under 3 months",
-      d: "Very little on offer. Buyers move fast, units go almost as soon as they appear, and several buyers can end up on the same one.",
-    },
-    {
-      t: "Balanced",
-      m: "4 to 6 months",
-      d: "A healthy market. There is room to negotiate, without having to rush.",
-    },
-    {
-      t: "Low tension",
-      m: "over 6 months",
-      d: "More on offer than buyers. Sellers wait, and the leverage is on your side.",
-    },
+    { t: "High tension", m: "under 3 months", d: "Very little on offer. Buyers move fast, and several can end up on the same unit." },
+    { t: "Balanced", m: "4 to 6 months", d: "A healthy market. There is room to negotiate, without having to rush." },
+    { t: "Low tension", m: "over 6 months", d: "More on offer than buyers. Sellers wait, and the leverage is on your side." },
   ];
   return (
-    <details open={pdf} className={`mt-4 rounded-lg ${P.fond2} p-3`}>
-      <summary className={`cursor-pointer text-xs font-semibold ${P.doux} ${pdf ? "list-none" : ""}`}>
+    <details className={`mt-4 rounded-lg ${P.fond2} p-3`}>
+      <summary className={`cursor-pointer text-xs font-semibold ${P.doux}`}>
         Another way to read a market: months of supply
       </summary>
       <p className={`mt-2 text-xs leading-relaxed ${P.doux}`}>
@@ -256,19 +312,105 @@ function MoisDeStock({ mode }: { mode: Mode }) {
           </li>
         ))}
       </ul>
-      <p className={`mt-2 text-xs leading-relaxed ${P.faible}`}>
-        We do not put a month figure on this listing yet, and we would rather say so. That scale was built on recorded
-        sales; what we can see are listings leaving the market, and one of our sources has been publishing no removals
-        since 13 October. Measured across Bangkok on 17 October, once agent reposts are removed, districts ranged from 5.7 to
-        28.9 months — on that scale almost every district in the city reads as a buyer&apos;s market, which tells you
-        nothing about where you actually have leverage. So the score above is relative instead: 50 is a typical Bangkok
-        district over the last 12 months, lower means more leverage for you than usual, higher means less. The months
-        figure appears here as soon as removals are reliable across sources.
-      </p>
+      {m && <GrapheStock m={m} mode={mode} />}
     </details>
   );
 }
 
+function GrapheStock({ m, mode }: { m: MoisDeStock; mode: Mode }) {
+  const P = palette(mode);
+  const pts = m.points;
+  const W = 320, H = 130, X0 = 30, X1 = 312, Y0 = 12, Y1 = 104;
+  const plafond = Math.max(45, ...pts.flatMap((p) => [p.bangkok?.haut ?? 0, p.immeuble?.haut ?? 0]), m.immeuble_periode?.haut ?? 0);
+  const y = (v: number) => Y1 - (Math.min(v, plafond) / plafond) * (Y1 - Y0);
+  const x = (i: number) => X0 + (pts.length < 2 ? 0.5 : i / (pts.length - 1)) * (X1 - X0);
+  const bang = pts.flatMap((p, i) => (p.bangkok ? [{ i, ...p.bangkok }] : []));
+  const ligne = bang.map((p) => `${x(p.i)},${y(p.mois)}`).join(" ");
+  const bande = bang.length
+    ? bang.map((p) => `${x(p.i)},${y(p.haut)}`).join(" ") + " " + [...bang].reverse().map((p) => `${x(p.i)},${y(p.bas)}`).join(" ")
+    : "";
+  const off = m.officiel, imm = m.immeuble_periode;
+  const dernier = bang[bang.length - 1];
+  return (
+    <div className="mt-3">
+      <p className={`mb-1 text-xs font-semibold ${P.doux}`}>Months of supply, Bangkok vs this building</p>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img"
+        aria-label={`Months of supply: Bangkok about ${dernier ? Math.round(dernier.mois) : "n/a"} months on our data, official reference ${off.mois} months`}>
+        {[0, 15, 30, 45].filter((v) => v <= plafond).map((v) => (
+          <g key={v}>
+            <line x1={X0} y1={y(v)} x2={X1} y2={y(v)} stroke={P.piste} strokeWidth="1" />
+            <text x={X0 - 4} y={y(v) + 3} fontSize="8" fill={P.point} textAnchor="end">{v}</text>
+          </g>
+        ))}
+        {bande && <polygon points={bande} fill={P.accent} opacity="0.2" />}
+        {ligne && <polyline points={ligne} fill="none" stroke={P.accent} strokeWidth="2" />}
+        {imm && (
+          <>
+            <rect x={X0} y={y(imm.haut)} width={X1 - X0} height={Math.max(1, y(imm.bas) - y(imm.haut))} fill={palettes.ledger.warn} opacity="0.2" />
+            <line x1={X0} y1={y(imm.mois)} x2={X1} y2={y(imm.mois)} stroke={palettes.ledger.warn} strokeWidth="2" strokeDasharray="5 3" />
+          </>
+        )}
+        <line x1={X0} y1={y(off.mois)} x2={X1} y2={y(off.mois)} stroke={P.point} strokeWidth="1.2" strokeDasharray="1 3" />
+        <text x={X1} y={y(off.mois) - 3} fontSize="8" fill={P.point} textAnchor="end">REIC {off.periode} · {off.mois}</text>
+        {pts.length > 0 && <text x={X0} y={H - 4} fontSize="8" fill={P.point}>{date(pts[0].fin)}</text>}
+        {pts.length > 1 && <text x={X1} y={H - 4} fontSize="8" fill={P.point} textAnchor="end">{date(pts[pts.length - 1].fin)}</text>}
+      </svg>
+      <ul className={`mt-1 space-y-0.5 text-[11px] leading-relaxed ${P.doux}`}>
+        <li><span className="font-semibold" style={{ color: P.accent }}>━</span> Bangkok, our data
+          {dernier ? ` — about ${Math.round(dernier.mois)} months (range ${Math.round(dernier.bas)}–${Math.round(dernier.haut)})` : ""}</li>
+        <li><span className="font-semibold" style={{ color: palettes.ledger.warn }}>╍</span> This building
+          {imm ? ` — about ${Math.round(imm.mois)} months (range ${Math.round(imm.bas)}–${Math.round(imm.haut)}, ${imm.retraits} exits)`
+            : " — too few exits to give a figure"}</li>
+        <li><span className="font-semibold">┈</span> Official: {off.source}, {off.perimetre}, {off.mois} months</li>
+      </ul>
+      <p className={`mt-2 text-[11px] leading-relaxed ${P.faible}`}>
+        Our figure counts listings leaving the market, not recorded sales, and only covers the weeks since 14 September,
+        when removals became reliable: there is no two-year history yet. The shaded band is an 80% range given the number of
+        exits; it is wide for one building. The official figure also counts unsold new-build stock, so the two are not
+        directly comparable.{" "}
+        <a href={off.url} target="_blank" rel="noopener noreferrer" className="underline">Source</a>.
+      </p>
+    </div>
+  );
+}
+
+/** Bande de charges : un bâtiment face à des bâtiments comparables. */
+function GraphiqueCharges({ titre, b, propre, mode }: { titre: string; b: Bande | null; propre: number | null; mode: Mode }) {
+  const P = palette(mode);
+  return (
+    <div className="mt-3">
+      <p className="mb-1 text-xs font-semibold">{titre}</p>
+      {b ? (
+        <>
+          <Strip points={b.points} mediane={b.mediane} valeur={propre} fmt={(v) => String(Math.round(v))} mode={mode}
+            aria={`Common fee of ${b.n} comparable buildings, median ${Math.round(b.mediane)} THB per m² per month`} />
+          <p className={`text-xs ${P.doux}`}>
+            THB/m²/month · {b.n} buildings · median {Math.round(b.mediane)} · middle half {Math.round(b.p25)}–{Math.round(b.p75)}
+            {propre !== null ? ` · this building ${Math.round(propre)}` : " · this building: fee unknown"}
+          </p>
+        </>
+      ) : (
+        <p className={`text-xs ${P.faible}`}>Not enough comparable buildings with a known fee (10 needed).</p>
+      )}
+    </div>
+  );
+}
+
+function Favicon({ cle }: { cle?: string }) {
+  const f: Record<string, string> = {
+    ddproperty: "ddproperty.com", fazwaz: "fazwaz.com", propertyscout: "propertyscout.co.th", nestopa: "nestopa.com",
+    livinginsider: "livinginsider.com", propertyhub: "propertyhub.in.th", hipflat: "hipflat.com",
+  };
+  if (!cle || !f[cle]) return null;
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={`/beta/favicons/${f[cle]}.png`} alt="" width={16} height={16} className="mr-1 inline-block align-[-3px]" />;
+}
+
+/**
+ * `acces` : l'état du compte, résolu par la page serveur (le composant est côté
+ * navigateur et ne peut pas lire les cookies). Absent → bouton PDF ouvert comme
+ * avant, ce qui garde la version imprimable et les tests inchangés.
+ */
 export default function Report({
   r,
   mode = "web",
@@ -286,38 +428,9 @@ export default function Report({
   const [niveauPrix, setNiveauPrix] = useState(meilleure?.cle ?? "building");
   const choisie = r.prix?.find((x) => x.cle === niveauPrix) ?? meilleure;
   const calc = r.scores_calcul;
-
-  const identite = (
-    <div>
-      <p className={`font-data text-xs uppercase tracking-[0.14em] ${P.faible}`}>Buyer report · beta</p>
-      <h1 className="mt-1 text-2xl font-semibold leading-tight 2xl:text-3xl">{a.condo.replace(", Bangkok", "")}</h1>
-      <p className={`mt-1 text-sm ${P.doux}`}>
-        {a.chambres ?? "?"} bed · {a.sdb ?? "?"} bath · {a.surface} m²{a.etage ? ` · floor ${a.etage}` : ""} ·{" "}
-        {a.khet.replace(" District", "")}
-      </p>
-      <p className="mt-3 text-3xl font-semibold tabular-nums">{thb(a.prix)}</p>
-      {/* `h.portails` n'est PLUS affiché, ni nommé ni compté : demande
-          utilisateur du 2026-10-20 — « un agrégat de sources publiques
-          disponibles », sans nom ni décompte. Le champ reste dans le type, il
-          sert au recoupement de l'historique. */}
-      <p className={`text-sm ${P.doux}`}>{k(a.prix_m2)} THB / m²</p>
-    </div>
-  );
-
-  const chiffres = (
-    <div className="grid grid-cols-3 gap-2">
-      {[
-        { l: "Listed for", v: `${h.jours_en_ligne} d` },
-        { l: "Since first seen", v: h.variation === null ? "—" : pct(h.variation) },
-        { l: "For sale in building", v: String(r.immeuble?.lots_en_vente ?? "—") },
-      ].map((x) => (
-        <div key={x.l} className={`rounded-xl ${P.fond2} p-3`}>
-          <p className={`text-[11px] ${P.doux}`}>{x.l}</p>
-          <p className="text-xl font-semibold tabular-nums">{x.v}</p>
-        </div>
-      ))}
-    </div>
-  );
+  const imm = r.immeuble;
+  const age = imm?.annee ? new Date().getFullYear() - imm.annee : null;
+  const lotsRecenses = Math.max(imm?.lots_recenses ?? 0, imm?.lots_en_vente ?? 0);
 
   const boutonPdf =
     !pdf &&
@@ -326,9 +439,33 @@ export default function Report({
     ) : (
       <a href={`/beta/r/${r.id}/pdf`} target="_blank" rel="noopener"
         className="flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-gold text-base font-bold text-on-gold shadow-gold-glow transition hover:brightness-110 active:scale-[0.98]">
-        <span aria-hidden="true">⬇</span> Get the full PDF report
+        <span aria-hidden="true">⬇</span> Save the report as PDF
       </a>
     ));
+
+  const entete = (
+    <header className={pdf ? "border-b border-rule pb-4" : "mb-6"}>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <h1 className="min-w-0 text-2xl font-semibold leading-tight 2xl:text-3xl">
+          Analysis report: {court(a.condo)}
+        </h1>
+        {pdf ? <span className="font-logo text-3xl text-gold-ink">lowi</span> : <div className="w-full sm:w-72">{boutonPdf}</div>}
+      </div>
+      {imm?.adresse && <p className={`mt-2 text-sm ${P.doux}`}>{imm.adresse}</p>}
+      <p className={`mt-3 text-2xl font-semibold tabular-nums ${ROUGE}`}>
+        <span className="mr-2 text-sm font-normal">Asking price</span>{thb(a.prix)}
+      </p>
+      <p className={`mt-1 text-sm ${P.doux}`}>
+        {a.chambres ?? "?"} bed · {a.sdb ?? "?"} bath · {a.surface} m²{a.etage ? ` · floor ${a.etage}` : ""} ·{" "}
+        {court(a.khet)}
+      </p>
+      <p className={`mt-1 text-xs ${P.faible}`}>
+        Requested {r.demande_le ?? r.genere_le}. Market scores use a {calc?.frequence_calcul === "mensuelle" ? "monthly" : "28-day"}{" "}
+        window, refreshed {calc?.frequence_calcul === "quotidienne" ? "daily" : "regularly"}; exits are compared over the last 90 days.
+      </p>
+      <p className="mt-3 max-w-3xl text-base font-medium leading-snug">{verdict(r)}</p>
+    </header>
+  );
 
   const mentions = (
     <p className={`text-xs ${P.faible}`}>
@@ -346,7 +483,7 @@ export default function Report({
    * l'annexe elle-même. Même carte, même titre, sans l'encart.
    */
   const annexe = (
-    <section className={`${P.carte} break-inside-avoid rounded-2xl p-5`}>
+    <section className={`${P.carte} mb-4 block w-full break-inside-avoid rounded-2xl p-5`}>
       <h2 className="text-base font-semibold">Methodology &amp; limitations</h2>
       <div className="mt-3">
         <Annexe r={r} doux={P.doux} faible={P.faible} />
@@ -354,55 +491,66 @@ export default function Report({
     </section>
   );
 
+  const chiffres = (
+    <div className="mb-4 grid grid-cols-3 gap-3">
+      {[
+        { l: "Listed for", v: `${h.jours_en_ligne} days` },
+        { l: "Price since first seen", v: h.variation === null ? "—" : pct(h.variation) },
+        { l: "For sale in building", v: `${imm?.lots_en_vente ?? "—"} / ${lotsRecenses || "—"}` },
+      ].map((x) => (
+        <div key={x.l}>
+          <p className={`text-[11px] ${P.doux}`}>{x.l}</p>
+          <p className="text-xl font-semibold tabular-nums">{x.v}</p>
+        </div>
+      ))}
+    </div>
+  );
+
   const blocs = (
     <>
       <Bloc titre="Price vs comparable units" id="prix" mode={mode} ouvert
-        resume={choisie?.ecart !== undefined && (
+        resume={
           <p className={`text-sm ${P.doux}`}>
-            <span className="font-semibold text-inherit">{pct(choisie.ecart)}</span> vs {choisie.niveau.toLowerCase()} ·
-            cheaper than {100 - (choisie.rang_pct ?? 0)}% of them
-          </p>
-        )}>
-        {!pdf && (
-          <div className="mb-3 flex flex-wrap gap-1.5">
-            {r.prix?.map((c) => (
-              <button key={c.cle} type="button" onClick={() => setNiveauPrix(c.cle)} disabled={!c.mediane}
-                className={`rounded-full border px-3 py-1 text-xs ${c.cle === niveauPrix
-                  ? "border-brand bg-brand/15 text-ink" : "border-rule " + P.doux}
-                  ${!c.mediane ? "opacity-40" : ""}`}>
-                {c.niveau.replace("The building, ", "Building · ")} ({c.n})
-              </button>
-            ))}
-          </div>
-        )}
-        {(pdf ? r.prix ?? [] : choisie ? [choisie] : []).map((c) => (
-          <div key={c.cle} className="mb-3">
-            {pdf && <p className="mb-1 text-sm font-semibold">{c.niveau} · n = {c.n}</p>}
-            {c.mediane ? (
-              <>
-                <Reglette c={c} prix={a.prix_m2} mode={mode} />
-                <p className={`text-xs ${P.doux}`}>
-                  Median {k(c.mediane)}/m² · middle half {k(c.p25!)}–{k(c.p75!)} · this listing {k(a.prix_m2)} ({pct(c.ecart!)})
-                  · {c.verdict} · n = {c.n}
-                </p>
-              </>
-            ) : (
-              <p className={`text-xs ${P.faible}`}>Not enough comparable units ({c.n}).</p>
+            Price per m²: <span className={`font-semibold ${ROUGE}`}>{k(a.prix_m2)} THB</span>
+            {choisie?.ecart !== undefined && (
+              <> · {pct(choisie.ecart)} vs {choisie.niveau.toLowerCase()} · cheaper than {100 - (choisie.rang_pct ?? 0)}% of them</>
             )}
-          </div>
-        ))}
+          </p>
+        }>
+        {!pdf && (
+          <Pastilles
+            noms={(r.prix ?? []).map((c) => c.niveau.replace("The building, ", "Building · "))}
+            choix={(choisie?.niveau ?? "").replace("The building, ", "Building · ")}
+            set={(n) => setNiveauPrix(r.prix?.find((c) => c.niveau.replace("The building, ", "Building · ") === n)?.cle ?? niveauPrix)}
+            off={(r.prix ?? []).filter((c) => !c.mediane).map((c) => c.niveau.replace("The building, ", "Building · "))}
+            mode={mode} />
+        )}
+        {pdf ? (r.prix ?? []).map((c) => <NiveauPrix key={c.cle} c={c} prix={a.prix_m2} mode={mode} />) : (
+          <>
+            <div className="lg:hidden">{choisie && <NiveauPrix c={choisie} prix={a.prix_m2} mode={mode} />}</div>
+            <div className="hidden lg:block">
+              {(r.prix ?? []).map((c) => <NiveauPrix key={c.cle} c={c} prix={a.prix_m2} mode={mode} />)}
+            </div>
+          </>
+        )}
       </Bloc>
 
       <Bloc titre="The listing's history" id="histoire" mode={mode} ouvert={pdf}
-        resume={<p className={`text-sm ${P.doux}`}>First seen {date(h.premier_vu)} · {h.annonces} listing
-          {h.annonces > 1 ? "s" : ""} found for this unit</p>}>
+        resume={<p className={`text-sm ${P.doux}`}>First seen on {date(h.premier_vu)}</p>}>
+        {chiffres}
         <ol className="space-y-1.5 border-l-2 pl-4 text-sm" style={{ borderColor: P.piste }}>
           {h.evenements.slice(-12).map((e, i) => (
             <li key={i} className={e.type === "price_cut" ? "" : P.doux}>
-              {/* `e.source` n'est plus affiché : il nommait la plateforme à
-                  chaque ligne de la frise (« listed on DDproperty »). Le champ
-                  arrive désormais vide (`sansSources`, lib/rapport.ts). */}
               <span className="tabular-nums">{date(e.date)}</span> ·{" "}
+              {e.source && (
+                <span className="whitespace-nowrap">
+                  <Favicon cle={e.cle} />
+                  {e.url ? (
+                    <a href={e.url} target="_blank" rel="noopener noreferrer nofollow" className="underline">{e.source}</a>
+                  ) : e.source}
+                  {" · "}
+                </span>
+              )}
               {e.type === "listed" ? "listed" :
                 `${e.type === "price_cut" ? "price cut" : "price rise"} ${thb(e.from!)} → ${thb(e.to!)}`}
             </li>
@@ -413,30 +561,97 @@ export default function Report({
         )}
       </Bloc>
 
+      {r.ventes_portail && (
+        <Bloc titre="Reported sales" id="ventes" mode={mode} ouvert={pdf}
+          resume={<span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium text-warn"
+            style={{ borderColor: "currentColor" }}>{r.ventes_portail.etiquette}</span>}>
+          <p className={`mb-3 text-xs ${P.faible}`}>{r.ventes_portail.note}</p>
+          {r.ventes_portail.mediane_m2 != null ? (
+            <p className="mb-3 text-sm">
+              Median of {r.ventes_portail.n_comparables} reported sales of similar units (last{" "}
+              {r.ventes_portail.fenetre_mois} months): THB {Math.round(r.ventes_portail.mediane_m2).toLocaleString("en-US")}/m²
+              {r.ventes_portail.ecart != null && (
+                <> — this listing asks {Math.abs(Math.round(r.ventes_portail.ecart * 100))}%{" "}
+                  {r.ventes_portail.ecart >= 0 ? "above" : "below"}</>)}
+            </p>
+          ) : (
+            <p className={`mb-3 text-sm ${P.doux}`}>Not enough reported sales of similar units
+              ({r.ventes_portail.n_comparables} in the last {r.ventes_portail.fenetre_mois} months; at least 5 needed
+              for a median). {r.ventes_portail.n_immeuble} reported in this building overall.</p>
+          )}
+          {r.ventes_portail.ventes.length > 0 && (
+            <ul className="space-y-1 text-sm">
+              {r.ventes_portail.ventes.map((v, i) => (
+                <li key={i} className={P.doux}>
+                  <span className="tabular-nums">{v.mois}</span> · {v.surface ? `${v.surface} m²` : "size n/a"}
+                  {v.etage ? ` · floor ${v.etage}` : ""} · THB {Math.round(v.prix_m2).toLocaleString("en-US")}/m²
+                </li>
+              ))}
+            </ul>
+          )}
+          {r.ventes_portail.resume && (
+            <p className={`mt-3 text-xs ${P.faible}`}>
+              Portal's own summary ({r.ventes_portail.resume.releve_le}):
+              {r.ventes_portail.resume.n != null && ` ${r.ventes_portail.resume.n} sales`}
+              {r.ventes_portail.resume.jours_avant_vente != null && `, listed ${r.ventes_portail.resume.jours_avant_vente} days on average`}
+              {r.ventes_portail.resume.decote_pct != null && `, sold ${Math.abs(r.ventes_portail.resume.decote_pct)}% ${r.ventes_portail.resume.decote_pct >= 0 ? "below" : "above"} the listed price`}.
+            </p>
+          )}
+        </Bloc>
+      )}
+
       <Bloc titre="Market tension" id="tension" mode={mode} ouvert={pdf}
         resume={<Score n={r.tension?.retenu} mode={mode} />}>
+        <p className={`mt-3 text-xs leading-relaxed ${P.doux}`}>
+          Compared with: {a.chambres ?? "same-size"}-bedroom condos for sale of a similar size, in each area below. A group
+          of comparable units is one building, one bedroom count and one size band. 50 is a typical Bangkok district;
+          lower means more leverage for the buyer.
+        </p>
         <Chaines chaine={r.tension?.chaine} mode={mode} />
-        <MoisDeStock mode={mode} />
+        <Sorties s={r.sorties_prix} mode={mode} />
+        {!pdf && <MoisDeStockBloc m={r.mois_de_stock} mode={mode} />}
       </Bloc>
 
       <Bloc titre="Ease of resale" id="liquidite" mode={mode} ouvert={pdf}
         resume={r.liquidite?.retenu ? <Score n={r.liquidite.retenu} mode={mode} /> :
-          // Le libellé « about three months » datait du 17/10, quand DDproperty
-          // était écarté ; depuis le forçage du 2026-10-20 (config v2), seul un
-          // effectif trop faible à tous les niveaux laisse ce bloc vide.
           <p className={`text-sm ${P.doux}`}>Not enough resales observed around this unit yet to give a reliable
             score. It will appear here automatically as data builds up.</p>}>
         <Chaines chaine={r.liquidite?.chaine} mode={mode} />
+        <Sorties s={r.sorties_prix} mode={mode} />
       </Bloc>
 
       <Bloc titre="The building" id="immeuble" mode={mode} ouvert={pdf}>
         <dl className="grid grid-cols-2 gap-y-2 text-sm">
-          <dt className={P.doux}>Completed</dt><dd>{r.immeuble?.annee ?? "unknown"}</dd>
+          <dt className={P.doux}>Completed</dt>
+          <dd>{imm?.annee ? `${imm.annee}${age !== null ? ` (${age} years old)` : ""}` : "unknown"}</dd>
           <dt className={P.doux}>Common fee</dt>
-          <dd>{r.immeuble?.charges_thb_m2 ? `THB ${Math.round(r.immeuble.charges_thb_m2)}/m²/month` : "unknown"}</dd>
-          <dt className={P.doux}>Units for sale now</dt><dd>{r.immeuble?.lots_en_vente ?? "—"} (distinct units)</dd>
+          <dd>{imm?.charges_thb_m2 ? `THB ${Math.round(imm.charges_thb_m2)}/m²/month` : "unknown"}</dd>
+          <dt className={P.doux}>For sale now</dt>
+          <dd>{imm?.lots_en_vente ?? "—"} of {lotsRecenses || "—"} units recorded</dd>
+          <dt className={P.doux}>Sales, last 2 years</dt>
+          <dd>
+            {r.ventes_portail ? `${r.ventes_portail.n_24_mois ?? 0} reported` : "none reported"}{" "}
+            <span className={P.faible}>(weak source)</span>
+          </dd>
           <dt className={P.doux}>Quota of this unit</dt><dd>{a.quota ?? "not stated"}</dd>
         </dl>
+        {imm?.charges?.equipements?.length ? (
+          <p className={`mt-3 text-sm ${P.doux}`}>
+            <span className="font-semibold text-ink">Amenities</span> · {imm.charges.equipements.join(" · ")}
+          </p>
+        ) : null}
+        {imm?.charges && (
+          <>
+            <GraphiqueCharges titre="Common fee vs buildings at a similar price per m² (±15%)"
+              b={imm.charges.meme_prix} propre={imm.charges.propre} mode={mode} />
+            <GraphiqueCharges titre="Common fee vs buildings with the same or similar amenities"
+              b={imm.charges.memes_equipements} propre={imm.charges.propre} mode={mode} />
+            <p className={`mt-2 text-[11px] ${P.faible}`}>
+              A fee that is low for the amenities offered can mean maintenance is underfunded. The fee is known for{" "}
+              {imm.charges.n_immeubles_avec_charges.toLocaleString("en-US")} buildings only.
+            </p>
+          </>
+        )}
       </Bloc>
 
       <Bloc titre={`Red flags (${r.drapeaux?.length ?? 0})`} id="drapeaux" mode={mode} ouvert>
@@ -458,17 +673,8 @@ export default function Report({
   if (pdf)
     return (
       <div className={`${P.page} mx-auto max-w-[190mm] space-y-4 p-6 text-[13px]`}>
-        <div className="flex items-start justify-between gap-6 border-b border-rule pb-4">
-          {identite}
-          <span className="font-logo text-3xl text-gold-ink">lowi</span>
-        </div>
-        <p className="text-base font-medium">{verdict(r)}</p>
-        {chiffres}
-        <div className="space-y-4">{blocs}</div>
-        {/* L'annexe clôt le rapport, identique à chaque édition. Elle remplace
-            l'ancien bloc « Method and limits », qui nommait les sources gardées
-            (`calc.sources_gardees`) et ne disait ni la version de méthode, ni la
-            règle de révision, ni ce qui n'est pas mesuré. */}
+        {entete}
+        <div>{blocs}</div>
         {annexe}
         {mentions}
       </div>
@@ -476,24 +682,15 @@ export default function Report({
 
   return (
     <div className="h-full overflow-y-auto overflow-x-hidden">
-      <div className={`${P.page} mx-auto max-w-[1880px] px-4 pb-28 pt-6 lg:grid lg:grid-cols-12 lg:gap-6 lg:px-8 lg:pb-10`}>
-        <aside className="min-w-0 space-y-5 lg:sticky lg:top-6 lg:col-span-4 lg:self-start">
-          {identite}
-          <p className="text-base font-medium leading-snug">{verdict(r)}</p>
-          {chiffres}
-          <div className="hidden lg:block">{boutonPdf}</div>
-          <div className="hidden lg:block">{mentions}</div>
-        </aside>
-        <div className="mt-6 grid min-w-0 gap-4 lg:col-span-8 lg:mt-0 xl:grid-cols-2">
+      <div className={`${P.page} mx-auto max-w-[1880px] px-4 pb-10 pt-6 lg:px-8`}>
+        {entete}
+        {/* Colonnes CSS, pas une grille : la hauteur de chaque bloc suit son contenu et
+            les blocs s'empilent sans trou (demande du 2026-10-22). */}
+        <div className="columns-1 gap-4 xl:columns-2">
           {blocs}
-          {/* Pleine largeur, en dernier : c'est de la lecture de référence, pas
-              un bloc d'analyse. Le PDF la rend à l'identique. */}
-          <div className="xl:col-span-2">{annexe}</div>
+          {annexe}
         </div>
-        <div className="mt-6 lg:hidden">{mentions}</div>
-      </div>
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-rule bg-page/95 p-3 backdrop-blur lg:hidden">
-        {boutonPdf}
+        <div className="mt-2">{mentions}</div>
       </div>
     </div>
   );
