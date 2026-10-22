@@ -418,7 +418,13 @@ def escalader(jour: str, preuves: dict, problemes: list[str], verdict: dict, lan
          "runs": [{k: r[k] for k in ("id", "agent", "status", "exit_code", "started_at", "ended_at")}
                   for r in preuves["runs"]]},
         "Reproduire, diagnostiquer, corriger sur une branche si c'est un défaut de code ; "
-        "consigner si c'est un incident passager. Ne rien changer aux règles de méthode.")
+        "consigner si c'est un incident passager. Ne rien changer aux règles de méthode.",
+        # ledger= OBLIGATOIRE : sans lui, escalation.create() écrit le ticket mais
+        # ne le DÉCLARE pas, et `orchestrator status` lit le ledger, pas la file.
+        # Mesure du 2026-10-23 : 46 tickets de sévérité haute déposés par
+        # pouls / veille-claude / fraicheur, 0 déclaré — donc « Escalades
+        # ouvertes : 0 » affiché alors qu'un ticket attendait depuis 7 h.
+        ledger=Ledger())
     _ecrire(f"ticket {ticket}")
     pid = None
     if lancer:

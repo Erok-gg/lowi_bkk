@@ -73,6 +73,7 @@ sys.path.insert(0, str(ROOT))
 
 from agents.core import alert, escalation          # noqa: E402
 from agents.core.metrics import aplatir            # noqa: E402
+from agents.core.ledger import Ledger              # noqa: E402
 
 POULS = ROOT / "agents" / "state" / "pouls.json"
 DEJA_CRIE = ROOT / "agents" / "state" / "pouls-alertes.json"
@@ -200,7 +201,13 @@ def _crier(motif: str, sujet: str, corps: str, preuves: dict) -> None:
             "SANS supposer que l'orchestrateur a tourné : vérifier d'abord la "
             "tâche Windows LowiBKK-Agents (dernier déclenchement, code retour), "
             "puis les journaux Windows (Kernel-Power 42/107, powercfg /lastwake), "
-            "puis seulement le ledger. Corriger SUR UNE BRANCHE."))
+            "puis seulement le ledger. Corriger SUR UNE BRANCHE."),
+        # ledger= OBLIGATOIRE : sans lui, escalation.create() écrit le ticket mais
+        # ne le DÉCLARE pas, et `orchestrator status` lit le ledger, pas la file.
+        # Mesure du 2026-10-23 : 46 tickets de sévérité haute déposés par
+        # pouls / veille-claude / fraicheur, 0 déclaré — donc « Escalades
+        # ouvertes : 0 » affiché alors qu'un ticket attendait depuis 7 h.
+        ledger=Ledger())
     alert.alert("pouls", sujet, corps)
     print(f"  ⚠ ALERTE : {sujet}")
 

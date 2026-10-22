@@ -61,6 +61,7 @@ sys.path.insert(0, str(ROOT))
 
 from agents.core import alert, escalation          # noqa: E402
 from agents.core.metrics import aplatir            # noqa: E402
+from agents.core.ledger import Ledger              # noqa: E402
 
 BASE = ROOT / "scraper" / "output" / "bangkok.db"
 LEDGER = ROOT / "agents" / "ledger.db"
@@ -248,7 +249,13 @@ def _crier(motif: str, sujet: str, corps: str, preuves: dict) -> None:
             "que le recensement rafraîchit bien `last_seen` (metrique "
             "`rafraichies` du dernier run extract-*, et scraper/recense.py : le "
             "rafraîchissement doit précéder les abstentions du parcours troué), "
-            "PUIS la couverture du scan de la source. Corriger SUR UNE BRANCHE."))
+            "PUIS la couverture du scan de la source. Corriger SUR UNE BRANCHE."),
+        # ledger= OBLIGATOIRE : sans lui, escalation.create() écrit le ticket mais
+        # ne le DÉCLARE pas, et `orchestrator status` lit le ledger, pas la file.
+        # Mesure du 2026-10-23 : 46 tickets de sévérité haute déposés par
+        # pouls / veille-claude / fraicheur, 0 déclaré — donc « Escalades
+        # ouvertes : 0 » affiché alors qu'un ticket attendait depuis 7 h.
+        ledger=Ledger())
     alert.alert("fraicheur", sujet, corps)
     print(f"  ⚠ ALERTE : {sujet}")
 
