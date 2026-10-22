@@ -5429,3 +5429,34 @@ logements qui ne le sont pas. Page vérifiée avec le profil investisseur.
 ### Références techniques
 `bilan_RE/web/components/Report.tsx` (`RenovationBloc` non branché, bloc
 « Coming soon »), `explications.tsx` (`renovation`), `docs/methodes-calculs.md` §13.
+
+## 2026-10-22 (suite) — Build Vercel en échec : polices servies depuis le dépôt
+
+### 1. Causes
+Le build Vercel de la branche a échoué au chargement des polices du site
+(Hanken Grotesk et JetBrains Mono). Next 15.4 les télécharge chez Google au
+moment du build ; la feuille reçue par le serveur de Vercel contenait une
+adresse de fichier sans extension, que Next ne sait pas lire.
+
+### 2. Conséquences
+- Aucun déploiement possible tant que Google répond ainsi au serveur de build.
+  Depuis ce poste, la même requête répondait normalement : la panne dépend du
+  réseau du build, elle peut revenir à tout moment.
+- Après correction : les polices sont les **mêmes fichiers**, servies depuis
+  le dépôt (deux fichiers, 66 ko en tout). Le rendu ne change pas, et le build
+  ne dépend plus de Google.
+
+### 3. Plan
+Fait : polices dans le dépôt, build de production vérifié. Pour revenir en
+arrière : reprendre le chargement Google dans le layout.
+
+### 4. Méthode
+Build de production complet lancé dans une copie de travail séparée (le
+serveur de développement en cours n'a pas été touché) : compilation réussie,
+deux fichiers de police embarqués.
+
+### Références techniques
+`app/layout.tsx` : `next/font/google` → `next/font/local` ; `app/fonts/`
+(`HankenGrotesk-latin.woff2`, `JetBrainsMono-latin.woff2`, sous-ensemble latin,
+polices variables, licence SIL OFL 1.1). Erreur d'origine :
+`Cannot read properties of null (reading '1')`, `@next/font/dist/google/loader.js:122`.

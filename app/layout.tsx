@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Hanken_Grotesk, JetBrains_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import LowiHeader from "@/components/LowiHeader";
 import { SearchProvider } from "@/components/SearchProvider";
@@ -19,17 +19,27 @@ import { cssTokens } from "@/config/theme";
  * Elles ne sont TELECHARGEES que si une regle rendue les utilise : seul le
  * sous-arbre `.theme-ledger` reference `var(--police-texte)`, donc la carte et
  * les tableaux ne paient rien. MCTen reste sur le seul logo, c'est la marque.
+ *
+ * FICHIERS DANS LE DEPOT (`app/fonts/`, 2026-10-22), et non plus `next/font/google` :
+ * le build Vercel a echoue sur `Cannot read properties of null (reading '1')`
+ * dans le chargeur Google de Next 15.4 — la feuille servie au serveur de build
+ * contenait une adresse de fichier sans extension, que ce chargeur ne sait pas
+ * lire. Depuis ce poste, la meme requete rendait des `.woff2` normaux : la panne
+ * dependait du reseau du build. Ce sont les MEMES fichiers (sous-ensemble latin,
+ * fonts.gstatic.com, v12 et v24), polices variables : un fichier couvre toutes
+ * les graisses. Licence SIL OFL 1.1 pour les deux (redistribution permise).
+ * Retour arriere : reprendre `Hanken_Grotesk` / `JetBrains_Mono` de next/font/google.
  */
-const policeTexte = Hanken_Grotesk({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
+const policeTexte = localFont({
+  src: "./fonts/HankenGrotesk-latin.woff2",
+  weight: "400 600",
   variable: "--police-texte",
   display: "swap",
 });
 
-const policeDonnees = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
+const policeDonnees = localFont({
+  src: "./fonts/JetBrainsMono-latin.woff2",
+  weight: "400 500",
   variable: "--police-donnees",
   display: "swap",
 });
