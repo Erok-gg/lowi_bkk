@@ -9,7 +9,8 @@
   },
   "lanes": {
     "daily": "Vente + location, tous les 4 jours (cadence par agent via every_days, pas par ce nom de lane)",
-    "weekly": "Hebdomadaire — archivage + purge, sondage de nouvelles sources"
+    "weekly": "Hebdomadaire — archivage + purge, sondage de nouvelles sources",
+    "soir": "Rattrapage du soir (2026-10-22) : tache LowiBKK-Soir a 21:00, 'orchestrator.py run-lane soir'. Ne porte que des extracteurs qui s'arretent seuls avant 02:30 (--jusqua) : un scrap en vol a 02:30 ferait reporter tout le cycle de nuit."
   },
   "agents": [
     {
@@ -18,7 +19,8 @@
       "tier": "T0",
       "lanes": [
         "daily",
-        "weekly"
+        "weekly",
+        "soir"
       ],
       "every_days": 1,
       "module": "agents.bots.garde_veille",
@@ -29,7 +31,8 @@
           0,
           0
         ]
-      }
+      },
+      "_soir_pourquoi": "2026-10-22 : tient le poste eveille pendant le scrap du soir (DotProperty), comme pendant le cycle de nuit."
     },
     {
       "name": "regle-alimentation",
@@ -335,6 +338,37 @@
       }
     },
     {
+      "name": "extract-dotproperty",
+      "famille": "Extraction",
+      "tier": "T0",
+      "lanes": [
+        "soir"
+      ],
+      "every_days": 1,
+      "cmd": [
+        "@py",
+        "scraper/run.py",
+        "--source",
+        "dotproperty",
+        "--full",
+        "--jusqua",
+        "02:00",
+        "--store",
+        "sqlite"
+      ],
+      "_ajoute_le": "2026-10-22, demande utilisateur : scrap le soir (21:00) et jusqu'au bout de la nuit pour rattraper le retard. Arret propre a 02:00 : au-dela, le cycle de 02:30 serait reporte en entier (extraction_en_cours). Scan coupe = partiel = aucun delistage ; le delistage ne joue que les soirs ou la liste est lue en entier. Bandes provisoires, aucun run de production.",
+      "bandes": {
+        "nouvelles": [
+          1,
+          6500
+        ],
+        "traces_erreur": [
+          0,
+          5
+        ]
+      }
+    },
+    {
       "name": "extract-livinginsider",
       "famille": "Extraction",
       "tier": "T0",
@@ -400,9 +434,9 @@
         "actives",
         "--synchro-statuts",
         "--exclure-sources",
-        "propertyhub,hipflat"
+        "propertyhub,hipflat,dotproperty"
       ],
-      "_exclure_pourquoi": "2026-10-20, decision utilisateur : PropertyHub et Hipflat restent locales tant que leur rattrapage (max_nouvelles 2 000/run) n'est pas fini et que le quota Supabase n'est pas chiffre. Leurs lignes gardent dirty_since : retirer l'option les remonte toutes au --delta suivant."
+      "_exclure_pourquoi": "2026-10-20, decision utilisateur : PropertyHub et Hipflat restent locales tant que leur rattrapage (max_nouvelles 2 000/run) n'est pas fini et que le quota Supabase n'est pas chiffre. Leurs lignes gardent dirty_since : retirer l'option les remonte toutes au --delta suivant. 2026-10-22 : dotproperty ajoutee pour la meme raison (rattrapage, quota non chiffre)."
     },
     {
       "_pourquoi": "Ajoute le 2026-09-09. Surveille que le stock ACTIF est reellement confirme par les scans, et non seulement marque actif. Ne pas confondre avec watch-health, qui juge la SORTIE d'un extracteur (bandes de metriques) : celui-ci juge l'ETAT de la base qui en resulte. Un extracteur peut rendre des metriques dans les clous pendant que le stock actif vieillit sans que rien ne le confirme — c'est exactement ce qui s'est passe : recense.py sautait le rafraichissement de last_seen des que le parcours avait un trou (1 a 6 pages sur ~2600, donc a TOUS les runs), et ddproperty est tombe a 9,6 % d'actives confirmees < 48 h, la plus ancienne datant du 23/07, sans une seule alerte. Place ICI, apres les extracteurs et remonter-supabase : il lit ce que le cycle vient d'ecrire. Seuil auto-calibre sur la mediane de l'historique de CHAQUE source (nestopa est gelee a une page par conception et plafonnera toujours bas : un seuil commun crierait au loup). Se tait tant qu'il n'a pas 4 releves.",
@@ -425,7 +459,8 @@
         "extract-nestopa",
         "extract-livinginsider",
         "extract-propertyhub",
-        "extract-hipflat"
+        "extract-hipflat",
+        "extract-dotproperty"
       ]
     },
     {
@@ -444,7 +479,8 @@
         "extract-nestopa",
         "extract-livinginsider",
         "extract-propertyhub",
-        "extract-hipflat"
+        "extract-hipflat",
+        "extract-dotproperty"
       ]
     },
     {
@@ -489,7 +525,8 @@
         "extract-nestopa",
         "extract-livinginsider",
         "extract-propertyhub",
-        "extract-hipflat"
+        "extract-hipflat",
+        "extract-dotproperty"
       ],
       "needs_supabase": true,
       "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté."

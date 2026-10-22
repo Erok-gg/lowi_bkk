@@ -15,6 +15,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   livinginsider: "LivingInsider",
   propertyhub: "PropertyHub",
   hipflat: "Hipflat",
+  dotproperty: "DotProperty",
 };
 
 export function sourceLabel(source: string): string {

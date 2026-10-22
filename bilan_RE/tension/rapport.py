@@ -59,7 +59,8 @@ TOL_SURFACE = 0.15
 MIN_COMPARABLES = 5
 SOURCES_LISIBLES = {"ddproperty": "DDproperty", "fazwaz": "FazWaz / Thaiger", "propertyscout": "PropertyScout",
                     "nestopa": "Nestopa", "livinginsider": "LivingInsider",
-                    "propertyhub": "PropertyHub", "hipflat": "Hipflat"}
+                    "propertyhub": "PropertyHub", "hipflat": "Hipflat",
+                    "dotproperty": "DotProperty"}
 
 #: Sources dont la date de création déclarée est PLAUSIBLEMENT une vraie date de
 #: création et non une remontée en tête de liste. Mesure du 2026-10-22 : chez

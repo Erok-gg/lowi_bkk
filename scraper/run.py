@@ -29,6 +29,7 @@ from adapters.nestopa import NestopaAdapter  # noqa: E402
 from adapters.livinginsider import LivinginsiderAdapter  # noqa: E402
 from adapters.propertyhub import PropertyhubAdapter  # noqa: E402
 from adapters.hipflat import HipflatAdapter  # noqa: E402
+from adapters.dotproperty import DotpropertyAdapter  # noqa: E402
 from pipeline.fetch import Fetcher  # noqa: E402
 from pipeline.normalize import normalize  # noqa: E402
 from pipeline.geo_match import KhetMatcher  # noqa: E402
@@ -48,6 +49,7 @@ ADAPTERS = {
     "livinginsider": LivinginsiderAdapter,
     "propertyhub": PropertyhubAdapter,
     "hipflat": HipflatAdapter,
+    "dotproperty": DotpropertyAdapter,
 }
 ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "config"
@@ -121,6 +123,13 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="fazwaz", choices=list(ADAPTERS))
     ap.add_argument("--limit", type=int, default=None, help="nb max d'annonces (test)")
+    # 2026-10-22 (DotProperty, scrap de rattrapage du soir) : un scrap encore en
+    # vol à 02:30 fait REPORTER le cycle de nuit entier (orchestrator.py,
+    # extraction_en_cours). Le scan s'arrête donc proprement à l'heure dite et
+    # se compte comme partiel : aucun délistage sur ce qu'il n'a pas eu le temps de voir.
+    ap.add_argument("--jusqua", default=None, metavar="HH:MM",
+                    help="arrêt propre à cette heure locale (le lendemain si déjà passée) ; "
+                         "le scan est alors partiel : pas de délistage")
     ap.add_argument("--full", action="store_true",
                     help="scan complet : marque les annonces disparues comme inactives")
     ap.add_argument("--fetch-detail", action="store_true",
@@ -236,8 +245,22 @@ def main() -> None:
     seen_ids: set[str] = set()
     price_alerts: list[str] = []
     completed = False  # True si le scan est allé au bout (cond. au délistage --full)
+    echeance = None
+    if args.jusqua:
+        from datetime import datetime as _dt, timedelta as _td
+        h, m = (int(x) for x in args.jusqua.split(":"))
+        echeance = _dt.now().replace(hour=h, minute=m, second=0, microsecond=0)
+        if echeance <= _dt.now():
+            echeance += _td(days=1)
+        print(f"  arrêt prévu à {echeance:%Y-%m-%d %H:%M} (heure locale)")
+    arret_horaire = False
 
     for stub in adapter.list_urls(fetcher, limit=args.limit):
+        if echeance is not None and _dt.now() >= echeance:
+            arret_horaire = True
+            print(f"[ARRET-HORAIRE] {args.source} : arrêt à {args.jusqua} après "
+                  f"{n_total} annonces vues — scan partiel, aucun délistage")
+            break
         # Exclusion à la source (avant dédup/délistage) : on ne l'ajoute pas à
         # seen_ids → avec --full une annonce exclue déjà en base sera délistée.
         if is_excluded(excludes, stub.get("condo_name"), stub.get("title")):
@@ -410,7 +433,7 @@ def main() -> None:
             print(f"  [erreur] {lid} : {e}")
             continue
 
-    completed = True  # boucle allée au bout
+    completed = not arret_horaire  # boucle allée au bout (pas coupée par --jusqua)
 
     # Coupure réseau non résolue en cours de scan (fetch.py a attendu 20 min
     # avant d'abandonner une URL, cf. Fetcher._attend_coupure) : le scan s'est

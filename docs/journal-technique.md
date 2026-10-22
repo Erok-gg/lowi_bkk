@@ -5255,3 +5255,60 @@ Correctif à arbitrer (méthode = décision utilisateur). Le score v2 du cycle d
 21/10 a été écrasé par le recalcul v3 (même nom de fichier, même fin de
 fenêtre). L'escalade Opus déclenchée par le constat porte la consigne « ne rien
 changer aux règles de méthode ». `created_at` PropertyScout non capté.
+
+## 2026-10-22 — DotProperty devient une source, scrapée le soir de 21:00 à 02:00
+
+### 1. Causes
+Demande : ajouter DotProperty et le faire tourner le soir, aussi longtemps que
+la nuit le permet, pour rattraper son stock.
+
+### 2. Conséquences
+- **La conclusion d'août était fausse.** On avait écarté DotProperty parce que
+  toutes ses photos venaient d'une adresse « fazwaz ». En réalité, cette
+  adresse est le stockage de photos du groupe Lifull Connect, le même que pour
+  Hipflat : elle ne dit rien de l'origine des annonces.
+- Mesure directe sur 179 annonces : **153 (85 %)** ont déjà un équivalent dans
+  notre base (même immeuble, même prix, surtout chez DDproperty et FazWaz) ;
+  **26 (15 %)** n'existent dans aucune de nos sources. Sur ~180 000 annonces,
+  cela fait de l'ordre de **27 000 annonces nouvelles**.
+- Le site se lit en entier (pas de limite de pages, contrairement à Hipflat).
+- Le scrap tourne **de 21:00 à 02:00 au plus tard**. Il ne peut pas aller
+  au-delà : un scrap encore en cours à 02:30 ferait reporter tout le cycle de
+  nuit des autres sources.
+- Attendu (estimé, non mesuré sur une nuit réelle) : lecture complète de la
+  liste en ~2 h, puis jusqu'à **3 000 nouvelles annonces par soir**. Le
+  rattrapage prendra des semaines.
+- Tant que la liste n'est pas lue en entier avant 02:00, **aucune annonce
+  DotProperty n'est retirée** : on ne retire que ce qu'on a eu le temps de
+  vérifier.
+- Comme PropertyHub et Hipflat : pas envoyée au site public, pas comptée dans
+  les scores de tension pendant le rattrapage.
+
+### 3. Plan
+- Fait : scraper de production, nouvelle tâche Windows de 21:00 (avec réveil
+  du poste), arrêt automatique à 02:00, surveillance et tests adaptés.
+- Premier passage : **ce soir, 22/10 à 21:00**.
+- À vérifier demain : durée réelle de la lecture de la liste et nombre de
+  nouvelles annonces, pour recaler la limite de 3 000.
+- Pour revenir en arrière : supprimer la tâche « LowiBKK-Soir », ou vider la
+  lane de l'agent.
+
+### 4. Méthode
+- 6 pages de liste (vente, location ; début, milieu, fin) comparées à la base,
+  annonce par annonce.
+- Essai en base jetable : 25 annonces sur 25 complètes (surface, salles de
+  bain, coordonnées, quartier, description) ; 2e passage entièrement
+  reconnu sans rouvrir de fiche ; arrêt horaire testé : le scan s'arrête à
+  l'heure dite et ne retire rien.
+- Simulation de la lane du soir : elle lance bien le maintien d'éveil du poste
+  puis DotProperty. Tâche Windows relue après installation.
+
+### Références techniques
+`scraper/adapters/dotproperty.py` (réécrit), `scraper/config/dotproperty.json`
+(`max_pages` 4200, `max_nouvelles` 3000), `scraper/run.py` (`--jusqua HH:MM`,
+marqueur `[ARRET-HORAIRE]`, scan partiel sans délistage), `agents/agents.json`
+(lane `soir`, agent `extract-dotproperty`, `garde-veille` sur `soir`,
+exclusion `remonter-supabase`), `ops/install-soir-task.ps1` (tâche
+`LowiBKK-Soir`, `WakeToRun`, sans `StartWhenAvailable`),
+`agents/tests/test_lanes.py` (lane annexe déclarée + garde-veille),
+`bilan_RE/tension/config.json`, `lib/sources.ts`, `ops/verifie-synchro.py`.

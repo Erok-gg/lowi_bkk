@@ -72,6 +72,11 @@
         "raison": "rattrapage du stock initial (max_nouvelles 2 000/run) : le stock part de 0, aucune regle automatique ne se declenche (actives_debut = 0)"
       },
       {
+        "source": "dotproperty",
+        "depuis": "2026-10-22",
+        "raison": "rattrapage du stock initial (max_nouvelles 3 000/run) : le stock part de 0, aucune regle automatique ne se declenche (actives_debut = 0)"
+      },
+      {
         "source": "hipflat",
         "depuis": "2026-10-20",
         "raison": "rattrapage du stock initial (max_nouvelles 2 000/run) : le stock part de 0, aucune regle automatique ne se declenche (actives_debut = 0)"
