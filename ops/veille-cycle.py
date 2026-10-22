@@ -44,6 +44,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import shutil
 import sqlite3
+import statistics
 import hashlib
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -136,7 +137,38 @@ def runs_du_cycle(debut_utc: str) -> list[dict]:
         r["metrics"] = {k: v for k, v in m.items() if not isinstance(v, (list, dict))}
         if r["status"] == "running":
             r["pid_vivant"] = Ledger._processus_vivant(r["pid"])
+            # Sans ces deux repères, « running depuis 2 h » n'est pas
+            # interprétable : cf. duree_habituelle().
+            try:
+                debut = datetime.fromisoformat(r["started_at"])
+                r["tourne_depuis_min"] = round(
+                    (datetime.now(timezone.utc) - debut).total_seconds() / 60, 1)
+            except (TypeError, ValueError):
+                pass
+            r["duree_habituelle"] = duree_habituelle(r["agent"])
     return rows
+
+
+def duree_habituelle(agent: str) -> dict | None:
+    """Durée des 30 derniers runs réussis de cet agent, en minutes.
+
+    POURQUOI (2026-10-23) : les preuves ne disaient NULLE PART combien de temps
+    un agent met d'habitude. Haiku a donc lu « running depuis 2 h, pas de
+    métriques » et conclu « extraction suspendue » — alors que la médiane
+    mesurée d'`extract-ddproperty` est de 327 min, et qu'il n'écrit ses
+    métriques qu'à la fin. Un Opus réveillé pour rien. On ne pose pas de seuil
+    ici (ce serait une décision de posture, règle 5) : on fournit le repère
+    mesuré et on laisse juger."""
+    cx = sqlite3.connect(f"file:{LEDGER}?mode=ro", uri=True, timeout=30)
+    d = [r[0] for r in cx.execute(
+        "select round((julianday(ended_at) - julianday(started_at)) * 1440, 1) "
+        "from agent_runs where agent = ? and status = 'ok' and ended_at is not null "
+        "order by id desc limit 30", (agent,)) if r[0] is not None]
+    cx.close()
+    if not d:
+        return None
+    return {"runs_mesures": len(d), "mediane_min": round(statistics.median(d), 1),
+            "plus_court_min": min(d), "plus_long_min": max(d)}
 
 
 def constats_hauts(debut_utc: str) -> list[dict]:
@@ -275,6 +307,10 @@ Règles :
 - "probleme" dès qu'une preuve montre un échec : run failed/interrompu, constat haut,
   lignes d'erreur, pouls --verifier en échec, extracteurs_ok < extracteurs_lances,
   annonces_ecrites à 0, cycle pas parti, erreurs dans les métriques d'un run.
+- Un run "running" dont le processus est vivant et dont "tourne_depuis_min" reste
+  dans la plage de son "duree_habituelle" est NORMAL : ne le signale pas. Ces
+  agents mettent plusieurs heures et n'écrivent leurs métriques qu'à la fin —
+  des métriques vides en cours de route ne sont pas une panne.
 - Ne cite que ce qui figure dans les preuves. N'invente aucun chiffre.
 
 État décidé par le code : {etat}
@@ -494,7 +530,14 @@ def controle_inactivite(preuves: dict, maintenant: datetime, escalade: bool) -> 
 
 # ─── Passage ────────────────────────────────────────────────────────────────
 
-ECHECS_CONSOMMES = (": failed", ": interrompu", "processus", "constat haut", "pas parti")
+#: Chaque motif est un morceau de phrase que CE MODULE fabrique lui-même
+#: (cf. etat_mecanique) — jamais un mot isolé qu'une prose libre pourrait
+#: contenir par accident. « processus » tout seul y figurait et laissait
+#: passer « processus vivant », qui dit le contraire d'un processus disparu.
+ECHECS_CONSOMMES = (": failed", ": interrompu", "mais processus", "constat haut", "pas parti")
+#: Marque les problèmes ajoutés par Haiku : de la PROSE LIBRE, et non les
+#: phrases que ce module fabrique.
+PREFIXE_HAIKU = "(haiku) "
 
 
 def doit_escalader(etat: str, problemes: list[str]) -> bool:
@@ -502,12 +545,28 @@ def doit_escalader(etat: str, problemes: list[str]) -> bool:
     les échecs déjà consommés (run terminé en échec, processus disparu,
     constat haut). Les lignes d'erreur d'un extracteur qui tourne encore sont
     souvent des reprises réseau (« délai curl dépassé… repris », 3 fois le
-    30/09, toutes rattrapées) : on attend la fin du cycle pour en juger."""
+    30/09, toutes rattrapées) : on attend la fin du cycle pour en juger.
+
+    Les ajouts de Haiku ne franchissent PAS cette porte pendant que le cycle
+    tourne. Deux faits mesurés le 2026-10-23 :
+    (1) le filtre cherchait « processus » dans de la prose libre, si bien que
+        « processus vivant » ouvrait l'escalade — 2 tournures sur 2 essayées
+        passaient, dont « le processus tourne normalement » ;
+    (2) le seul problème que Haiku ait relevé seul, à 04:30 ce jour-là, était
+        faux : « extraction suspendue » sur extract-ddproperty à 2 h de course,
+        alors que la médiane mesurée de cet agent est de 327 min (30 derniers
+        runs, de 166 à 1 201 min) et que son journal grossissait de 2 119
+        octets en 25 s, page 164 sur 300. Soit 1 ajout sur 1 infondé, pour un
+        Opus réveillé en pleine nuit (règle 2).
+    Le modèle constate, le code décide (journal du 2026-07-31). Ces ajouts
+    restent consignés au CHANGELOG — donc mesurables — sans réveiller
+    personne ; cycle fini, ils remontent comme avant."""
     if not problemes:
         return False
     if etat != "en_cours":
         return True
-    return any(m in p for p in problemes for m in ECHECS_CONSOMMES)
+    du_code = [p for p in problemes if not p.startswith(PREFIXE_HAIKU)]
+    return any(m in p for p in du_code for m in ECHECS_CONSOMMES)
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -572,13 +631,21 @@ def main() -> int:
     # erreur(s) » dans les métriques d'un run ok). On l'ajoute, marqué comme tel,
     # pour pouvoir mesurer plus tard combien de ces ajouts étaient fondés.
     if verdict.get("verdict") == "probleme" and not problemes:
-        problemes = [f"(haiku) {x}" for x in verdict.get("problemes") or ["sans détail"]]
+        problemes = [f"{PREFIXE_HAIKU}{x}" for x in verdict.get("problemes") or ["sans détail"]]
 
     if doit_escalader(etat, problemes):
         if not a.sans_escalade:
             escalader(jour, preuves, problemes, verdict, lancer=True)
         else:
             _ecrire("escalade désactivée (--sans-escalade) : " + " | ".join(problemes))
+    elif problemes:
+        # Retenu, pas perdu : le CHANGELOG garde la trace de ce que Haiku a cru
+        # voir pendant que le cycle tournait, pour pouvoir mesurer plus tard la
+        # proportion d'ajouts fondés (1 sur 1 infondé au 2026-10-23).
+        for x in problemes:
+            _ecrire(f"retenu (cycle en cours, pas d'escalade) : {x}")
+            if not a.sans_escalade:
+                alert.log("veille-claude", "low", f"retenu pendant le cycle : {x[:300]}")
 
     if etat == "termine" and not a.forcer:
         ETAT.mkdir(parents=True, exist_ok=True)
