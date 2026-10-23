@@ -5752,3 +5752,134 @@ déclaration). Ticket :
 Compte rendu : `agents/audits/reparations-2026-10-23.md`. Run 989,
 `pragma quick_check` = ok, `agents/logs/extract-ddproperty-2026-10-22T193004.log*`
 (4 phases).
+
+## 2026-10-23 — Hipflat et PropertyHub passent en quotidien (demande explicite)
+
+**Causes.** Cadence provisoire de 3 jours (2026-10-20) remplacée à la demande de l'utilisateur. **Conséquences.** Les deux agents sont dus dès le cycle de 02:30 ; coût annoncé ~3-4 h de plus par passage sur le cycle de nuit — **non remesuré**, à relever au 1er cycle. **Plan.** `every_days` 3 → 1 dans `agents/agents.json` (non commité). Les 1 098 erreurs HTTP de PropertyHub (run du 20/10) sont **laissées de côté** : la donnée arrive, décision de l'utilisateur. DotProperty reste en lane `soir` (21:00), déjà quotidien. **Méthode.** Relecture du JSON et de `orchestrator status` : les trois agents apparaissent dus.
+
+## 2026-10-23 (suite) — Relever la cadence d'un agent le déclarait mort dans la minute ; et le journal d'un extracteur sobre reste vide pendant des heures
+
+**Causes.** Deux défauts distincts, le second trouvé en mesurant le premier.
+
+*Un.* L'entrée précédente consigne le passage de `extract-propertyhub` et
+`extract-hipflat` de 3 jours à 1 jour (`agents/agents.json`, modifié à 09:05:31
++07:00, après le cycle de 02:30). À 09:30:02, `controle_inactivite` les a
+déclarés inactifs depuis **55,0 h** pour un seuil de 24 h, relancé
+`LowiBKK-Agents` et réveillé Opus. Les deux agents étaient à l'heure : dernier
+run `ok` le 2026-10-20T19:30 UTC (runs 948/949), prochain dû le 24/10 sous la
+cadence alors en vigueur. `inactifs()` mesurait les heures depuis le dernier
+démarrage et les comparait au seuil **de la cadence du jour**, sans tenir
+compte du fait que le temps écoulé l'avait été sous une autre. Contrefactuel
+vérifié sur `HEAD:agents/agents.json` : avec `every_days: 3`, aucun des deux
+agents n'entre dans `agents_quotidiens()` — donc aucune alerte possible.
+Reproduit à l'identique (55,0 h sur les deux) en rejouant le ledger réel privé
+des runs 1006/1007, à l'instant exact du constat.
+
+*Un bis.* `controle_inactivite` relance le cycle **puis** escalade, en passant
+à Opus les problèmes mesurés **avant** la relance. Le ticket affirmait donc
+« et rien ne tourne » alors que les deux extracteurs étaient partis 4 s plus
+tôt (runs 1006/1007, `2026-10-23T02:30:08+00:00`, processus vérifiés vivants).
+L'Opus appelé a cherché une panne déjà réparée par l'appelant lui-même.
+
+*Deux.* En vérifiant que les deux extracteurs relancés avançaient, mesure
+inattendue : `agents/logs/extract-propertyhub-2026-10-23T023008.log` pesait
+**0 octet après 15 minutes**, pendant que `extract-hipflat`, parti la même
+seconde, en était à 200 ko — et pendant que la base montrait propertyhub
+écrire **23 annonces / 50 s**. Son journal du 20/10 pèse 298 ko : le texte
+arrive, mais à la fin d'un run de 5 h 47. Cause : `agents/core/shell.py` vide
+le tampon du **parent** à chaque ligne lue (`fh.flush()`), mais l'**enfant**
+groupe sa sortie par blocs de 8 ko tant qu'elle ne va pas vers un terminal.
+`PYTHONIOENCODING` et `PYTHONUTF8` y étaient déjà posés (correctif du
+2026-08-22) ; ils règlent l'encodage, pas le groupage. Un agent bavard franchit
+le seuil en permanence, un agent sobre peut mettre des heures.
+
+**Conséquences.** Aucune donnée perdue, aucune collecte manquée : les deux
+sources avaient été relevées le 21/10 et leur premier passage quotidien a
+démarré à 09:30. Le coût est une **troisième fausse alerte en deux nuits** —
+2 constats hauts, une relance du cycle en pleine journée, un Opus réveillé.
+Le défaut *deux* n'avait encore rien cassé, mais il nourrit directement le
+premier : c'est en lisant un journal vide qu'on croit un extracteur mort, et
+il rend tout diagnostic plus long pendant près de six heures par run.
+
+**Plan.** Branche `fix/veille-inactivite-cadence-changee`, commits `b21e6b4`
+et `4490e4f`.
+
+- `ops/veille-cycle.py` : `cadences_declarees()` + `planchers_cadence()`
+  mémorisent la cadence vue de chaque agent quotidien dans
+  `agents/state/veille/cadences.json` ; un **changement constaté** remet le
+  décompte à zéro à l'instant du constat, et `inactifs()` prend ce plancher en
+  compte. **`INACTIVITE_MAX_H` reste à 24 h** : c'est une règle de méthode, et
+  ce n'est pas le seuil qui était faux mais le point de départ du décompte.
+- Choix encodé et commenté : **l'amorçage ne pose aucun plancher**. Si le
+  premier passage en posait un, l'installation du fichier d'état aveuglerait
+  les 20 agents quotidiens pendant 24 h — un garde-fou muet vaut celui qui crie
+  (règle 2). Seul un changement de cadence accorde le délai, et le délai est un
+  report : vérifié, l'alerte repart 25 h après le changement.
+- `ops/veille-cycle.py` : le résultat de `relancer_cycle()` est joint aux
+  preuves du ticket (`relance_inactivite`), pour qu'un Opus ne reparte plus
+  chercher ce que l'appelant venait de réparer.
+- `agents/core/shell.py` : `PYTHONUNBUFFERED=1` sur les sous-processus.
+  Retour arrière : retirer la ligne.
+- Tests : `agents/tests/test_veille_cadence_changee.py` (6 cas, 13
+  vérifications — dont la repro du défaut et le fait que le garde-fou reparle
+  après le délai) et `agents/tests/test_log_au_fil_de_leau.py` (2 cas, 5
+  vérifications — vrai sous-processus, vrai tuyau, vrai fichier, enfant sobre
+  à dessein ; vérifié en échec avant correctif, en succès après ; le 2e cas
+  garde le correctif UTF-8 du 2026-08-22 que le 1er aurait pu défaire).
+- Ticket `2026-10-23T023006-veille-claude-cycle_probleme` résolu et déplacé ;
+  escalade réconciliée dans le ledger (`Escalades ouvertes : 0`).
+
+**Méthode.** Horodatage de `agents/agents.json` (09:05:31, soit 25 min avant le
+constat et après le cycle), ledger (runs 948/949 `ok` le 20/10), contrefactuel
+sur la config d'avant le changement, puis rejeu de `inactifs()` sur une copie
+du ledger réel ramenée à l'état de 09:30:02 : 2 alertes avant correctif,
+0 après, 2 de nouveau 25 h plus tard. Pour le défaut *deux* : relevé de la
+taille des deux journaux trois fois en une minute (0 / 197 274 / 200 324 o)
+pendant que la base montrait les deux sources écrire, puis repro en vase clos.
+Tests voisins repassés : `test_veille_cycle` 10/10, `test_orchestrator_tee`,
+`test_console_utf8`, `test_lanes`, `test_metrics`.
+
+Santé du reste, vérifiée : `pragma quick_check` = ok (331 s) et
+`pragma foreign_key_check` = ok sur `scraper/output/bangkok.db` (5 384 Mo, WAL,
+**deux écrivains concurrents au moment du contrôle**) ; 229 435 annonces /
+146 513 actives ; les 8 sources vues dans les 14 h ; sauvegarde sur clé du
+cycle réussie (5 383 Mo, 3 relectures concordantes à 228 722 / 145 800 avant
+rotation). Journaux : aucune ligne `[erreur]`, aucun `Traceback`, aucun
+`SONDE-ECHEC` sur le cycle complet du 22/10. Le motif le plus fréquent de tous
+les journaux conservés — `database is locked`, **12 995 occurrences** — est
+entièrement ancien (2026-08-25 et 2026-09-08, rien depuis 45 j) ; compté avant
+de conclure, précisément pour ne pas le traiter comme un défaut courant.
+
+**Ce qui n'a PAS été fait, et pourquoi.**
+- **La cadence des deux agents n'a pas été retouchée** : elle vient d'être
+  fixée par l'utilisateur ce matin (entrée précédente). La corriger pour faire
+  taire une alerte serait trancher à sa place (règle 5).
+- **`INACTIVITE_MAX_H` n'a pas bougé** — même raison.
+- **Les runs 1006/1007 n'ont pas été arrêtés** : ce sont les passages légitimes
+  du nouveau rythme. Couper un `--full` en vol ferait passer pour délistées les
+  annonces non encore revues.
+- **Les 6 constats hauts du 17 au 21/10 n'ont pas été rouverts** : antérieurs
+  aux deux derniers cycles, qui sont propres, et déjà traités dans les
+  réparations de ces jours-là.
+- **Le surcoût du passage en quotidien n'est pas mesuré** (annoncé ~3-4 h par
+  passage et par agent) : à relever au premier cycle complet qui enchaînera les
+  deux.
+- **Aucune vérification en conditions de nuit réelle** : les tests passent, le
+  premier cycle sous correctif est celui de cette nuit.
+- **Les 3 courriers de `agents/queue/mail/` n'ont pas été envoyés et restent en
+  place** : ce ne sont pas des alertes mais des messages applicatifs de
+  `bilan-comptes` à un utilisateur (un mot de passe en clair, deux liens de
+  rapport), adressés à `schoenauer.anthony@gmail.com` et pointant vers
+  `http://localhost:3001` — inatteignable hors du poste. Les réexpédier vers la
+  boîte d'alerte publierait un mot de passe chez un tiers pour des liens
+  inutilisables.
+
+### Références techniques
+`ops/veille-cycle.py` (`CADENCES_VUES`, `cadences_declarees`,
+`planchers_cadence`, `inactifs(planchers=)`, `relance_inactivite` dans
+`escalader`), `agents/core/shell.py` (`PYTHONUNBUFFERED`).
+Tests : `agents/tests/test_veille_cadence_changee.py`,
+`agents/tests/test_log_au_fil_de_leau.py`. Ticket :
+`agents/queue/done/2026-10-23T023006-veille-claude-cycle_probleme.json`.
+Compte rendu : `agents/audits/reparations-2026-10-23.md` (seconde
+intervention). Runs 948/949, 1006/1007.
