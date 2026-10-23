@@ -101,6 +101,15 @@ INACTIVITE_MAX_H = 24
 #: panne qui la fait échouer ne servirait à rien : une fois toutes les 6 h.
 RELANCE_ECART_MIN_H = 6
 AGENTS_JSON = ROOT / "agents" / "agents.json"
+#: Cadences déjà vues, pour ne pas compter contre un agent le temps écoulé sous
+#: une cadence qui n'existait plus. Mesuré le 2026-10-23 : la cadence de
+#: propertyhub et hipflat est passée de 3 j à 1 j à 09:05 ; à 09:30 les deux
+#: agents affichaient 55,0 h sans démarrage — un retard parfaitement légitime
+#: sous l'ancienne cadence (dernier passage le 21/10 à 02:30, prochain dû le
+#: 24/10). Résultat : 2 alertes hautes, une relance du cycle et un Opus réveillé
+#: pour une panne qui n'existait pas (règle 2). Le seuil de 24 h n'est PAS en
+#: cause et ne bouge pas : c'est le point de départ du décompte qui était faux.
+CADENCES_VUES = ETAT / "cadences.json"
 
 
 def _ecrire(msg: str) -> None:
@@ -415,6 +424,8 @@ def escalader(jour: str, preuves: dict, problemes: list[str], verdict: dict, lan
         "veille-claude", "cycle_probleme", "high",
         f"veille du cycle : {len(problemes)} problème(s) — {problemes[0][:120]}",
         {"problemes": problemes, "verdict_haiku": verdict,
+         **({"relance_inactivite": preuves["relance_inactivite"]}
+            if preuves.get("relance_inactivite") else {}),
          "runs": [{k: r[k] for k in ("id", "agent", "status", "exit_code", "started_at", "ended_at")}
                   for r in preuves["runs"]]},
         "Reproduire, diagnostiquer, corriger sur une branche si c'est un défaut de code ; "
@@ -464,18 +475,67 @@ def escalader(jour: str, preuves: dict, problemes: list[str], verdict: dict, lan
 
 # ─── Inactivité (> 24 h) ────────────────────────────────────────────────────
 
+def cadences_declarees() -> dict[str, int]:
+    """Cadence déclarée de chaque agent de la lane quotidienne."""
+    cfg = json.loads(AGENTS_JSON.read_text(encoding="utf-8"))
+    return {a["name"]: int(a.get("every_days", 1)) for a in cfg["agents"]
+            if "daily" in (a.get("lanes") or [])}
+
+
 def agents_quotidiens() -> list[str]:
     """Agents que --due doit lancer chaque jour. Lanes vides = suspendu ou
     manuel à dessein (livinginsider, storage…) : pas une inactivité."""
-    cfg = json.loads(AGENTS_JSON.read_text(encoding="utf-8"))
-    return [a["name"] for a in cfg["agents"]
-            if "daily" in (a.get("lanes") or []) and a.get("every_days", 1) == 1]
+    return [n for n, j in cadences_declarees().items() if j == 1]
 
 
-def inactifs(maintenant: datetime, noms: list[str]) -> list[tuple[str, float]]:
+def planchers_cadence(maintenant: datetime) -> dict[str, datetime]:
+    """Date à partir de laquelle la cadence ACTUELLE de chaque agent s'applique.
+
+    Un agent dont la cadence vient de passer à 1 jour n'a encore rien à se
+    reprocher : le temps écoulé l'a été sous l'ancienne cadence, où il était à
+    l'heure. On date donc le changement au premier passage qui le constate, et
+    le décompte d'inactivité repart de là.
+
+    PREMIÈRE OBSERVATION = AUCUN PLANCHER, à dessein. Si l'amorçage posait un
+    plancher, l'installation du fichier d'état aveuglerait la surveillance
+    pendant 24 h sur les 20 agents quotidiens — un garde-fou qui se tait vaut
+    celui qui crie (règle 2). Seul un CHANGEMENT constaté accorde le délai.
+    """
+    declarees = cadences_declarees()
+    try:
+        vues = json.loads(CADENCES_VUES.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        vues = {}
+    planchers, sortie = {}, {}
+    for nom, jours in declarees.items():
+        vu = vues.get(nom) or {}
+        if vu.get("every_days") == jours:
+            sortie[nom] = vu                       # cadence inchangée : on garde la date
+        else:
+            # Amorçage (agent inconnu du fichier) : pas de plancher. Changement
+            # constaté (cadence différente) : plancher à maintenant.
+            depuis = maintenant.isoformat(timespec="seconds") if vu else None
+            sortie[nom] = {"every_days": jours, "depuis": depuis}
+            if depuis:
+                _ecrire(f"cadence de {nom} : {vu.get('every_days')} j -> {jours} j "
+                        f"— décompte d'inactivité remis à zéro")
+        if sortie[nom].get("depuis"):
+            planchers[nom] = datetime.fromisoformat(sortie[nom]["depuis"])
+    if sortie != vues:
+        ETAT.mkdir(parents=True, exist_ok=True)
+        CADENCES_VUES.write_text(json.dumps(sortie, ensure_ascii=False, indent=1),
+                                 encoding="utf-8")
+    return planchers
+
+
+def inactifs(maintenant: datetime, noms: list[str],
+             planchers: dict | None = None) -> list[tuple[str, float]]:
     """(agent, heures depuis son dernier DÉMARRAGE) au-delà du seuil. Un agent
     jamais lancé est ignoré : `is_due` le prend au prochain cycle, et le
-    signaler ici crierait au loup à chaque ajout d'agent."""
+    signaler ici crierait au loup à chaque ajout d'agent.
+
+    `planchers` recule le point de départ du décompte quand la cadence de
+    l'agent a changé depuis son dernier passage (cf. planchers_cadence)."""
     cx = sqlite3.connect(f"file:{LEDGER}?mode=ro", uri=True, timeout=30)
     derniers = dict(cx.execute("select agent, max(started_at) from agent_runs group by agent"))
     cx.close()
@@ -483,7 +543,11 @@ def inactifs(maintenant: datetime, noms: list[str]) -> list[tuple[str, float]]:
     for n in noms:
         if not derniers.get(n):
             continue
-        h = (maintenant - datetime.fromisoformat(derniers[n])).total_seconds() / 3600
+        depuis = datetime.fromisoformat(derniers[n])
+        plancher = (planchers or {}).get(n)
+        if plancher and plancher > depuis:
+            depuis = plancher
+        h = (maintenant - depuis).total_seconds() / 3600
         if h > INACTIVITE_MAX_H:
             out.append((n, round(h, 1)))
     return out
@@ -519,7 +583,7 @@ def controle_inactivite(preuves: dict, maintenant: datetime, escalade: bool) -> 
     from agents.core import maintenance
     if maintenance.active(maintenant) or quelque_chose_tourne(preuves["tache_agents"]):
         return
-    morts = inactifs(maintenant, agents_quotidiens())
+    morts = inactifs(maintenant, agents_quotidiens(), planchers_cadence(maintenant))
     if not morts:
         return
     problemes = [f"{n} : aucun démarrage depuis {h} h (seuil {INACTIVITE_MAX_H} h), "
@@ -528,9 +592,14 @@ def controle_inactivite(preuves: dict, maintenant: datetime, escalade: bool) -> 
     if not escalade:
         _ecrire("relance et escalade désactivées (--sans-escalade)")
         return
-    _ecrire(relancer_cycle(maintenant))
-    # Opus diagnostique POURQUOI le cycle a sauté ces agents ; la relance,
-    # elle, ne l'attend pas. Signature sans les heures (cf. _signature).
+    relance = relancer_cycle(maintenant)
+    _ecrire(relance)
+    # Opus diagnostique POURQUOI le cycle a sauté ces agents ; la relance, elle,
+    # ne l'attend pas. Mais le constat « rien ne tourne » date d'AVANT elle :
+    # sans cette ligne, le ticket du 2026-10-23 09:30 affirmait que rien ne
+    # tournait alors que les 2 extracteurs étaient partis 4 s plus tôt, et Opus
+    # a cherché une panne déjà réparée. Signature sans les heures (cf. _signature).
+    preuves = dict(preuves, relance_inactivite=relance)
     escalader(f"{maintenant:%Y-%m-%d}", preuves, problemes, {}, lancer=True)
 
 
