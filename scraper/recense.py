@@ -386,6 +386,11 @@ def main() -> int:
                 actives = store.ids_actifs(args.source, deal)
                 if vus:
                     ligne.update(_rafraichir(store, vus, actives))
+                    # Noms d'agents (2026-10-17) : le recensement lit le
+                    # catalogue entier, c'est lui qui nomme le plus d'agents
+                    # sans ouvrir de fiche. Ecrit seulement ce qui a change.
+                    for stub in rec.stubs.values():
+                        store.noter_courtier(args.source, stub)
                     # DÉLISTAGE APRÈS RAFRAÎCHISSEMENT, AVANT LES ABSTENTIONS DE
                     # VERDICT : il tolère un parcours légèrement troué (délai de
                     # grâce), là où _comparer exige un parcours parfait.

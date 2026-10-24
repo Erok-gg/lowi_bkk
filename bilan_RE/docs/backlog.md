@@ -79,3 +79,25 @@ Légende : ✅ fait · 🟡 en partie · 📝 spécifié, pas codé · ⬜ seule
 | 40 | **LivingInsider** bloqué par AWS WAF depuis le 16/09 : plus aucune annonce nouvelle | 17/10 |
 | 41 | **Délistage DDproperty à l'arrêt** depuis le 13/10 : aucune fenêtre de score n'a encore DDproperty et FazWaz sains ensemble | 17/10 |
 | 42 | Texte des réglettes trop grand dans le PDF | 17/10 |
+
+## 6. Différenciateurs issus du relevé n°2 (22/10)
+
+> Source : [benchmark-plateformes](benchmark-plateformes.md), relevé du 22/10
+> (un lot suivi sur 5 portails). Retenus parce que **aucun portail ne les
+> montre** et qu'ils ne reposent ni sur la neutralité, ni sur une formule
+> propriétaire, ni sur la valeur du jeu agrégé. Ordre = priorité proposée.
+
+| # | Idée (demandée le) | État | Ce qui existe | Ce qui manque |
+|---|---|---|---|---|
+| 48 | **Fiche « même bien, tous les portails »** : échelle des prix (ici 5,25 → 5,50 M, 4,8 %), qui vend (propriétaire / agents), lien vers l'annonce la moins chère, **capture datée** de chaque annonce (22/10) | 🟡 | histoire d'annonce multi-portails (#7), `repost_of`, `price_history` | **étage absent sur DDproperty et PropertyHub** → « même lot » seulement déduit pour 3 portails sur 5 ; captures d'écran archivées : rien ; DDproperty/LivingInsider fiches illisibles aujourd'hui ; couverture PropertyHub 14 / 326 |
+| 49 | **« Ce que l'annonce ne dit pas »** : champs absents ou contradictoires (étage, quota, charges, surface mezzanine incluse ou non) → questions à poser à l'agent, message prêt EN/TH (22/10) | ⬜ | les colonnes `d_*` savent dire « absent » par portail | règle de détection des contradictions ; gabarits de message (EN, TH) ; relecture d'un natif |
+| 50 | **Kit de négociation** : leviers factuels (ancienneté réelle, baisses, lots concurrents identiques, type d'annonceur) + message d'offre (22/10) | ⬜ | ancienneté et baisses déjà calculées | ~~règle d'ancienneté `min(first_seen, date source)`~~ **livrée le 22/10 pour PropertyScout seul** (colonne locale `listed_at_source`, 4 020 lignes rattrapées, `rapport.py`) ; reste à tester FazWaz, à regarder une date de 2018, et à afficher « ancienneté déclarée par le portail » dans le bilan (`premier_vu_declare_par` existe dans le JSON, pas dans l'UI) ; formulation à faire valider (ne pas promettre un rabais) |
+| 51 | **Veille après achat du bilan** : alerte si le prix baisse sur un portail, si l'annonce disparaît, ou si un lot identique moins cher apparaît (22/10) | ⬜ | scraps quotidiens, `price_history`, délistage | abonnement par lot ; envoi (le mail passe par un dépôt dans `agents/queue/mail/`, minutes de latence) ; lien avec le **pass de N jours** (#30) |
+| 52 | **Coût total à la signature et en détention, pour un étranger** (22/10) | 📝 | c'est le #20 | barèmes à **valider par un fiscaliste** ; charges connues pour 1 199 immeubles seulement |
+| 53 | **Faits de vie courante** : ascenseurs par lot (ici 4 pour 726), parking (70 % de places, automatisé) (22/10) | ⬜ | FazWaz publie ces champs sur la page projet | collecte de ces champs (aujourd'hui non stockés) ; seuil « beaucoup / peu » à choisir sans prétendre à une norme |
+| 54 | **Ventes conclues** des portails, **tenues à l'écart** des annonces et affichées « source faible » (22/10) | 🟡 | **FazWaz livré le 22/10** : tables locales `ventes_portail` + `ventes_portail_projets`, collecte dans le scrap (page d'immeuble déjà lue), bloc « Reported sales » étiqueté, médiane dès 5 ventes comparables / 36 mois, synthèse du portail citée (29 ventes, 715 j, −7 %) | **jamais tourné en production** ; rattrapage étalé (~15 runs) ; **Hipflat** (moyennes en prose, USD, pas de lignes de ventes sur 1 projet testé), **PropertyScout** (API Market stats non identifiée), DDproperty, LivingInsider : non faits ; origine des prix inconnue ; droits d'usage à valider (#38) ; affichage non vu dans un navigateur |
+| 55 | **Mesure mensuelle de statistiques générales**, lancée une fois la liste des questions arrêtée — première question en attente : la rénovation fait-elle monter le loyer ? (22/10) | ⬜ | calcul par immeuble dans `rapport.py` (`_renovation`), bloc du bilan en « Coming soon » ; deux règles chiffrées au journal technique du 22/10 (≥ 3 rénovées / ≥ 5 autres, ou tirage au sort dans l'immeuble) | la liste complète des questions ; le choix de la règle ; un agent mensuel (comme `scores-tension`) |
+
+**À éviter** : un verdict « sous/sur-évalué » ou une estimation de plus. FazWaz
+et PropertyScout en ont déjà ; le relevé montre en plus que leurs références ne
+se recoupent pas entre elles.

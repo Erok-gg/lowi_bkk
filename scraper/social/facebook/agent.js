@@ -401,8 +401,16 @@ async function scrapeGroup(page, groupUrl) {
     ? parseInt(process.env.FB_MAX_SCROLL, 10)
     : Math.min(80, Math.max(15, Math.round(DAYS_BACK * 2)));
   const maxIdleRounds = 2;          // arrête si rien de nouveau 2 scrolls de suite
+  // Tant qu'AUCUN post n'est sorti, deux tours à vide ne prouvent rien : le
+  // feed n'est peut-être pas encore hydraté. Mesuré le 2026-10-13 sur
+  // bangkokapartments : 8 conteneurs/tour, 0 post, arrêt « rien_de_neuf » au
+  // 2e tour — alors que ce groupe rendait 41 à 44 posts les trois nuits
+  // précédentes. Les groupes sains ont tous produit leur 1er post bien avant
+  // 6 tours ; au-delà, le 0 post est réel et la sonde a raison d'alerter.
+  const maxIdleRoundsAvantPremierPost = 6;
 
-  while (!hitCutoff && scrollRounds < maxScrollRounds && roundsWithNoNewPost < maxIdleRounds) {
+  while (!hitCutoff && scrollRounds < maxScrollRounds &&
+         roundsWithNoNewPost < (posts.length === 0 ? maxIdleRoundsAvantPremierPost : maxIdleRounds)) {
     // Déplie les "Voir plus" avant d'extraire : un tiers des annonces sont
     // tronquées sinon, et c'est justement dans la partie masquée que se
     // trouvent le plus souvent le prix, la surface et le nom de l'immeuble.
@@ -467,6 +475,8 @@ async function scrapeGroup(page, groupUrl) {
 
     roundsWithNoNewPost = posts.length === countBefore ? roundsWithNoNewPost + 1 : 0;
 
+    // Feed encore vide : laisser le temps à l'hydratation avant de défiler.
+    if (posts.length === 0) await humanDelay(page, 2500, 4000);
     await humanScroll(page, 3);
     scrollRounds++;
   }

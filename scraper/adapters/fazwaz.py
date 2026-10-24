@@ -36,7 +36,7 @@ from bs4 import BeautifulSoup
 from scrapling.parser import Adaptor
 
 from adapters.base import BaseAdapter
-from pipeline import description, sitemap
+from pipeline import description, sitemap, ventes_portail
 from pipeline.fetch import Fetcher
 
 # Base sqlite du parsing adaptatif (scrapling) : pointee explicitement dans
@@ -167,6 +167,12 @@ def lire_projet(html: str) -> dict:
 class FazwazAdapter(BaseAdapter):
     source = "fazwaz"
 
+    def ventes_portail(self) -> list[dict]:
+        """Ventes conclues lues sur les pages d'immeuble RELUES pendant ce run
+        (pas celles servies par le cache : déjà écrites). Table à part, source
+        faible : cf. pipeline/ventes_portail.py."""
+        return list(self._ventes_fraiches.values())
+
     def __init__(self, config: dict):
         super().__init__(config)
         # Cache par immeuble : une page d'immeuble sert à toutes ses annonces.
@@ -181,6 +187,7 @@ class FazwazAdapter(BaseAdapter):
             self._projets = {}
         self._projets_sale = False
         self._projets_visites = 0
+        self._ventes_fraiches: dict[str, dict] = {}
         if self._mode_sitemap():
             # Sans page de liste, le prix n'existe que sur la fiche : un scan
             # sans détail écrirait des annonces sans prix.
@@ -434,7 +441,7 @@ class FazwazAdapter(BaseAdapter):
         print(f"  [projets] {self._projets_visites} page(s) d'immeuble lue(s) ce run, "
               f"{len(self._projets)} immeubles en cache")
 
-    def _projet(self, fetcher: Fetcher, url: str) -> dict | None:
+    def _projet(self, fetcher: Fetcher, url: str, condo_name: str | None = None) -> dict | None:
         """Données de l'immeuble : depuis le cache si relevées il y a moins de
         `projets.rafraichir_jours`, sinon page relue — dans la limite de
         `projets.max_par_run` (au-delà : ancienne valeur, ou rien)."""
@@ -447,7 +454,10 @@ class FazwazAdapter(BaseAdapter):
         if ancien:
             try:
                 age = maintenant - datetime.fromisoformat(ancien["vu_le"])
-                if age < timedelta(days=float(conf.get("rafraichir_jours", 30))):
+                # Une entrée sans clé « ventes » date d'avant la collecte des ventes
+                # conclues (2026-10-22) : relue même si récente, dans le budget
+                # `max_par_run` — c'est le rattrapage, sans requête hors budget.
+                if age < timedelta(days=float(conf.get("rafraichir_jours", 30))) and "ventes" in ancien:
                     return ancien
             except (KeyError, ValueError):
                 pass
@@ -459,6 +469,17 @@ class FazwazAdapter(BaseAdapter):
             return ancien
         lu = lire_projet(html)
         entree = {**lu, "url": url, "vu_le": maintenant.isoformat(timespec="seconds")}
+        # Ventes conclues : même page, aucune requête de plus. Gardées dans le cache
+        # JSON (relues sans réseau) ET remises au store en fin de run.
+        try:
+            ventes, resume = ventes_portail.lire_fazwaz(html)
+        except Exception as e:  # un format inattendu ne doit jamais faire sauter l'annonce
+            print(f"  [ventes] {cle} ignoré : {e}", flush=True)
+            ventes, resume = [], {}
+        entree["ventes"], entree["ventes_resume"] = ventes, resume
+        if ventes or resume:
+            self._ventes_fraiches[cle] = {"cle": cle, "url": url, "condo_name": condo_name,
+                                          "ventes": ventes, "resume": resume}
         # L'estimation bouge dans le temps : on garde la série, pas la seule dernière valeur.
         histo = list((ancien or {}).get("historique_ecart") or [])
         if lu["ecart_marche_pct"] is not None:
@@ -685,7 +706,7 @@ class FazwazAdapter(BaseAdapter):
         # immeuble : nombre de logements + estimation de prix FazWaz (page dédiée, en cache)
         mp = PROJET_URL_RE.search(html)
         if mp:
-            rec["_projet"] = self._projet(fetcher, mp.group(1))
+            rec["_projet"] = self._projet(fetcher, mp.group(1), rec.get("condo_name"))
 
         # bathrooms : "<n> Bathroom"
         mb = re.search(r"(\d+)\s+Bathroom", html)

@@ -277,6 +277,9 @@ def main() -> None:
             # déjà connue dont le prix (lu dans la liste) n'a pas bougé. Raccourcit
             # fortement les scraps futurs.
             existing = store.get_listing(lid)
+            # avant toute branche de dedup : le nom de l'agent est dans la liste,
+            # les annonces sautees le portent aussi
+            store.noter_courtier(args.source, stub)
 
             if stub.get("lastmod"):
                 verdict = sitemap.trier(
@@ -495,6 +498,15 @@ def main() -> None:
     # `metrics_from_output` et conservé au ledger : la répartition devient une
     # série, pas une observation ponctuelle.
     print(chrono.rapport(), flush=True)
+
+    # Ventes conclues lues sur les pages d'immeuble (FazWaz) : table à part,
+    # source faible. Non fatal — les annonces sont déjà écrites.
+    if hasattr(adapter, "ventes_portail") and hasattr(store, "enregistrer_ventes_portail"):
+        try:
+            neuves, lues = store.enregistrer_ventes_portail(args.source, adapter.ventes_portail())
+            print(f"  [ventes-portail] {lues} vente(s) lue(s), {neuves} nouvelle(s)", flush=True)
+        except Exception as e:
+            print(f"  [ventes-portail] ignoré : {e}", flush=True)
 
     store.record_scan_run(args.source, n_total, n_new, removed, n_changed,
                           notes="coupure-reseau" if coupure
