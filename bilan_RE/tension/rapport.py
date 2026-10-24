@@ -24,11 +24,11 @@ import sqlite3
 import statistics
 import sys
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import sys as _sys
 
-from . import coeur
+from . import coeur, immeuble
 from .donnees import DB, RACINE, SORTIES, config
 
 _sys.path.insert(0, os.path.join(RACINE, "scraper"))
@@ -57,8 +57,18 @@ def _in(noms: list[str]) -> str:
 RAPPORTS = os.path.join(SORTIES, "rapports")
 TOL_SURFACE = 0.15
 MIN_COMPARABLES = 5
-SOURCES_LISIBLES = {"ddproperty": "DDproperty", "fazwaz": "FazWaz", "propertyscout": "PropertyScout",
-                    "nestopa": "Nestopa", "livinginsider": "LivingInsider"}
+SOURCES_LISIBLES = {"ddproperty": "DDproperty", "fazwaz": "FazWaz / Thaiger", "propertyscout": "PropertyScout",
+                    "nestopa": "Nestopa", "livinginsider": "LivingInsider",
+                    "propertyhub": "PropertyHub", "hipflat": "Hipflat",
+                    "dotproperty": "DotProperty"}
+
+#: Sources dont la date de création déclarée est PLAUSIBLEMENT une vraie date de
+#: création et non une remontée en tête de liste. Mesure du 2026-10-22 : chez
+#: PropertyScout elle croît strictement avec l'identifiant (10 fiches, 2020 → 2026).
+#: DDproperty est EXCLUE (son `posted_at` est une date de remontée, écart médian
+#: −16 j avec first_seen) ; FazWaz plausible mais non testé. Ajouter une source =
+#: refaire ce test d'abord. Retour arrière : vider ce tuple.
+SOURCES_DATE_FIABLE = ("propertyscout",)
 
 
 def identifiant(url: str) -> str:
@@ -104,11 +114,23 @@ def _meme_lot(a, b) -> bool:
 def _histoire(c, lid: str, uk: str, aujourdhui: date) -> dict:
     """Chaîne de l'annonce : elle-même + ses copies (autres portails, autres
     agents) et ses republications (retrait puis retour à moins de 14 j)."""
-    rows = c.execute("""select id, source, first_seen, delisted_at, status, price, area_sqm, d_etage
+    rows = c.execute("""select id, source, first_seen, delisted_at, status, price, area_sqm, d_etage,
+                               listed_at_source, source_url
                         from listings where unit_key = ? and deal_type = 'sale'""", (uk,)).fetchall()
     d = lambda s: date.fromisoformat(s[:10]) if s else None
-    spans = [{"id": i, "source": src, "debut": d(fs), "fin": d(dl) if st != "active" else None,
-              "prix": p, "surface": a, "etage": e} for i, src, fs, dl, st, p, a, e in rows]
+    spans = []
+    for i, src, fs, dl, st, p, a, e, ls, lien in rows:
+        debut, declare = d(fs), d(ls)
+        # Ancienneté = le plus ancien de notre premier passage et de la date de
+        # création DÉCLARÉE par le portail — pour les sources dont cette date a
+        # passé le test (SOURCES_DATE_FIABLE). `first_seen` retarde de 2 semaines
+        # à 3 ans (suivi commencé le 24/06/2026, découverte tardive).
+        via_source = bool(src in SOURCES_DATE_FIABLE and declare and declare < debut)
+        spans.append({"id": i, "source": src, "debut": declare if via_source else debut,
+                      "via_source": via_source, "fin": d(dl) if st != "active" else None,
+                      "prix": p, "surface": a, "etage": e,
+                      # le lien ne sort que pour une annonce ENCORE active (demande du 2026-10-22)
+                      "url": lien if st == "active" else None})
     cible = next(s for s in spans if s["id"] == lid)
     chaine = [cible]
     for s in spans:
@@ -130,21 +152,28 @@ def _histoire(c, lid: str, uk: str, aujourdhui: date) -> dict:
             continue
         vus.add(cle)
         evenements.append({"date": s["debut"].isoformat(), "type": "listed",
-                           "source": SOURCES_LISIBLES.get(s["source"], s["source"])})
+                           "source": SOURCES_LISIBLES.get(s["source"], s["source"]),
+                           "cle": s["source"], "url": s["url"]})
     dernier = {}
     for lid2, p, t in obs:
         if lid2 in dernier and p and dernier[lid2] and p != dernier[lid2]:
             evenements.append({"date": t[:10], "type": "price_cut" if p < dernier[lid2] else "price_rise",
                                "from": dernier[lid2], "to": p,
-                               "source": SOURCES_LISIBLES.get(lid2.split(":")[0], lid2)})
+                               "source": SOURCES_LISIBLES.get(lid2.split(":")[0], lid2),
+                               "cle": lid2.split(":")[0], "url": None})
         dernier[lid2] = p
     evenements.sort(key=lambda e: e["date"])
     debut = min(s["debut"] for s in chaine)
+    # La date vient-elle du portail plutôt que de notre suivi ? Dit à l'acheteur
+    # d'où sort l'ancienneté affichée.
+    via = sorted({SOURCES_LISIBLES.get(s["source"], s["source"]) for s in chaine
+                  if s["via_source"] and s["debut"] == debut})
     obs_cible = [p for l2, p, _ in obs if l2 == lid and p]
     prix0 = obs_cible[0] if obs_cible else cible["prix"]
     premiers = [p for _, p, _ in obs if p]
     prix_initial = premiers[0] if premiers else prix0
     return {"premier_vu": debut.isoformat(), "jours_en_ligne": (aujourdhui - debut).days,
+            "premier_vu_declare_par": via,
             "portails": sorted({SOURCES_LISIBLES.get(s["source"], s["source"]) for s in chaine}),
             "annonces": len(chaine), "prix_initial": prix_initial, "prix_actuel": cible["prix"],
             "variation": (cible["prix"] / prix_initial - 1) if prix_initial and cible["prix"] else None,
@@ -189,7 +218,16 @@ def _comparables(c, ann: dict, cfg: dict, exclure: set) -> list[dict]:
     out = []
     for cle, nom, f in mailles:
         v = sorted(x[0] for x in coh if f(x))
-        r = {"cle": cle, "niveau": nom, "n": len(v)}
+        # Valeurs aberrantes écartées de l'échantillon (demande du 2026-10-22) :
+        # au-delà de 3× ou en deçà de 1/3 de la médiane du niveau. Règle volontairement
+        # large — elle ne retire que l'erreur de saisie (un loyer classé en vente, un
+        # prix à un zéro de trop), pas l'annonce simplement chère ou bon marché.
+        exclus = 0
+        if len(v) >= MIN_COMPARABLES:
+            m0 = statistics.median(v)
+            gardees = [x for x in v if m0 / 3 <= x <= m0 * 3]
+            exclus, v = len(v) - len(gardees), gardees
+        r = {"cle": cle, "niveau": nom, "n": len(v), "exclus": exclus}
         if len(v) >= MIN_COMPARABLES:
             q = statistics.quantiles(v, n=4)
             med = statistics.median(v)
@@ -235,35 +273,275 @@ def _niveau_retenu(chaine: dict | None) -> dict | None:
     return None
 
 
-def _drapeaux(c, ann: dict, comp: list[dict]) -> list[dict]:
+def _drapeaux(c, ann: dict, comp: list[dict], hist: dict | None = None, chg: dict | None = None,
+              lots: tuple[int, int] | None = None) -> list[dict]:
+    """Signaux d'alerte que le code SAIT produire, chacun sur une mesure de la base.
+    Ils signalent une question à poser, jamais un verdict : `high` = à éclaircir
+    avant toute offre. Les seuils sont ceux d'un relevé de bon sens (40 % d'écart,
+    180 jours…), non calibrés sur des ventes qu'on ne possède pas."""
     out = []
+    add = lambda n, t: out.append({"niveau": n, "texte": t})
     imm = next((x for x in comp if x["cle"] == "building" and x.get("mediane")), None)
     if imm and ann["prix_m2"] < 0.6 * imm["mediane"]:
-        out.append({"niveau": "high", "texte": "Price per m² is more than 40% below the building: "
-                    "check for errors, leasehold, or a bait listing."})
+        add("high", "Price per m² is more than 40% below the building: check for errors, leasehold, or a bait listing.")
+    elif imm and ann["prix_m2"] > 1.3 * imm["mediane"]:
+        add("medium", "Price per m² is more than 30% above the building's median: ask what justifies the premium "
+                      "(floor, view, renovation).")
+    if not ann["active"]:
+        add("high", "This listing is no longer online: it may have been sold or withdrawn. Check availability.")
     if ann["quota"] == "thai":
-        out.append({"niveau": "high", "texte": "Listed under the Thai quota: a foreign buyer "
-                    "cannot hold it freehold in their own name."})
+        add("high", "Listed under the Thai quota: a foreign buyer cannot hold it freehold in their own name.")
     elif ann["quota"] is None:
-        out.append({"niveau": "medium", "texte": "Quota not stated on the listing: ask whether "
-                    "the unit is in the foreign quota."})
+        add("medium", "Quota not stated on the listing: ask whether the unit is in the foreign quota.")
     annees = {r[0] for r in c.execute("select distinct d_annee_construction from listings where "
                                       "condo_norm = ? and d_annee_construction between 1970 and 2035",
                                       (ann["cle"],))}
     if len(annees) > 1:
-        out.append({"niveau": "low", "texte": f"Sources disagree on the completion year "
-                    f"({', '.join(str(a) for a in sorted(annees))})."})
+        add("low", f"Sources disagree on the completion year ({', '.join(str(a) for a in sorted(annees))}).")
+    if annees and date.today().year - min(annees) >= 30:
+        add("medium", f"Building about {date.today().year - min(annees)} years old: ask for the last major works "
+                      "and the sinking fund balance.")
     if ann["chambres"] and ann["surface"] / max(ann["chambres"], 1) < 18:
-        out.append({"niveau": "low", "texte": "Very small area for the number of bedrooms: "
-                    "check the floor plan."})
+        add("low", "Very small area for the number of bedrooms: check the floor plan.")
+    if hist:
+        if hist["baisses"] >= 3:
+            add("medium", f"{hist['baisses']} price cuts since first seen: the asking price has not found a buyer.")
+        if hist["jours_en_ligne"] >= 180:
+            add("medium", f"Online for {hist['jours_en_ligne']} days: long for this market, ask why it has not sold.")
+        prix = {e["to"] for e in hist["evenements"] if e["type"] != "listed"} | {hist["prix_actuel"]}
+        if hist["annonces"] > 1 and len(prix) > 1 and max(prix) / min(prix) > 1.05:
+            add("low", "The same unit has been advertised at different prices: confirm which one is current.")
+    if lots and lots[1] and lots[0] / lots[1] >= 0.4 and lots[0] >= 5:
+        add("low", f"{lots[0]} of the {lots[1]} units we have recorded here are for sale at once: "
+                   "the building may be hard to exit, or a developer is still selling.")
+    if chg:
+        pr, am = chg.get("propre"), chg.get("memes_equipements")
+        if pr is None:
+            add("low", "Common fee unknown: ask for it, and for the last three years of building accounts.")
+        elif am and pr < am["p25"]:
+            add("medium", f"Common fee THB {pr:.0f}/m²/month is below buildings with similar amenities "
+                          f"(median {am['mediane']:.0f}): maintenance may be underfunded. Ask for the sinking fund.")
+        elif am and pr > am["p75"]:
+            add("low", f"Common fee THB {pr:.0f}/m²/month is above buildings with similar amenities "
+                       f"(median {am['mediane']:.0f}): check what it covers.")
     return out
+
+
+#: Effectif minimal de ventes comparables pour AFFICHER une médiane. En dessous, le
+#: bloc montre les ventes une à une et dit qu'il y en a trop peu : mesuré le
+#: 2026-10-22, un immeuble en publie ~2 par an, donc 5 sur 36 mois est déjà rare.
+MIN_VENTES_MEDIANE = 5
+FENETRE_VENTES_MOIS = 36
+
+
+def _ventes_portail(c, ann: dict, aujourdhui: date) -> dict | None:
+    """Ventes « conclues » déclarées par un portail pour cet immeuble.
+
+    SOURCE FAIBLE, étiquetée comme telle dans la sortie (`fiabilite`) : l'origine
+    n'est pas vérifiée (7 ventes sur 53 rapprochées de nos annonces disparues,
+    mesure du 2026-10-22), l'échantillon est mince (≈ 2 par an et par immeuble)
+    et la table est tenue à l'écart des annonces. Ces chiffres ne sont mêlés à
+    AUCUN calcul de marché de ce module ; ils sont montrés à côté. Le portail
+    n'est pas nommé (politique `sansSources` du site). Retour arrière : renvoyer
+    None ici."""
+    try:
+        rows = c.execute("select sold_date, sold_price, area_sqm, price_per_sqm, floor, bedrooms, quota "
+                         "from ventes_portail where condo_norm = ? and deal_type = 'sale' "
+                         "order by sold_date desc", (ann["cle"],)).fetchall()
+        resume = c.execute("select n, price_per_sqm, jours_avant_vente, decote_pct, releve_le "
+                           "from ventes_portail_projets where condo_norm = ? order by releve_le desc",
+                           (ann["cle"],)).fetchone()
+    except sqlite3.OperationalError:       # base d'avant la collecte : le bloc n'existe pas
+        return None
+    if not rows and not resume:
+        return None
+    depuis = (aujourdhui - timedelta(days=30.44 * FENETRE_VENTES_MOIS)).isoformat()
+    surf, ch = ann["surface"], ann["chambres"]
+    comparables = [r for r in rows if r[0] >= depuis and r[3] and r[5] == ch and surf
+                   and r[2] and abs(r[2] - surf) <= TOL_SURFACE * surf]
+
+    def tranche(f):
+        return None if f is None else f"{(f // 10) * 10}-{(f // 10) * 10 + 9}"
+
+    out = {"fiabilite": "low", "etiquette": "Weak source",
+           "note": "Sales reported by a listings portal. Origin not verified, small sample, "
+                   "kept apart from our own listing data.",
+           "n_immeuble": len(rows), "n_comparables": len(comparables),
+           "n_24_mois": sum(1 for r in rows if r[0] >= (aujourdhui - timedelta(days=730)).isoformat()),
+           "fenetre_mois": FENETRE_VENTES_MOIS, "mediane_m2": None, "ecart": None,
+           "ventes": [{"mois": r[0][:7], "surface": r[2], "etage": tranche(r[4]), "prix_m2": r[3]}
+                      for r in (comparables or rows)[:6] if r[3]],
+           "resume": None}
+    if len(comparables) >= MIN_VENTES_MEDIANE:
+        med = statistics.median(r[3] for r in comparables)
+        out["mediane_m2"] = med
+        out["ecart"] = ann["prix_m2"] / med - 1 if ann["prix_m2"] else None
+    if resume:
+        out["resume"] = {"n": resume[0], "prix_m2": resume[1], "jours_avant_vente": resume[2],
+                         "decote_pct": resume[3], "releve_le": resume[4][:10]}
+    return out
+
+
+#: Mention de rénovation dans le titre ou la description d'une annonce.
+#: 1,5 % des locations actives la portent (1 038 / 70 591, mesure du 2026-10-22).
+RENOVE_RE = re.compile(r"\brenovat(?:ed|ion)\b|\bremodel(?:l)?ed\b|รีโนเวท", re.I)
+#: Tranches d'étage affichées à titre indicatif. L'étage ne PONDÈRE pas
+#: l'estimation : à immeuble et chambres égaux, son effet mesuré est
+#: négligeable (+0,09 % du loyer/m² par étage en médiane, 396 groupes,
+#: écart interquartile −0,21 / +0,47 %, mesure du 2026-10-22).
+TRANCHES_ETAGE = ((1, 9, "1-9"), (10, 24, "10-24"), (25, 200, "25+"))
+
+
+def _locations(c, ann: dict, cfg: dict, rayon: bool = False) -> list[tuple]:
+    """Locations actives de l'immeuble (ou du rayon), copies comptées une fois :
+    (loyer, surface, chambres, étage, rénovée)."""
+    b = cfg["bornes_loyer"]
+    sel = ("select price, area_sqm, bedrooms, d_etage, title, description, lat, lng, condo_norm from listings {idx} "
+           "where deal_type = 'rent' and status = 'active' and price between ? and ? "
+           "and area_sqm between ? and ? ")
+    bornes = (b["loyer_min"], b["loyer_max"], b["surface_min"], b["surface_max"])
+    if not rayon:
+        rows = c.execute(sel.format(idx="indexed by idx_listings_condo_norm") + "and condo_norm = ?",
+                         (*bornes, ann["cle"])).fetchall()
+    else:
+        if ann["lat"] is None:
+            return []
+        dl = cfg["rayon_km"] / 111.0
+        rows = [r for r in c.execute(sel.format(idx="") + "and lat between ? and ? and lng between ? and ?",
+                                     (*bornes, ann["lat"] - dl, ann["lat"] + dl,
+                                      ann["lng"] - dl, ann["lng"] + dl)).fetchall()
+                if coeur.distance_km(ann["lat"], ann["lng"], r[6], r[7]) <= cfg["rayon_km"]]
+    u = {}
+    for p, s, ch, et, ti, de, _, _, cn in rows:
+        renove = bool(RENOVE_RE.search(f"{ti or ''} {de or ''}"))
+        u.setdefault((cn, ch, round(s), et, round(p, -2)), (p, s, ch, et, renove, cn))
+    return list(u.values())
+
+
+def _loyer_estime(c, ann: dict, cfg: dict) -> dict | None:
+    """Loyer que le futur propriétaire peut demander pour CE lot.
+
+    Méthode retenue après essai sur 4 000 locations réelles (2026-10-22) : le
+    loyer au m² des locations de même immeuble, même nombre de chambres et
+    surface à ±15 %, multiplié par la surface du lot — erreur médiane 8,2 %
+    (80 % des cas sous 16,9 %). Le loyer médian de même taille sans passer par
+    le m² fait 8,3 %, le m² de tout l'immeuble 8,8 %. Repli, dans l'ordre :
+    immeuble entier (9,8 %), puis même chambres et taille dans le rayon (non
+    testé, confiance basse)."""
+    surf, ch = ann["surface"], ann["chambres"]
+    if not surf:
+        return None
+    meme = lambda x: x[2] == ch and abs(x[1] - surf) <= TOL_SURFACE * surf
+    imm = _locations(c, ann, cfg)
+    niveaux = [("building_same", "Same building, same bedrooms and size", [x for x in imm if meme(x)], "high"),
+               ("building", "Same building, all units", imm, "medium")]
+    choix = next(((k, nom, v, conf) for k, nom, v, conf in niveaux if len(v) >= MIN_COMPARABLES), None)
+    if not choix:
+        proches = [x for x in _locations(c, ann, cfg, rayon=True) if meme(x)]
+        if len(proches) >= MIN_COMPARABLES:
+            choix = ("radius_same", f"Within {cfg['rayon_km']:g} km, same bedrooms and size", proches, "low")
+    if not choix:
+        return {"statut": "not enough comparables", "n_immeuble": len(imm)}
+    cle, nom, v, conf = choix
+    m2 = sorted(x[0] / x[1] for x in v)
+    q = statistics.quantiles(m2, n=4)
+    med = statistics.median(m2)
+    loyer = med * surf
+    etages = []
+    for lo, hi, lib in TRANCHES_ETAGE:
+        t = [x[0] / x[1] for x in v if x[3] is not None and lo <= x[3] <= hi]
+        etages.append({"tranche": lib, "n": len(t),
+                       "loyer": statistics.median(t) * surf if len(t) >= 3 else None})
+    return {"statut": "ok", "niveau": cle, "libelle": nom, "confiance": conf, "n": len(v),
+            "loyer_m2": med, "loyer": loyer, "fourchette": [q[0] * surf, q[2] * surf],
+            "rendement_brut": loyer * 12 / ann["prix"] if ann["prix"] else None,
+            "etage_lot": ann["etage"], "par_etage": etages,
+            "note": "Floor has little effect on rent per m² in our data; shown for information only."}
+
+
+def _renovation(c, ann: dict, cfg: dict) -> dict | None:
+    """Combien d'annonces semblables se disent rénovées, et le loyer s'en
+    ressent-il ? Même immeuble et chambres d'abord, sinon même chambres dans le
+    rayon. À l'échelle de Bangkok l'effet médian est nul (+0,2 %, 134 groupes
+    comparables, mesure du 2026-10-22) mais dépasse +10 % dans 37 d'entre eux :
+    c'est une question d'immeuble, d'où un calcul par immeuble."""
+    ch = ann["chambres"]
+    r = cfg["renovation"]
+    seuil = r["prime_sensible"]
+
+    def prime_immeuble(v):
+        oui = [x[0] / x[1] for x in v if x[4]]
+        non = [x[0] / x[1] for x in v if not x[4]]
+        if len(oui) >= r["min_renovees"] and len(non) >= r["min_autres"]:
+            return statistics.median(oui) / statistics.median(non) - 1
+        return None
+
+    verdict = lambda p: ("renovation lifts the rent noticeably" if p >= seuil
+                         else "renovation does not lift the rent noticeably")
+    imm = [x for x in _locations(c, ann, cfg) if x[2] == ch]
+    if imm:
+        p = prime_immeuble(imm)
+        n_ren = sum(1 for x in imm if x[4])
+        if p is not None or n_ren >= r["min_renovees"]:
+            return {"niveau": "building", "libelle": "Same building, same bedrooms", "n": len(imm),
+                    "n_renovees": n_ren, "part": n_ren / len(imm), "prime": p, "n_immeubles": 1,
+                    "verdict": verdict(p) if p is not None else "not enough renovated units to compare"}
+    # Rayon : JAMAIS rénovées contre non rénovées toutes adresses confondues.
+    # Essai du 2026-10-22 : −32 % et −34 % sur deux immeubles, parce que les
+    # rénovées sont surtout dans les immeubles anciens, moins chers. On compare
+    # dans chaque immeuble du rayon, puis on prend la médiane de ces écarts.
+    zone = [x for x in _locations(c, ann, cfg, rayon=True) if x[2] == ch]
+    if not zone:
+        return None
+    par = defaultdict(list)
+    for x in zone:
+        par[x[5]].append(x)
+    primes = [p for p in (prime_immeuble(v) for v in par.values()) if p is not None]
+    n_ren = sum(1 for x in zone if x[4])
+    out = {"niveau": "radius", "libelle": f"Within {cfg['rayon_km']:g} km, same bedrooms", "n": len(zone),
+           "n_renovees": n_ren, "part": n_ren / len(zone), "prime": None, "n_immeubles": len(primes),
+           "verdict": "not enough renovated units to compare"}
+    if len(primes) >= r["min_immeubles_rayon"]:
+        out["prime"] = statistics.median(primes)
+        out["verdict"] = verdict(out["prime"])
+    return out
+
+
+def _frais_achat(ann: dict, cfg: dict) -> dict | None:
+    """Frais d'une acquisition en Thaïlande, sur le prix demandé.
+
+    Règles du Department of Lands et du Revenue Department, telles que
+    pratiquées (le partage acheteur / vendeur est un USAGE, négociable). Les taux
+    vivent dans config.json (`frais_achat`). La base légale est la valeur
+    d'expertise du Department of Lands, inconnue ici et en général inférieure au
+    prix : calculés sur le prix, les montants sont donc un plafond. À faire
+    valider par un avocat thaï (journal-juridique)."""
+    p = ann["prix"]
+    if not p:
+        return None
+    f = cfg["frais_achat"]
+    lignes = []
+    for x in f["lignes"]:
+        taux = x.get("taux")
+        lignes.append({"poste": x["poste"], "taux": taux,
+                       "montant": round(p * taux) if taux is not None else None,
+                       "montant_min": x.get("montant_min"), "montant_max": x.get("montant_max"),
+                       "payeur": x["payeur"], "note": x.get("note"),
+                       "etrangers_seulement": x.get("etrangers_seulement", False),
+                       "cas": x.get("cas", "always")})
+    acheteur = sum(l["montant"] for l in lignes if l["payeur"] == "buyer" and l["cas"] == "always"
+                   and l["montant"] is not None)
+    return {"base": p, "lignes": lignes, "total_acheteur": acheteur,
+            "total_acheteur_pct": acheteur / p,
+            "avertissement": f["avertissement"]}
 
 
 def construire(url: str, db: str = DB) -> dict:
     cfg = config()
     c = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     lid = trouver(c, url)
-    base = {"id": identifiant(url), "url": url.strip(), "genere_le": date.today().isoformat()}
+    base = {"id": identifiant(url), "url": url.strip(), "genere_le": date.today().isoformat(),
+            "demande_le": datetime.now().strftime("%Y-%m-%d %H:%M")}
     if not lid:
         return {**base, "statut": "not_found"}
     r = c.execute("""select id, source, condo_name, khet, bedrooms, bathrooms, area_sqm, price, lat, lng,
@@ -299,6 +577,8 @@ def construire(url: str, db: str = DB) -> dict:
         "select bedrooms, area_sqm, d_etage, price from listings indexed by idx_listings_condo_norm "
         "where condo_norm = ? and deal_type = 'sale' and status = 'active'", (ann["cle"],))})
     imm = (sc or {}).get("immeuble") or {}
+    recenses = immeuble.lots_recenses(c, ann["cle"])
+    chg = immeuble.charges(c, ann, db)
     tension = liquidite = None
     if sc and sc.get("immeuble"):
         bloc = sc.get("meme_chambres") or sc.get("toutes_chambres") or {}
@@ -307,12 +587,22 @@ def construire(url: str, db: str = DB) -> dict:
     return {**base, "statut": "ok", "donnees_du": aujourdhui.isoformat(),
             "annonce": {k: v for k, v in ann.items() if k not in ("unit_key", "noms", "cle")},
             "histoire": hist, "prix": comp,
-            "immeuble": {"lots_en_vente": en_vente, "annee": imm.get("annee"),
-                         "charges_thb_m2": imm.get("charges_thb_m2")},
+            "ventes_portail": _ventes_portail(c, ann, aujourdhui),
+            "immeuble": {"lots_en_vente": en_vente, "lots_recenses": max(recenses, en_vente),
+                         "annee": imm.get("annee"), "charges_thb_m2": imm.get("charges_thb_m2"),
+                         "adresse": immeuble.adresse(c, ann["cle"], ann["condo"], khet),
+                         "charges": chg},
+            "sorties_prix": immeuble.sorties_au_meme_prix(c, ann, cfg, aujourdhui),
+            "mois_de_stock": immeuble.mois_de_stock_serie(c, ann, cfg, aujourdhui),
             "tension": tension, "liquidite": liquidite,
+            # calculés pour tous ; la page n'affiche loyer et rénovation qu'au
+            # profil « investisseur » (menu de la page d'accueil)
+            "loyer_estime": _loyer_estime(c, ann, cfg),
+            "renovation": _renovation(c, ann, cfg),
+            "frais_achat": _frais_achat(ann, cfg),
             "scores_calcul": {k: (sc or {}).get(k) for k in ("fin_fenetre", "calcule_le", "frequence_calcul",
                                                              "config_version", "sources_gardees")},
-            "drapeaux": _drapeaux(c, ann, comp)}
+            "drapeaux": _drapeaux(c, ann, comp, hist, chg, (en_vente, max(recenses, en_vente)))}
 
 
 def main() -> None:

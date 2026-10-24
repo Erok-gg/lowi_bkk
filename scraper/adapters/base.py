@@ -63,3 +63,9 @@ class BaseAdapter(ABC):
         if not stub.get("source_id"):
             return False, "page 1 : stub sans source_id — la page répond mais l'identifiant n'est pas extrait"
         return True, f"page 1 ok — 1 stub obtenu ({stub['source_id']})"
+
+    def ids_hors_couverture(self, store, deal_type: str | None) -> set[str]:
+        """Annonces actives que le scan n'a pas pu VOIR (pagination plafonnée),
+        à ne pas délister. Vide par défaut : la plupart des sources se
+        parcourent en entier."""
+        return set()

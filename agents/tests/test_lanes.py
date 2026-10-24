@@ -44,9 +44,14 @@ print(f"hebdo ⊇ quotidien : OK  ({len(quotidien)} agents quotidiens, {len(hebd
 # `_suspendu`) est exclu — extract-livinginsider le 2026-09-26. Exiger le motif
 # garde le test utile : une lane vidée par erreur, sans explication, échoue
 # toujours.
+# Un extracteur rattaché à une AUTRE lane déclarée dans `lanes` (2026-10-22 :
+# `soir`, DotProperty, tâche LowiBKK-Soir de 21:00) a son propre créneau : il
+# est exclu ici et vérifié en 5. Une lane non déclarée reste une erreur.
+autres_lanes = set(REGISTRY.get("lanes", {})) - {"daily", "weekly"}
 extracteurs = {a["name"] for a in REGISTRY["agents"]
                if a.get("famille") == "Extraction"
-               and not (not a.get("lanes") and a.get("_suspendu"))}
+               and not (not a.get("lanes") and a.get("_suspendu"))
+               and not (a.get("lanes") and set(a["lanes"]) <= autres_lanes)}
 assert extracteurs, "registre sans agent d'extraction — test sans objet"
 for lane in ("daily", "weekly"):
     absents = extracteurs - agents_de(lane)
@@ -62,5 +67,15 @@ print(f"ajouts du jour hebdomadaire : OK  -> {sorted(ajouts)}")
 for lane in ("daily", "weekly"):
     assert len(agents_de(lane)) >= 5, f"lane {lane} quasi vide : {agents_de(lane)}"
 print("aucune lane vide : OK")
+
+# --------------------------------- 5. une lane annexe tient le poste éveillé
+# Sans garde-veille, un scrap du soir est exposé à la mise en veille qui a tué
+# extract-ddproperty deux cycles d'affilée (2026-08-16).
+for lane in sorted(autres_lanes):
+    noms = agents_de(lane)
+    if not any(n.startswith("extract-") for n in noms):
+        continue
+    assert "garde-veille" in noms, f"lane {lane} : extracteur sans garde-veille {sorted(noms)}"
+    print(f"lane annexe {lane} : garde-veille present : OK  -> {sorted(noms)}")
 
 print("\nTOUS LES ESSAIS PASSENT")

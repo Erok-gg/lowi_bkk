@@ -21,7 +21,9 @@ Ce que ce test vérifie :
      d'horloge pour un délai de 300 s) n'est pas confondu avec une panne ;
   7. la veille ne compte pas SON PROPRE compte rendu d'Opus comme une erreur du
      cycle (2026-10-06 : « zero SONDE-ECHEC » lu comme 1 ligne d'erreur, donc
-     un second Opus appelé pour une panne déjà réparée).
+     un second Opus appelé pour une panne déjà réparée) ;
+  8. un agent quotidien sans démarrage depuis plus de 24 h est signalé, même
+     après la fin du cycle (2026-10-20, demande utilisateur).
 
 Rejeu :  scraper/.venv/Scripts/python.exe agents/tests/test_veille_cycle.py
 """
@@ -100,6 +102,53 @@ def test_pas_parti():
     assert etat == "pas_parti" and vc.doit_escalader(etat, pb)
 
 
+def test_prose_de_haiku_ne_reveille_pas_opus():
+    """2026-10-23 : un Opus réveillé à 04:30 pour rien.
+
+    Haiku avait écrit « processus vivant mais pas de métriques collectées —
+    extraction suspendue » sur extract-ddproperty à 2 h de course. Deux
+    défauts cumulés :
+      - la porte d'escalade cherchait le mot « processus » dans de la prose
+        libre, donc « processus VIVANT » passait par le motif prévu pour
+        « processus ABSENT » ;
+      - les preuves ne portaient aucun repère de durée, alors que la médiane
+        mesurée de cet agent est de 327 min (de 166 à 1 201 sur 30 runs) et
+        qu'il n'écrit ses métriques qu'à la fin.
+    Ce test fige le premier point ; le second est une consigne + un repère
+    ajoutés aux preuves (duree_habituelle / tourne_depuis_min)."""
+    m = datetime(2026, 10, 5, 6, 0, tzinfo=BKK)
+    p = preuves(m, [run("extract-ddproperty", "running", True)])
+    etat, pb = vc.etat_mecanique(p, m)
+    assert etat == "en_cours" and pb == []
+
+    # La phrase exacte du 2026-10-23, et deux tournures anodines : aucune ne
+    # doit réveiller Opus pendant que le cycle tourne.
+    for prose in ("Run 989 (extract-ddproperty) : état 'running' depuis "
+                  "2026-10-22T19:30:04+00:00 sans ended_at, processus vivant mais pas "
+                  "de métriques collectées — extraction suspendue",
+                  "le processus tourne normalement",
+                  "aucun constat haut, mais le cycle paraît lent"):
+        assert not vc.doit_escalader("en_cours", [vc.PREFIXE_HAIKU + prose]), prose
+
+    # Ce qui doit TOUJOURS passer : les phrases que le code fabrique lui-même.
+    assert vc.doit_escalader("en_cours", ["remonter-supabase : failed (run #1, code 1)"])
+    assert vc.doit_escalader(
+        "en_cours", ["extract-x : marqué running mais processus 42 absent (run #1)"])
+    assert vc.doit_escalader("en_cours", ["constat haut extract-x/sonde_echec : blob changé"])
+    # Cycle FINI : la prose de Haiku remonte comme avant (rien n'est perdu).
+    assert vc.doit_escalader("termine", [vc.PREFIXE_HAIKU + "extraction suspendue"])
+
+
+def test_repere_de_duree_dans_les_preuves():
+    """Un run en cours doit arriver à Haiku avec de quoi juger : depuis combien
+    de temps il tourne, et combien de temps cet agent met d'habitude."""
+    d = vc.duree_habituelle("extract-ddproperty")
+    assert d is None or ({"runs_mesures", "mediane_min", "plus_court_min",
+                          "plus_long_min"} <= set(d)), d
+    assert vc.duree_habituelle("agent-qui-n-a-jamais-tourne-xyz") is None
+    assert "duree_habituelle" in vc.CONSIGNE_HAIKU and "tourne_depuis_min" in vc.CONSIGNE_HAIKU
+
+
 def test_signature_sans_chiffres():
     a = vc._signature(["3 ligne(s) d'erreur dans extract-x-2026-10-05T193000.log"])
     b = vc._signature(["5 ligne(s) d'erreur dans extract-x-2026-10-05T193000.log"])
@@ -171,12 +220,34 @@ def test_ne_se_surveille_pas_elle_meme():
         vc.LOGS = vrai_logs
 
 
+def test_inactivite_24h():
+    """8. (2026-10-20) Un agent quotidien sans démarrage depuis > 24 h est vu,
+    même après la fin du cycle ; un agent jamais lancé ou récent ne l'est pas."""
+    import sqlite3, tempfile
+    vrai = vc.LEDGER
+    with tempfile.TemporaryDirectory() as tmp:
+        db = os.path.join(tmp, "ledger.db")
+        cx = sqlite3.connect(db)
+        cx.execute("create table agent_runs (agent text, started_at text)")
+        m = datetime(2026, 10, 20, 14, 0, tzinfo=BKK)
+        cx.executemany("insert into agent_runs values (?, ?)", [
+            ("recent", (m - timedelta(hours=11)).isoformat()),
+            ("vieux", (m - timedelta(hours=30)).isoformat())])
+        cx.commit(); cx.close()
+        vc.LEDGER = vc.Path(db)
+        try:
+            assert vc.inactifs(m, ["recent", "vieux", "jamais"]) == [("vieux", 30.0)]
+            assert vc.inactifs(m, ["recent"]) == []          # se tait quand tout va bien
+        finally:
+            vc.LEDGER = vrai
+
+
 if __name__ == "__main__":
-    test_fenetre_suit_la_tache()
-    test_en_cours()
-    test_termine()
-    test_pas_parti()
-    test_signature_sans_chiffres()
-    test_delai_gele_par_la_veille()
-    test_ne_se_surveille_pas_elle_meme()
-    print("OK — test_veille_cycle : 7/7")
+    # Liste DÉDUITE, pas recopiée : la liste écrite à la main avait laissé
+    # 2 tests ajoutés le 2026-10-23 hors de l'exécution, en annonçant « 8/8 ».
+    # Un test qu'on croit jouer et qui dort est un garde-fou inerte (règle 2).
+    cas = [(n, f) for n, f in sorted(globals().items())
+           if n.startswith("test_") and callable(f)]
+    for nom, fn in cas:
+        fn()
+    print(f"OK — test_veille_cycle : {len(cas)}/{len(cas)}")

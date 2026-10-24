@@ -6,6 +6,7 @@ import PdfToolbar from "@/bilan_RE/web/components/PdfToolbar";
 import PdfWatermark from "@/bilan_RE/web/components/PdfWatermark";
 import { compteCourant } from "@/bilan_RE/web/lib/session";
 import { comptesActives, possede } from "@/bilan_RE/web/lib/comptes";
+import { profilCourant } from "@/bilan_RE/web/lib/profil";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +34,7 @@ export default async function RapportPdf({ params }: { params: Promise<{ id: str
 
   const r = lire(id);
   if (!r || r.statut !== "ok") notFound();
+  const profil = await profilCourant();
   return (
     <div className="h-full overflow-y-auto bg-sunken print:bg-white">
       <PdfToolbar />
@@ -41,7 +43,7 @@ export default async function RapportPdf({ params }: { params: Promise<{ id: str
       <div className="relative mx-auto my-6 max-w-[210mm] bg-white shadow-xl print:my-0 print:shadow-none">
         <PdfWatermark />
         <div className="relative z-10">
-          <Report r={sansSources(r)} mode="pdf" />
+          <Report r={sansSources(r)} mode="pdf" profil={profil} />
         </div>
       </div>
     </div>

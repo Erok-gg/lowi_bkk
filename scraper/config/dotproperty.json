@@ -1,22 +1,24 @@
 {
-  "_comment": "DotProperty — VÉRIFICATION UNIQUEMENT (voir docstring de l'adaptateur). max_pages volontairement bas : on veut un échantillon représentatif sur 3 runs, pas une couverture complète d'une source qu'on soupçonne redondante.",
+  "_comment": "DotProperty (dotproperty.co.th, groupe Lifull Connect) — source de PRODUCTION depuis le 2026-10-22 (outil de verification avant). ld+json ItemList sur la liste (prix, chambres, immeuble, coords), surface sur la fiche. Mesure du 2026-10-22 : 62 431 ventes / 119 610 locations sur Bangkok, aucun plafond de pagination ; 153/179 annonces (85 %) deja en base sous une autre source (meme immeuble, meme prix), 26/179 (15 %) absentes de toutes. Tourne le SOIR (lane 'soir', 21:00) et s arrete seul a 02:00 (--jusqua, 30 min de marge pour les traitements de fin de scan) : un scrap encore en vol a 02:30 ferait reporter tout le cycle de nuit.",
   "source": "dotproperty",
   "base_url": "https://www.dotproperty.co.th",
   "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
   "rate_limit_seconds": 3.0,
+  "throttle": "adaptatif",
+  "rate_limit_floor_seconds": 1.0,
+  "fetcher_backend": "curl_cffi",
+  "image_rate_limit_seconds": 0.4,
   "timeout_seconds": 30,
-  "max_pages": 10,
+  "max_pages": 4200,
+  "_max_pages_pourquoi": "Toutes les pages : 2 080 en vente, ~3 990 en location (119 610 / 30). Pas de plafond cote site (page 2 080 pleine, 2 100 vide, mesure).",
+  "max_nouvelles": 50000,
+  "_max_nouvelles_2026-10-22_soir": "Demande utilisateur : le maximum d annonces des cette nuit. Limite levee (50 000 = de fait aucune) : c est l arret horaire (--jusqua) qui borne. Retour : 3000.",
+  "_max_nouvelles_pourquoi": "Budget d inconnues par run : chaque nouvelle ouvre sa fiche (surface). Fenetre 21:00-02:00 = 5 h ; liste complete estimee ~2 h a ~1,3 s/page, reste ~3 h pour ~3 000 fiches a ~3-4 s. Rattrapage du stock (~180 000, dont ~27 000 propres a DotProperty) etale sur des semaines. Estime, non mesure : a recaler apres le premier soir.",
   "page_param": "page",
   "respect_robots": true,
   "searches": [
-    {
-      "path": "/en/condos-for-sale/bangkok",
-      "deal_type": "sale"
-    },
-    {
-      "path": "/en/condos-for-rent/bangkok",
-      "deal_type": "rent"
-    }
+    {"path": "/en/condos-for-sale/bangkok", "deal_type": "sale"},
+    {"path": "/en/condos-for-rent/bangkok", "deal_type": "rent"}
   ],
   "image": {
     "width": 1024,
@@ -25,7 +27,6 @@
     "quality": 80,
     "max_per_listing": 1,
     "telecharger": true,
-    "televerser": false,
-    "_televerser_pourquoi": "Televersement coupe le 2026-08-22 : le bucket pesait 1 610 Mo, soit 157 % du quota free tier (1 Go), contre 11 Mo de metadonnees en base. Le telechargement reste ACTIF : le poste coureur constitue sa reserve locale dans scraper/output/images/. Remettre a true puis lancer scraper/upload_images.py remet tout en ligne depuis le disque, sans re-scraper."
+    "televerser": false
   }
 }

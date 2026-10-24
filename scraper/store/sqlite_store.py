@@ -76,6 +76,54 @@ where price is not null
   );
 """
 
+#: Statistiques par agent immobilier (cf. table `courtiers`, demande du
+#: 2026-10-17). Calculees a la lecture sur `listings` : aucun compteur stocke,
+#: donc rien a tenir a jour ni a desynchroniser.
+#:  - `annonces` compte les lignes ; `biens` les cohortes `unit_key` distinctes
+#:    (immeuble x chambres x tranche 5 m2 x type) — un agent qui republie le
+#:    meme lot ne le compte qu'une fois. Approximation : deux lots identiques du
+#:    meme immeuble se confondent.
+#:  - `delistees` = tout ce qui n'est plus actif (inactive + sold).
+#:  - `secteurs_probables` : les 3 khets ou l'agent a le plus publie, tout
+#:    historique confondu, avec leur part. « Probables » car le khet vient du
+#:    geocodage de l'annonce, pas d'une zone declaree par l'agent.
+#: Les agents sans nom (vus avant le 2026-10-17, pas revus depuis) restent
+#: comptes : l'agent_id suffit, le nom arrive au prochain passage.
+_VUE_COURTIERS = """
+CREATE VIEW courtiers_stats as
+with par_khet as (
+  select source, agent_id, khet, count(*) n,
+         row_number() over (partition by source, agent_id order by count(*) desc, khet) rang,
+         sum(count(*)) over (partition by source, agent_id) total
+  from listings
+  where agent_id is not null and khet is not null
+  group by source, agent_id, khet
+), secteurs as (
+  select source, agent_id,
+         group_concat(khet || ' (' || cast(round(100.0 * n / total) as int) || ' %)', ', '
+                      order by rang) secteurs_probables
+  from par_khet where rang <= 3
+  group by source, agent_id
+)
+select l.source, l.agent_id, c.nom, c.alias, coalesce(c.agency_id, max(l.agency_id)) agency_id, c.agence, c.lister_type,
+       count(*)                                                      annonces,
+       count(distinct coalesce(l.unit_key, l.id))                    biens,
+       sum(l.status = 'active')                                      actives,
+       sum(l.status <> 'active')                                     delistees,
+       sum(l.status = 'active' and l.deal_type = 'sale')             ventes_actives,
+       sum(l.status = 'active' and l.deal_type = 'rent')             locations_actives,
+       count(distinct case when l.status = 'active' then l.khet end) khets_actifs,
+       s.secteurs_probables,
+       min(l.first_seen)                                             premiere_vue,
+       max(l.last_seen)                                              derniere_vue,
+       c.profil_url
+from listings l
+left join courtiers c on c.source = l.source and c.agent_id = l.agent_id
+left join secteurs  s on s.source = l.source and s.agent_id = l.agent_id
+where l.agent_id is not null
+group by l.source, l.agent_id
+"""
+
 
 #: Jours pendant lesquels une annonce doit rester marquee vendue avant de
 #: quitter le stock actif. Decide le 2026-08-03.
@@ -242,6 +290,9 @@ class SqliteStore(BaseStore):
                          ("market_status", "text"), ("market_status_since", "text"),
                          # descriptif libre — seule matière textuelle de la base
                          ("description", "text"),
+                         # date de creation DECLAREE par le portail (PropertyScout),
+                         # cf. store/base.py et bilan_RE/migrations/2026-10-22_date_source.sql
+                         ("listed_at_source", "text"),
                          # MATIERE PREMIERE : texte integral compresse (zlib)
                          ("page_text", "blob"),
                          # détails extraits du descriptif (préfixe d_ pour les
@@ -282,6 +333,58 @@ class SqliteStore(BaseStore):
             bedrooms integer, area_bucket integer, active_count integer not null,
             median_price real, min_price real, max_price real)""")
         self.db.execute("create index if not exists idx_cohort_snap on cohort_snapshots (unit_key, taken_at)")
+        # Agents immobiliers (« courtiers » : `agents` designe deja les bots du
+        # cycle). Demande du 2026-10-17. Seul DDproperty les nomme — sonde du
+        # jour : `agent.name`, `agency.name`, `listerType` dans le blob de liste,
+        # donc sans requete de plus. FazWaz n'affiche que « Listed By: Private
+        # Owner/Agent » (deja dans d_publie_par), sans nom.
+        # Une ligne par agent et non une colonne par annonce : 1 313 agents
+        # pour ~135 000 annonces DDproperty. Pas de backfill (demande
+        # explicite) : les noms arrivent au fil des scraps, l'agent_id historique
+        # suffit deja aux compteurs de la vue.
+        self.db.execute("""create table if not exists courtiers (
+            source text not null, agent_id text not null,
+            nom text, alias text, agency_id text, agence text, lister_type text,
+            profil_url text,
+            first_seen text not null, maj_at text not null,
+            primary key (source, agent_id))""")
+        # Ventes « conclues » publiées par un portail sur sa page d'immeuble
+        # (FazWaz : 29 pour Knightsbridge Prime Sathorn). SOURCE FAIBLE, table à
+        # part (décision du 2026-10-22) : jamais jointe à `listings`, jamais dans
+        # une médiane de marché. `fiabilite` est écrite 'faible' et ne change que
+        # par une décision explicite. Locale (SQLite) : non poussée vers Supabase.
+        # Migration/rollback : bilan_RE/migrations/2026-10-22_ventes_portail*.sql.
+        self.db.execute("""create table if not exists ventes_portail (
+            id text primary key, source text not null, projet_cle text not null,
+            projet_url text, condo_name text, condo_norm text,
+            deal_type text not null, sold_date text not null, sold_price real not null,
+            area_sqm real, price_per_sqm real, floor integer, bedrooms integer,
+            furniture integer, quota text,
+            fiabilite text not null default 'faible',
+            premier_vu text not null, dernier_vu text not null)""")
+        self.db.execute("create index if not exists idx_ventes_portail_condo"
+                        " on ventes_portail (condo_norm, sold_date)")
+        # La synthèse que le portail écrit lui-même (nombre de ventes, prix/m²,
+        # jours avant vente, décote) : SES chiffres sur SA base, à citer tels quels.
+        self.db.execute("""create table if not exists ventes_portail_projets (
+            source text not null, projet_cle text not null, projet_url text,
+            condo_name text, condo_norm text, n real, price_per_sqm real,
+            jours_avant_vente real, decote_pct real, releve_le text not null,
+            primary key (source, projet_cle))""")
+        self.db.execute("create index if not exists idx_listings_agent"
+                        " on listings (source, agent_id) where agent_id is not null")
+        # Recreee seulement si sa definition a change : `create view if not
+        # exists` garderait une version perimee, mais un drop/create a CHAQUE
+        # ouverture serait une ecriture de schema a chaque lancement d'agent —
+        # de quoi faire redemarrer une copie par l'API `backup` en cours.
+        # (SQLite reecrit « CREATE VIEW » en capitales dans sqlite_master : la
+        # constante est ecrite ainsi, sinon la comparaison echoue toujours.)
+        actuelle = self.db.execute(
+            "select sql from sqlite_master where type='view' and name='courtiers_stats'"
+        ).fetchone()
+        if actuelle is None or actuelle[0].strip() != _VUE_COURTIERS.strip():
+            self.db.execute("drop view if exists courtiers_stats")
+            self.db.execute(_VUE_COURTIERS)
 
     def record_cohort_snapshots(self) -> int:
         """Stock actif par cohorte (immeuble × chambres × tranche × type).
@@ -350,6 +453,102 @@ class SqliteStore(BaseStore):
                 " missed_count=0, first_missed_at=null,delisted_at=null,dirty_since=? where id=?",
                 (now, now, listing_id),
             )
+        self.db.commit()
+
+    def enregistrer_ventes_portail(self, source: str, projets: list[dict]) -> tuple[int, int]:
+        """Écrit les ventes conclues d'un portail. Retourne (nouvelles, vues).
+
+        Rejouable : la clé est (projet, unité, date, prix), donc relire la même
+        page ne crée rien. Table annexe : une panne ici ne doit pas faire échouer
+        le scrap, qui a déjà écrit ses annonces."""
+        from pipeline.normalize import _norm_condo
+        now = _now()
+        nouvelles = vues = 0
+        for p in projets:
+            norm = _norm_condo(p.get("condo_name")) or None
+            for v in p.get("ventes") or []:
+                vues += 1
+                uid = v.get("unit_id") if v.get("unit_id") is not None else "?"
+                vid = f"{source}:{p['cle']}:{uid}:{v['sold_date']}:{int(v['sold_price'])}"
+                cur = self.db.execute(
+                    "insert or ignore into ventes_portail (id, source, projet_cle, projet_url,"
+                    " condo_name, condo_norm, deal_type, sold_date, sold_price, area_sqm,"
+                    " price_per_sqm, floor, bedrooms, furniture, quota, premier_vu, dernier_vu)"
+                    " values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (vid, source, p["cle"], p.get("url"), p.get("condo_name"), norm,
+                     v["deal_type"], v["sold_date"], v["sold_price"], v.get("area_sqm"),
+                     v.get("price_per_sqm"), v.get("floor"), v.get("bedrooms"),
+                     v.get("furniture"), v.get("quota"), now, now))
+                if cur.rowcount:
+                    nouvelles += 1
+                else:
+                    self.db.execute("update ventes_portail set dernier_vu=? where id=?", (now, vid))
+            r = p.get("resume") or {}
+            if r:
+                self.db.execute(
+                    "insert or replace into ventes_portail_projets (source, projet_cle, projet_url,"
+                    " condo_name, condo_norm, n, price_per_sqm, jours_avant_vente, decote_pct,"
+                    " releve_le) values (?,?,?,?,?,?,?,?,?,?)",
+                    (source, p["cle"], p.get("url"), p.get("condo_name"), norm, r.get("n"),
+                     r.get("price_per_sqm"), r.get("jours_avant_vente"), r.get("decote_pct"), now))
+        self.db.commit()
+        return nouvelles, vues
+
+    def noter_courtier(self, source: str, stub: dict) -> None:
+        # Table annexe : une panne ici (verrou, donnee inattendue) ne doit pas
+        # faire sauter l'annonce, que run.py ecarterait avec l'erreur.
+        try:
+            self._noter_courtier(source, stub)
+        except (sqlite3.Error, AttributeError, TypeError) as e:
+            print(f"  [courtiers] {stub.get('agent_id')} ignore : {e}", flush=True)
+
+    def _noter_courtier(self, source: str, stub: dict) -> None:
+        # Appele pour CHAQUE annonce de la liste, y compris celles sautees par la
+        # dedup (prix inchange) : c'est ce qui donne un nom aux agents deja en
+        # base sans rouvrir une seule fiche. Ecriture seulement si quelque chose
+        # a change — sinon ~1 000 updates par page de scan pour rien.
+        #
+        # UN AGENT, PLUSIEURS NOMS — sonde du 2026-10-17 sur UNE page de 20
+        # annonces : l'agent 10082297 s'affiche « Hometoday789 » sur une annonce
+        # et sous son nom thai sur une autre ; 10298913 en « NR AGENT » et « NR
+        # agent ». Ecraser `nom` a chaque passage le faisait osciller (4
+        # reecritures sur 20 annonces au 2e passage, au lieu de 0). D'ou : le
+        # PREMIER nom reste `nom`, les autres s'accumulent dans `alias`
+        # (comparaison sans casse). L'agence, elle, suit la derniere valeur vue.
+        aid, nom = stub.get("agent_id"), stub.get("agent_name")
+        if not aid or not nom:
+            return
+        row = self.db.execute(
+            "select nom, alias, agency_id, agence, lister_type, profil_url"
+            " from courtiers where source=? and agent_id=?", (source, aid)).fetchone()
+        now = _now()
+        champs = (stub.get("agency_id"), stub.get("agency_name"),
+                  stub.get("lister_type"), stub.get("agent_profile_url"))
+        if row is None:
+            self.db.execute(
+                "insert into courtiers (source, agent_id, nom, agency_id, agence,"
+                " lister_type, profil_url, first_seen, maj_at) values (?,?,?,?,?,?,?,?,?)",
+                (source, aid, nom, *champs, now, now))
+            self.db.commit()
+            return
+        alias = [a for a in (row["alias"] or "").split(" | ") if a]
+        connus = {row["nom"].casefold(), *(a.casefold() for a in alias)}
+        if nom.casefold() not in connus:
+            alias.append(nom)
+        # une valeur absente de ce stub n'efface pas celle deja connue ; l'URL de
+        # profil reste la premiere vue, car son slug suit l'alias affiche
+        # (« hometoday789-10082297 » / « <nom thai>-10082297 ») et oscillerait
+        nouveaux = tuple(n if n is not None else o for n, o in zip(
+            champs[:3], (row["agency_id"], row["agence"], row["lister_type"])))
+        nouveaux += (row["profil_url"] or champs[3],)
+        nouvel_alias = " | ".join(alias) or None
+        if nouvel_alias == row["alias"] and nouveaux == tuple(
+                row[k] for k in ("agency_id", "agence", "lister_type", "profil_url")):
+            return
+        self.db.execute(
+            "update courtiers set alias=?, agency_id=?, agence=?, lister_type=?,"
+            " profil_url=?, maj_at=? where source=? and agent_id=?",
+            (nouvel_alias, *nouveaux, now, source, aid))
         self.db.commit()
 
     def upsert_listing(self, norm: dict, images: list[dict] | None) -> tuple[str, float | None]:

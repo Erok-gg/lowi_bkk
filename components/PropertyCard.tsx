@@ -3,6 +3,7 @@
 import type { Listing } from "@/lib/types";
 import { PROPERTY_CARD_SECTIONS } from "@/config/property-card.config";
 import { imageUrl } from "@/lib/image-url";
+import { sourceLabel } from "@/lib/sources";
 
 /**
  * PropertyCard — fiche bien DATA-DRIVEN (config/property-card.config.ts).
@@ -62,7 +63,7 @@ export default function PropertyCard({ listing }: { listing: Listing }) {
         })}
         <a href={listing.sourceUrl} target="_blank" rel="noreferrer"
            className="mt-1 block text-center text-[11px] text-violet-fluo hover:underline">
-          Voir l&apos;annonce ({listing.source}) ↗
+          Voir l&apos;annonce ({sourceLabel(listing.source)}) ↗
         </a>
       </div>
     </div>

@@ -46,7 +46,7 @@ from datetime import datetime, timedelta, timezone
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LEDGER = os.path.join(ROOT, "agents", "ledger.db")
 QUEUE = os.path.join(ROOT, "agents", "queue")
-SOURCES = ["fazwaz", "ddproperty", "propertyscout", "nestopa", "livinginsider"]
+SOURCES = ["fazwaz", "ddproperty", "propertyscout", "nestopa", "livinginsider", "propertyhub", "hipflat", "dotproperty"]
 
 for _l in open(os.path.join(ROOT, "scraper", ".env"), encoding="utf-8"):
     _l = _l.strip()

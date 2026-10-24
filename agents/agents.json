@@ -9,7 +9,8 @@
   },
   "lanes": {
     "daily": "Vente + location, tous les 4 jours (cadence par agent via every_days, pas par ce nom de lane)",
-    "weekly": "Hebdomadaire — archivage + purge, sondage de nouvelles sources"
+    "weekly": "Hebdomadaire — archivage + purge, sondage de nouvelles sources",
+    "soir": "Rattrapage du soir (2026-10-22) : tache LowiBKK-Soir a 21:00, 'orchestrator.py run-lane soir'. Ne porte que des extracteurs qui s'arretent seuls avant 02:30 (--jusqua) : un scrap en vol a 02:30 ferait reporter tout le cycle de nuit."
   },
   "agents": [
     {
@@ -18,7 +19,8 @@
       "tier": "T0",
       "lanes": [
         "daily",
-        "weekly"
+        "weekly",
+        "soir"
       ],
       "every_days": 1,
       "module": "agents.bots.garde_veille",
@@ -29,7 +31,8 @@
           0,
           0
         ]
-      }
+      },
+      "_soir_pourquoi": "2026-10-22 : tient le poste eveille pendant le scrap du soir (DotProperty), comme pendant le cycle de nuit."
     },
     {
       "name": "regle-alimentation",
@@ -240,11 +243,158 @@
       "_gel": "Bande abaissee le 2026-08-11 : la source est GELEE a UNE page (cf. scraper/config/nestopa.json). Sans cet ajustement, watch-health la declarerait cassee a chaque cycle — un garde-fou qui crie au loup est pire que pas de garde-fou."
     },
     {
+      "name": "extract-propertyhub",
+      "famille": "Extraction",
+      "tier": "T0",
+      "lanes": [
+        "daily"
+      ],
+      "every_days": 1,
+      "_every_days_pourquoi": "Quotidien sur demande explicite de l'utilisateur (2026-10-23), remplace 3 j provisoire du 2026-10-20. Cout connu : ~3-4 h de plus par passage sur le cycle de nuit — a remesurer au 1er cycle.",
+      "cmd": [
+        "@py",
+        "scraper/run.py",
+        "--source",
+        "propertyhub",
+        "--deal-type",
+        "sale",
+        "--full",
+        "--store",
+        "sqlite"
+      ],
+      "then": [
+        [
+          "@py",
+          "scraper/run.py",
+          "--source",
+          "propertyhub",
+          "--deal-type",
+          "rent",
+          "--full",
+          "--store",
+          "sqlite"
+        ]
+      ],
+      "_ajoute_le": "2026-10-20 — aucun run de production encore, bandes provisoires. max_nouvelles=2000 par run (config) : rattrapage du stock initial etale sur des semaines. Sans --geocode : coordonnees du PROJET lues sur la fiche et cachees par project_id.",
+      "bandes": {
+        "nouvelles": [
+          1,
+          9000
+        ],
+        "traces_erreur": [
+          0,
+          5
+        ],
+        "erreurs_images": [
+          0,
+          5000
+        ]
+      },
+      "_erreurs_images_pourquoi": "Couvertures absentes du CDN (S3 AccessDenied, le site construit la meme URL) : 29/82 = 35 % sur 3 echantillons du 2026-10-20 (6/25, 9/30, 14/27). Jusqu'a ~1 400 echecs pour 4 000 nouvelles ; au-dela de 2 500 (~62 %), watch-health releve images_perdues. 2026-10-21 : budget double (max_nouvelles 4 000/run) -> bande 0-5 000."
+    },
+    {
+      "name": "extract-hipflat",
+      "famille": "Extraction",
+      "tier": "T0",
+      "lanes": [
+        "daily"
+      ],
+      "every_days": 1,
+      "_every_days_pourquoi": "Quotidien sur demande explicite de l'utilisateur (2026-10-23), remplace 3 j provisoire du 2026-10-20. Cout connu : ~3-4 h de plus par passage sur le cycle de nuit — a remesurer au 1er cycle.",
+      "cmd": [
+        "@py",
+        "scraper/run.py",
+        "--source",
+        "hipflat",
+        "--deal-type",
+        "sale",
+        "--full",
+        "--store",
+        "sqlite"
+      ],
+      "then": [
+        [
+          "@py",
+          "scraper/run.py",
+          "--source",
+          "hipflat",
+          "--deal-type",
+          "rent",
+          "--full",
+          "--store",
+          "sqlite"
+        ]
+      ],
+      "_ajoute_le": "2026-10-20 — aucun run de production encore, bandes provisoires. max_nouvelles=2000 par run (config) : rattrapage du stock initial etale sur des semaines. Pagination plafonnee a 167 pages : decoupage district > chambres > prix, tranches non vues protegees du delistage. Annonces FazWaz syndiquees ecartees.",
+      "bandes": {
+        "nouvelles": [
+          1,
+          9000
+        ],
+        "traces_erreur": [
+          0,
+          5
+        ]
+      }
+    },
+    {
+      "name": "extract-dotproperty",
+      "famille": "Extraction",
+      "tier": "T0",
+      "lanes": [
+        "soir"
+      ],
+      "every_days": 1,
+      "cmd": [
+        "@py",
+        "scraper/run.py",
+        "--source",
+        "dotproperty",
+        "--deal-type",
+        "sale",
+        "--full",
+        "--jusqua",
+        "23:30",
+        "--store",
+        "sqlite"
+      ],
+      "_ajoute_le": "2026-10-22, demande utilisateur : scrap le soir (21:00) et jusqu'au bout de la nuit pour rattraper le retard. Arret propre a 02:00 : au-dela, le cycle de 02:30 serait reporte en entier (extraction_en_cours). Scan coupe = partiel = aucun delistage ; le delistage ne joue que les soirs ou la liste est lue en entier. Bandes provisoires, aucun run de production.",
+      "bandes": {
+        "nouvelles": [
+          1,
+          12000
+        ],
+        "traces_erreur": [
+          0,
+          5
+        ]
+      },
+      "then": [
+        [
+          "@py",
+          "scraper/run.py",
+          "--source",
+          "dotproperty",
+          "--deal-type",
+          "rent",
+          "--full",
+          "--jusqua",
+          "02:00",
+          "--store",
+          "sqlite"
+        ]
+      ],
+      "_then_pourquoi": "2026-10-22 : sans limite de nouvelles annonces, un run unique passerait la nuit sur les ventes et n'atteindrait jamais les locations. Vente 21:00-23:30, location jusqu'a 02:00 (environ 2 h 30 chacune)."
+    },
+    {
       "name": "extract-livinginsider",
       "famille": "Extraction",
       "tier": "T0",
-      "lanes": [],
-      "_suspendu": "SUSPENDU le 2026-09-26 sur decision utilisateur (lanes vide = plus jamais lance par --due ; retour : remettre \"daily\"). Le site a ete refondu vers le 17/09 : les URL /searchword_en/.../<page>/ redirigent vers /en/condo-buysell|condo-rent/<n>, le ld+json ItemList est un bloc fixe (12 memes annonces sur toutes les pages) et les fiches detail repondent 202 a corps vide (challenge anti-bot). Resultat mesure : 0 nouvelle annonce 5 nuits d'affilee, ~50 min perdues par nuit, 6 annonces sans prix creees le 17/09 (passees inactive le 26/09). watch-health et fraicheur ignorent un extracteur suspendu (sinon alerte haute quotidienne sur une source arretee a dessein). Reprise = adapter list_urls a la nouvelle pagination ET trancher le challenge des fiches (posture).",
+      "lanes": [
+        "daily"
+      ],
+      "_repris": "REPRIS le 2026-10-21 sur decision utilisateur, en mode 'liste' (scraper/config/livinginsider.json) : cartes des pages de liste vente, aucune fiche ouverte, aucun contournement du challenge. Mesure sur base de travail (journal du 2026-10-21) : 25 pages, 825 annonces retenues, 8,2 min sans images, 0 erreur ; liste location en challenge -> protegee du delistage. Premier run de production : ~640 nouvelles + ~25 min d'images, puis dedup incrementale. Retour : remettre lanes [] et le motif _suspendu ci-dessous.",
+      "_suspendu": "(historique) SUSPENDU le 2026-09-26 sur decision utilisateur (lanes vide = plus jamais lance par --due ; retour : remettre \"daily\"). Le site a ete refondu vers le 17/09 : les URL /searchword_en/.../<page>/ redirigent vers /en/condo-buysell|condo-rent/<n>, le ld+json ItemList est un bloc fixe (12 memes annonces sur toutes les pages) et les fiches detail repondent 202 a corps vide (challenge anti-bot). Resultat mesure : 0 nouvelle annonce 5 nuits d'affilee, ~50 min perdues par nuit, 6 annonces sans prix creees le 17/09 (passees inactive le 26/09). watch-health et fraicheur ignorent un extracteur suspendu (sinon alerte haute quotidienne sur une source arretee a dessein). Reprise = adapter list_urls a la nouvelle pagination ET trancher le challenge des fiches (posture).",
       "every_days": 1,
       "cmd": [
         "@py",
@@ -286,7 +436,7 @@
       }
     },
     {
-      "_pourquoi": "Publie vers Supabase ce que les extracteurs viennent d'ecrire en local. Place ICI, en tete de la 'suite', donc juste apres les extracteurs : l'orchestrateur ordonne Supervision > Prelude > Extraction > suite (ordre du tableau) > overseer. Publier avant la fin du scrap servirait un marche a moitie rafraichi. PERIMETRE 'actives' (arbitrage du 2026-08-26) : le serveur est une fenetre chaude, l'historique des delistees reste local ou il alimente les statistiques d'evolution. Le filtre n'est pas qu'une economie de 25 Mo : upsert_listing force status='active', donc remonter tout RESSUSCITERAIT les 23 684 delistees sur le site public. --synchro-statuts recopie les delistages deja tranches en local (sans quoi ~1 876 annonces mortes restent affichees comme disponibles ; mesure : 400/400 identifiants testes encore actifs en ligne). DEBIT (2026-08-28, remplace la mesure du 26/08) : le chemin ligne a ligne (4,1 annonces/s, 2 allers-retours Bangkok<->Singapour/annonce) a fait deborder ExecutionTimeLimit 3 nuits de suite (26 au 28/08 - reparations-2026-08-2{7,8}.md), tuant les 9 agents suivants de la lane a chaque fois. Remplace par SupabaseStore.upsert_listings_bulk (1 SELECT + 1 INSERT ON CONFLICT par lot de 500) : mesure a ~250 annonces/s, soit ~4 min pour 61 246 actives au lieu de ~4h20. ExecutionTimeLimit retire en contrepartie (voir ops/install-agents-task.ps1) ; le garde-fou de remplacement est ops/pouls.py --verifier, qui alerte si un cycle tourne encore apres 16h.",
+      "_pourquoi": "Publie vers Supabase ce que les extracteurs viennent d'ecrire en local. Place ICI, en tete de la 'suite', donc juste apres les extracteurs : l'orchestrateur ordonne Supervision > Prelude > Extraction > suite (ordre du tableau) > overseer. Publier avant la fin du scrap servirait un marche a moitie rafraichi. PERIMETRE 'actives' (arbitrage du 2026-08-26) : le serveur est une fenetre chaude, l'historique des delistees reste local ou il alimente les statistiques d'evolution. Le filtre n'est pas qu'une economie de 25 Mo : upsert_listing force status='active', donc remonter tout RESSUSCITERAIT les 23 684 delistees sur le site public. --synchro-statuts recopie les delistages deja tranches en local (sans quoi ~1 876 annonces mortes restent affichees comme disponibles ; mesure : 400/400 identifiants testes encore actifs en ligne). DEBIT (2026-08-28, remplace la mesure du 26/08) : le chemin ligne a ligne (4,1 annonces/s, 2 allers-retours Bangkok<->Singapour/annonce) a fait deborder ExecutionTimeLimit 3 nuits de suite (26 au 28/08 - reparations-2026-08-2{7,8}.md), tuant les 9 agents suivants de la lane a chaque fois. Remplace par SupabaseStore.upsert_listings_bulk (1 SELECT + 1 INSERT ON CONFLICT par lot de 500) : mesure a ~250 annonces/s, soit ~4 min pour 61 246 actives au lieu de ~4h20. ExecutionTimeLimit retire en contrepartie (voir ops/install-agents-task.ps1) ; le garde-fou de remplacement est ops/pouls.py --verifier, qui alerte si un cycle tourne encore apres 16h. --DELTA (2026-10-05, implique --statut actives + --synchro-statuts) : Supabase a signale l'epuisement du budget Disk IO. Le plein renvoi relisait chaque nuit 112 436 actives + 62 266 mortes cote serveur pour ~2-5 mises a jour reelles par lot de 500 et 1 689 statuts corriges (log du 2026-10-05) ; 2 nuits sur 3 en echec, connect() bloque > 25 s. Le 1er passage --delta coute autant (les 174 702 lignes sont dirty depuis le backfill du 2026-09-07, aucun delta n'etant alle au bout), les suivants ne portent que dirty_since, pose uniquement sur changement de contenu ou de statut. last_seen serveur inchange : le plein renvoi ne le rafraichissait deja pas sur les lignes inchangees (clause WHERE de upsert_listings_bulk). Retour : remettre --statut actives --synchro-statuts.",
       "name": "remonter-supabase",
       "famille": "Security & storage",
       "tier": "T0",
@@ -298,10 +448,11 @@
         "@py",
         "ops/remonter-local.py",
         "scraper/output",
-        "--statut",
-        "actives",
-        "--synchro-statuts"
-      ]
+        "--delta",
+        "--exclure-sources",
+        "propertyhub,hipflat,dotproperty"
+      ],
+      "_exclure_pourquoi": "2026-10-20, decision utilisateur : PropertyHub et Hipflat restent locales tant que leur rattrapage (max_nouvelles 2 000/run) n'est pas fini et que le quota Supabase n'est pas chiffre. Leurs lignes gardent dirty_since : retirer l'option les remonte toutes au --delta suivant. 2026-10-22 : dotproperty ajoutee pour la meme raison (rattrapage, quota non chiffre)."
     },
     {
       "_pourquoi": "Ajoute le 2026-09-09. Surveille que le stock ACTIF est reellement confirme par les scans, et non seulement marque actif. Ne pas confondre avec watch-health, qui juge la SORTIE d'un extracteur (bandes de metriques) : celui-ci juge l'ETAT de la base qui en resulte. Un extracteur peut rendre des metriques dans les clous pendant que le stock actif vieillit sans que rien ne le confirme — c'est exactement ce qui s'est passe : recense.py sautait le rafraichissement de last_seen des que le parcours avait un trou (1 a 6 pages sur ~2600, donc a TOUS les runs), et ddproperty est tombe a 9,6 % d'actives confirmees < 48 h, la plus ancienne datant du 23/07, sans une seule alerte. Place ICI, apres les extracteurs et remonter-supabase : il lit ce que le cycle vient d'ecrire. Seuil auto-calibre sur la mediane de l'historique de CHAQUE source (nestopa est gelee a une page par conception et plafonnera toujours bas : un seuil commun crierait au loup). Se tait tant qu'il n'a pas 4 releves.",
@@ -322,7 +473,10 @@
         "extract-ddproperty",
         "extract-propertyscout",
         "extract-nestopa",
-        "extract-livinginsider"
+        "extract-livinginsider",
+        "extract-propertyhub",
+        "extract-hipflat",
+        "extract-dotproperty"
       ]
     },
     {
@@ -339,7 +493,10 @@
         "extract-ddproperty",
         "extract-propertyscout",
         "extract-nestopa",
-        "extract-livinginsider"
+        "extract-livinginsider",
+        "extract-propertyhub",
+        "extract-hipflat",
+        "extract-dotproperty"
       ]
     },
     {
@@ -382,7 +539,10 @@
         "extract-ddproperty",
         "extract-propertyscout",
         "extract-nestopa",
-        "extract-livinginsider"
+        "extract-livinginsider",
+        "extract-propertyhub",
+        "extract-hipflat",
+        "extract-dotproperty"
       ],
       "needs_supabase": true,
       "_needs_supabase_pourquoi": "Lit Supabase : en mode --local il analyserait la production, pas le scrap de test. Sauté."
@@ -458,7 +618,8 @@
       "lanes": [
         "daily"
       ],
-      "every_days": 30,
+      "every_days": 1,
+      "_every_days_2026-10-20": "Quotidien depuis le 2026-10-20 (décision utilisateur : « tous les jours à la fin des cycles », était 30). ~50 min ajoutées au cycle. L'agent surveille aussi ce qui nourrit les scores (délistage à l'arrêt dès 3 jours, source écartée, fenêtre périmée, régression de publication) : tout défaut = constat HAUT, donc réparation par la veille. Détail : agents/bots/scores_tension.py.",
       "module": "agents.bots.scores_tension",
       "_pourquoi": "Ajouté le 2026-10-17 (bilan acheteur). Mensuel par décision de l'utilisateur : ~50 min pour ~4 000 immeubles (2 min 15 fixes + 0,7 s/immeuble, mesuré). Lit bangkok.db en lecture seule, écrit scraper/output/scores-tension/, aucune remontée Supabase. Placé après report pour lire la base une fois le cycle d'extraction terminé.",
       "bandes": {

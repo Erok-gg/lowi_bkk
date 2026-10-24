@@ -6,10 +6,12 @@ que des objets Python. On lit `scraper/output/bangkok.db` (PC2, référence) en
 """
 from __future__ import annotations
 
+import bisect
 import json
 import os
 import sqlite3
 import statistics
+import zlib
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 
@@ -30,6 +32,62 @@ def config(chemin: str | None = None) -> dict:
 
 def _d(s: str | None) -> date | None:
     return date.fromisoformat(s[:10]) if s else None
+
+
+def naissances(c: sqlite3.Connection) -> tuple[dict[str, date], dict[str, date]]:
+    """(id → date de création estimée, source → premier jour de suivi).
+
+    Les identifiants DDproperty, FazWaz, PropertyScout, PropertyHub et Nestopa
+    sont des compteurs : mesuré le 2026-10-21, l'identifiant maximal vu croît
+    chaque mois sans exception (DDproperty 500,40 M en juin → 500,67 M en
+    octobre ; FazWaz 6,50 M → 6,88 M). La FRONTIÈRE d'une source à la date d est
+    le plus grand identifiant vu jusqu'à d ; une annonce existait dès le premier
+    jour où la frontière a dépassé son identifiant, même découverte des mois plus
+    tard. Plus fiable que les dates affichées : `posted_at` DDproperty est une
+    date de remontée (écart médian −16 j, mesure du 2026-08-02). Identifiant non
+    numérique (Hipflat) : pas de date, on garde la première vue."""
+    vus: dict[str, list[tuple[date, int, str]]] = defaultdict(list)
+    debut_suivi: dict[str, date] = {}
+    for lid, src, fs in c.execute("select id, source, first_seen from listings"):
+        # Début de suivi pour TOUTES les sources, identifiant numérique ou non :
+        # sans lui, Hipflat (haché) passait pour suivie depuis toujours et ses
+        # annonces entraient dans l'offre comme du stock nouveau.
+        j = _d(fs)
+        if src not in debut_suivi or j < debut_suivi[src]:
+            debut_suivi[src] = j
+        try:
+            n = int(lid.rsplit(":", 1)[-1])
+        except ValueError:
+            continue
+        vus[src].append((_d(fs), n, lid))
+    cree: dict[str, date] = {}
+    for src, v in vus.items():
+        v.sort()
+        jours, front, m = [], [], -1
+        for d, n, _ in v:
+            m = max(m, n)
+            if jours and jours[-1] == d:
+                front[-1] = m
+            else:
+                jours.append(d)
+                front.append(m)
+        for d, n, lid in v:
+            # premier jour où la frontière atteint n ; jamais après la 1re vue
+            cree[lid] = min(jours[bisect.bisect_left(front, n)], d)
+    # PropertyHub n'est suivi que depuis le 2026-10-20 : la frontière ne date
+    # rien d'antérieur. Son `createdAt` (≠ `refreshed_at`, la remontée) est une
+    # vraie date de création : mesuré le 2026-10-21 sur 4 000 annonces, triées
+    # par createdAt l'identifiant ne décroît que sur 4,4 % des paires voisines.
+    for lid, raw in c.execute("select id, raw_data from listings where source = 'propertyhub'"):
+        try:
+            if isinstance(raw, bytes):
+                raw = zlib.decompress(raw).decode()
+            ca = _d((json.loads(raw or "{}").get("created_at") or "")[:10] or None)
+        except (ValueError, zlib.error, AttributeError):
+            continue
+        if ca:
+            cree[lid] = min(ca, cree.get(lid, ca))
+    return cree, debut_suivi
 
 
 def charger(db: str, cfg: dict, t1: date) -> list[coeur.Annonce]:
@@ -75,6 +133,8 @@ def charger(db: str, cfg: dict, t1: date) -> list[coeur.Annonce]:
             "where substr(observed_at, 1, 10) >= ? order by observed_at", (t_min.isoformat(),)):
         if lid in ids and p:
             prix[lid].append((_d(obs), float(p)))
+    # cf. naissances() ; « naissance » absente de la config = comportement v2
+    cree, suivi = naissances(c) if cfg.get("naissance") == "identifiant" else ({}, {})
     out = []
     for (i, src, uk, condo, khet, ch, surf, lat, lng, fs, fin, p) in rows:
         obs = prix.get(i) or []
@@ -86,7 +146,8 @@ def charger(db: str, cfg: dict, t1: date) -> list[coeur.Annonce]:
             id=i, source=src, unit_key=uk, condo=(condo or "").strip(), khet=khet,
             chambres=int(ch) if ch is not None else None, surface=surf,
             lat=lat, lng=lng, debut=_d(fs), fin=_d(fin), prix=obs,
-            annee=annee.get((condo or "").strip()), charges=charge.get((condo or "").strip())))
+            annee=annee.get((condo or "").strip()), charges=charge.get((condo or "").strip()),
+            cree=cree.get(i), suivi_depuis=suivi.get(src)))
     return out
 
 
@@ -129,7 +190,15 @@ def sante(annonces: list[coeur.Annonce], t1: date, cfg: dict) -> dict[str, dict]
         if v["actives_debut"] and v["actives_fin"] / v["actives_debut"] - 1 > s["croissance_stock_max"]:
             raisons.append("stock en hausse de plus de "
                            f"{s['croissance_stock_max']:.0%} sur la fenêtre (recensement ?)")
-        v["gardee"] = not raisons
+        forcee = next((f for f in s.get("saines_forcees", [])
+                       if f["source"] == src and t1 <= _d(f["jusqu_au"])), None)
+        if forcee and raisons:
+            # cf. config `_saines_forcees` : on garde la source, on ne cache pas
+            # pourquoi la règle l'aurait écartée.
+            raisons = [f"ignorée (forçage : {forcee['raison']}) — {r}" for r in raisons]
+            v["gardee"] = True
+        else:
+            v["gardee"] = not raisons
         v["raisons"] = raisons
         verdicts[src] = v
     return verdicts

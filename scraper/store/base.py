@@ -60,7 +60,14 @@ COLONNES_LISTING = (
 #: ATTENTION : PC2 en devient le seul detenteur. Le rapatriement prealable est
 #: fait par ops/rapatrie-textes.py et la couverture verifiee par
 #: ops/verifie-avant-degraissage.py — a rejouer avant toute suppression serveur.
-COLONNES_LOCALES = ("description", "page_text")
+#:
+#: `listed_at_source` (2026-10-22) : date de creation de l'annonce DECLAREE par
+#: le portail (aujourd'hui PropertyScout seul). Locale a dessein : seul le bilan,
+#: qui tourne sur PC2, la lit ; la pousser vers Supabase demanderait un
+#: `alter table` en ligne pour rien. La remonter plus tard = la deplacer dans
+#: COLONNES_LISTING + une migration serveur. Cf. bilan_RE/migrations/
+#: 2026-10-22_date_source.sql.
+COLONNES_LOCALES = ("description", "page_text", "listed_at_source")
 
 
 
@@ -124,6 +131,14 @@ class BaseStore(ABC):
     @abstractmethod
     def record_khet_snapshots(self) -> int:
         """Fige les stats par quartier dans khet_snapshots (comparaison par date)."""
+
+    def noter_courtier(self, source: str, stub: dict) -> None:
+        """Nom de l'agent immobilier et de son agence, lus dans la liste.
+
+        Local seulement (table `courtiers`, cf. sqlite_store) : l'app ne les lit
+        pas, et le partage online/local reste a arbitrer. No-op par defaut —
+        Supabase n'a pas la table, et un scrap ne doit pas mourir pour elle.
+        """
 
     def close(self) -> None:  # optionnel
         pass

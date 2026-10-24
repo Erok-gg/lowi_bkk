@@ -27,6 +27,7 @@ scraper/.venv/Scripts/python.exe agents/orchestrator.py status
 |---|---|---|---|
 | `garde-veille` | Supervision | T0 | à chaque cycle (`always_run`) |
 | `extract-fazwaz` `extract-ddproperty` `extract-propertyscout` `extract-nestopa` | Extraction ×4 | T0 | 4 j |
+| `extract-propertyhub` `extract-hipflat` | Extraction ×2 (2026-10-20, locales : hors remontée Supabase) | T0 | 3 j |
 | `watch-health` | Surveillance | T1→T2 | 1 j |
 | `watch-sources` | Surveillance | T1→T2 | 14 j |
 | `analyze-sale` `analyze-rent` | Analyse ×2 | T1 | 4 j |

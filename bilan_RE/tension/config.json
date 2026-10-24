@@ -1,6 +1,11 @@
 {
   "_comment": "Score de tension acheteur/vendeur (0-100). Méthode : docs/methodes-calculs.md §12. Changer une valeur = incrémenter config_version : le score d'une version n'est pas comparable à celui d'une autre.",
-  "config_version": 1,
+  "config_version": 4,
+ "_config_version_4": "2026-10-22 : effectif minimum PAR NIVEAU (décision utilisateur) — Bangkok toujours noté ; CBD 500 cohortes ; district 100 ; rayon 1 km 50 ; immeuble 10 % de ses lots recensés (au moins 1). Les minimums de SORTIES par niveau (10 partout sauf Bangkok 0 et immeuble 3) sont un choix de l'assistant, à valider : sans plancher bas pour l'immeuble, la règle des 10 % ne servirait à rien. Avant : 30 cohortes / 10 sorties partout. Le garde-fou de largeur d'intervalle (30 points) reste : un immeuble noté sur peu de cohortes montrera « not enough data » si son intervalle est trop large. Scores v4 non comparables aux v3. `minimum` global reste utilisé pour décider quels districts forment la RÉFÉRENCE (donnees.py).",
+ "minimum_par_niveau": {"Bangkok": {"cohortes": 0, "sorties": 0}, "CBD": {"cohortes": 500, "sorties": 10}, "zone": {"cohortes": 500, "sorties": 10}, "khet": {"cohortes": 100, "sorties": 10}, "rayon": {"cohortes": 50, "sorties": 10}, "immeuble": {"sorties": 3}, "immeuble_part_des_lots": 0.10},
+  "_config_version_3": "2026-10-21 : naissance = identifiant séquentiel (donnees.naissances). L'offre compare deux stocks au même périmètre (annonces qui EXISTAIENT à t−90 j, sources déjà suivies), les âges partent de la création. Mesuré au 18/10, Bangkok : offre −0,99 (stock ×2,7, rattrapage de couverture) → −0,15 ; écoulement inchangé. Validation : 99,2 % des posted_at DDproperty postérieurs à la création estimée (−2 j), écart médian 0 j. Scores v3 non comparables aux v2.",
+  "naissance": "identifiant",
+  "_config_version_2": "2026-10-20 : sante_sources.saines_forcees (décision utilisateur « considère la base saine depuis le début »). Les scores v1 (DDproperty écarté) ne sont pas comparables aux v2.",
   "fenetre_jours": 28,
   "_fenetre": "28 j : assez pour ~3 100 sorties nettes sur Bangkok (mesuré 2026-09-14 → 10-12), assez court pour suivre l'évolution semaine par semaine.",
   "fiable_depuis": "2026-09-14",
@@ -47,7 +52,35 @@
     "jours_sans_retrait_max": 5,
     "croissance_stock_max": 0.5,
     "_sante": "Une source est écartée d'une fenêtre si : aucun retrait alors qu'elle a >= 200 actives ; >= 5 jours consécutifs sans retrait en fin de fenêtre (DDproperty à l'arrêt depuis le 13/10) ; stock en hausse de plus de 50 % sur la fenêtre (recensement, pas marché).",
+    "saines_forcees": [
+      {
+        "source": "ddproperty",
+        "jusqu_au": "2026-10-20",
+        "raison": "décision utilisateur du 2026-10-20 : base considérée saine depuis fiable_depuis"
+      },
+      {
+        "source": "fazwaz",
+        "jusqu_au": "2026-10-20",
+        "raison": "décision utilisateur du 2026-10-20 : base considérée saine depuis fiable_depuis"
+      }
+    ],
+    "_saines_forcees": "Pour les fenêtres finissant au plus tard à `jusqu_au`, la source est GARDÉE même si une règle automatique l'écarte ; la raison écartée reste tracée. Au-delà de cette date les règles automatiques s'appliquent de nouveau : le forçage couvre le passé, il ne désarme pas le garde-fou pour l'avenir. Mesuré avant la décision (scores du 18/10, fenêtre au 16/10, DDproperty écarté pour 5 j sans retrait) : 0 score de revente sur 4 851 lignes (« no reference yet ») et 81 % des tensions retombées au niveau Bangkok entier.",
     "exclusions_manuelles": [
+      {
+        "source": "propertyhub",
+        "depuis": "2026-10-20",
+        "raison": "rattrapage du stock initial (max_nouvelles 2 000/run) : le stock part de 0, aucune regle automatique ne se declenche (actives_debut = 0)"
+      },
+      {
+        "source": "dotproperty",
+        "depuis": "2026-10-22",
+        "raison": "rattrapage du stock initial (max_nouvelles 3 000/run) : le stock part de 0, aucune regle automatique ne se declenche (actives_debut = 0)"
+      },
+      {
+        "source": "hipflat",
+        "depuis": "2026-10-20",
+        "raison": "rattrapage du stock initial (max_nouvelles 2 000/run) : le stock part de 0, aucune regle automatique ne se declenche (actives_debut = 0)"
+      },
       {
         "source": "livinginsider",
         "depuis": "2026-09-16",
@@ -71,6 +104,42 @@
     ]
   },
   "rayon_km": 1.0,
+  "bornes_loyer": {
+    "loyer_min": 3000,
+    "loyer_max": 500000,
+    "surface_min": 15,
+    "surface_max": 500,
+    "_bornes_loyer": "Alignées sur lib/market-bounds.ts (loyer 3 k–500 k, surface 15–500 m²) — ne pas diverger."
+  },
+  "renovation": {
+    "prime_sensible": 0.10,
+    "min_renovees": 2,
+    "min_autres": 3,
+    "min_immeubles_rayon": 3,
+    "_renovation": "2026-10-22, PROPOSÉ (règle 5, à arbitrer) : la rénovation « augmente sensiblement le loyer » si le loyer/m² médian des annonces rénovées dépasse de 10 % celui des autres, à immeuble et chambres égaux, avec au moins 2 rénovées et 3 autres. Mesure du jour : effet médian +0,2 % sur 134 groupes, > +10 % dans 37."
+  },
+  "frais_achat": {
+    "_frais_achat": "2026-10-22. Taux légaux du Department of Lands et du Revenue Department ; partage acheteur/vendeur = usage courant, négociable. Base légale = valeur d'expertise (inconnue, en général inférieure au prix) : calculé sur le prix demandé, donc un plafond. À FAIRE VALIDER par un avocat thaï (bilan_RE/docs/journal-juridique.md).",
+    "avertissement": "Indicative estimate on the asking price. Official fees are based on the Land Department's appraised value, usually lower. Who pays what is a custom and can be negotiated. Check with a Thai lawyer before signing.",
+    "lignes": [
+      {"poste": "Transfer fee (half of 2%)", "taux": 0.01, "payeur": "buyer",
+       "note": "2% of the appraised value, usually split 50/50 between buyer and seller."},
+      {"poste": "Transfer fee (seller's half)", "taux": 0.01, "payeur": "seller", "cas": "negotiated",
+       "note": "Sometimes paid in full by the buyer: check the sale agreement."},
+      {"poste": "Specific business tax", "taux": 0.033, "payeur": "seller", "cas": "negotiated",
+       "note": "If the seller has owned the unit for less than 5 years (otherwise stamp duty 0.5%). Usually the seller's cost; a 'net price' deal can shift it to the buyer."},
+      {"poste": "Withholding tax", "taux": null, "payeur": "seller", "cas": "negotiated",
+       "note": "Seller's income tax, depends on how long they owned the unit and on the appraised value."},
+      {"poste": "Mortgage registration", "taux": null, "payeur": "buyer", "cas": "mortgage",
+       "note": "1% of the loan amount, only if you borrow in Thailand."},
+      {"poste": "Foreign exchange transaction form", "taux": null, "payeur": "buyer", "cas": "foreigner", "etrangers_seulement": true,
+       "note": "Funds must come from abroad in foreign currency to register a foreign-quota unit. Small bank fee."},
+      {"poste": "Sinking fund", "taux": null, "payeur": "buyer", "cas": "new",
+       "note": "One-off contribution when buying new from the developer, set per m² by the building."},
+      {"poste": "Legal due diligence", "taux": null, "montant_min": 30000, "montant_max": 60000, "payeur": "buyer", "cas": "optional",
+       "note": "Optional but advised: title check, contract review. Indicative market range."}
+    ]
+  },
   "liquidite": {
     "_liquidite": "Facilité de revente AU PRIX DU MARCHÉ (postulat utilisateur), et son évolution avec l'âge de l'immeuble. Méthode : docs/methodes-calculs.md §12.",
     "tolerance_prix": 0.1,
@@ -97,6 +166,7 @@
     "jalons_travaux": [],
     "_jalons_travaux": "VIDE À DESSEIN. Format : {\"age\": 15, \"libelle\": \"...\", \"source\": \"...\"}. Les âges typiques de gros entretien (façade, ascenseurs, étanchéité) ne sont pas mesurés ici : à renseigner par l'utilisateur avec une source. Ils s'affichent sur la projection, ils ne modifient PAS le score."
   },
-  "frequence_calcul": "mensuelle",
+  "frequence_calcul": "quotidienne",
+  "_frequence_calcul_2026-10-20": "Quotidienne en fin de cycle, décision utilisateur du 2026-10-20 (~50 min ajoutées au cycle). Ce n'est pas un changement de méthode : config_version inchangée par ce champ.",
   "_frequence_calcul": "Décision utilisateur 2026-10-17 : le travail par cohorte se fait une fois par mois, faute de puissance de calcul pour le refaire à chaque demande. Le rapport affiche « monthly calculation » et la date de fin de fenêtre ; il ne se présente jamais comme du temps réel."
 }

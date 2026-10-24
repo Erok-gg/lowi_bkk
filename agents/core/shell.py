@@ -52,6 +52,21 @@ def run(cmd: list[str], cwd: str | None = None, log: str | None = None,
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
+    # JOURNAL AU FIL DE L'EAU — le parent vide son tampon a chaque ligne lue
+    # (voir fh.flush() plus bas), mais l'ENFANT groupe sa sortie par blocs de
+    # 8 ko tant qu'elle ne va pas vers un terminal. Un agent bavard franchit ce
+    # seuil sans arret ; un agent sobre peut mettre des heures.
+    #
+    # Mesure du 2026-10-23, en plein cycle : extract-hipflat et
+    # extract-propertyhub partis a la meme seconde ; a 15 min, 200 ko dans le
+    # journal du premier, 0 OCTET dans celui du second — qui versait pourtant
+    # 23 annonces toutes les 50 s dans la base. Son journal de l'avant-veille
+    # pesait 298 ko : le texte arrive, mais tout a la fin d'un run de 5 h 47.
+    #
+    # Consequence : pendant pres de six heures, qui ouvre ce journal pour
+    # savoir si l'agent vit lit un fichier vide et conclut a une panne. C'est
+    # l'enchainement qui a produit la fausse alerte du matin meme (regle 2).
+    env["PYTHONUNBUFFERED"] = "1"
     if env_extra:
         env.update(env_extra)
     buf: list[str] = []

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ListingRow, DealType } from "@/lib/types";
 import { applyFilters, filtersToParams, filtersFromParams, type Filters } from "@/lib/filters";
 import type { UnitMatchLite } from "@/lib/cross-match";
+import { sourceLabel } from "@/lib/sources";
 
 /* ───────────────────────── Dual-range slider (toggleable) ───────────────── */
 function RangeSlider({
@@ -234,7 +235,7 @@ export default function ListingsTable({
             options={[{ value: "foreigner", label: "Foreigner" }, { value: "thai", label: "Thai" }]} />
         )}
         <MultiToggle label="Source" selected={src} onToggle={toggle(src, setSrc)}
-          options={sources.map((s) => ({ value: s, label: s }))} />
+          options={sources.map((s) => ({ value: s, label: sourceLabel(s) }))} />
         <MultiToggle label="District" selected={khetSel} onToggle={toggle(khetSel, setKhetSel)}
           options={khets.map((k) => ({ value: k, label: k.replace(" District", "") }))} />
       </aside>

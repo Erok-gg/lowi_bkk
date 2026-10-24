@@ -31,10 +31,10 @@ const en = {
 
   /* landing */
   land_badge: "Private beta",
-  land_title_a: "Check a Bangkok condo",
-  land_title_em: "before",
-  land_title_b: "you make an offer.",
-  land_sub: "Paste the link of the listing. We compare it with what the market really offers, across five portals.",
+  land_title_a: "Independent insight.",
+  land_title_em: "",
+  land_title_b: "Better property decisions.",
+  land_sub: "Lowi is an independent real estate market analysis service that evaluates property opportunities using structured market data, proprietary analytics and independent comparisons.",
   land_free: "Free summary · full report as PDF · Lowi takes nothing from the seller",
   land_disclaimer:
     "Based on asking prices and listing exits, not confirmed sales. Market analysis, not a valuation, and not investment advice.",
@@ -84,7 +84,7 @@ const en = {
   rep_analyse_another: "Analyse another listing",
 
   /* porte du PDF */
-  pdf_gate_title: "Get the full PDF report",
+  pdf_gate_title: "Save the report as PDF",
   pdf_gate_body:
     "We send it to your email and keep it in your account, so you can reopen or download it later.",
   pdf_gate_cta: "Send me the report",
@@ -120,10 +120,10 @@ const th: Record<Cles, string> = {
   nav_language: "ภาษา",
 
   land_badge: "รุ่นทดลอง",
-  land_title_a: "ตรวจสอบคอนโดในกรุงเทพ",
-  land_title_em: "ก่อน",
-  land_title_b: "ยื่นข้อเสนอ",
-  land_sub: "วางลิงก์ประกาศขาย เราเทียบกับราคาที่ตลาดเสนอจริงจากห้าเว็บไซต์",
+  land_title_a: "ข้อมูลเชิงลึกที่เป็นอิสระ",
+  land_title_em: "",
+  land_title_b: "การตัดสินใจเรื่องอสังหาริมทรัพย์ที่ดีกว่า",
+  land_sub: "Lowi เป็นบริการวิเคราะห์ตลาดอสังหาริมทรัพย์อิสระ ประเมินโอกาสด้านอสังหาริมทรัพย์ด้วยข้อมูลตลาดที่เป็นระบบ การวิเคราะห์เฉพาะของเรา และการเปรียบเทียบที่เป็นอิสระ",
   land_free: "สรุปฟรี · รายงานเต็มเป็น PDF · Lowi ไม่รับเงินจากผู้ขาย",
   land_disclaimer:
     "คำนวณจากราคาเสนอขายและการถอนประกาศ ไม่ใช่ราคาซื้อขายจริง เป็นการวิเคราะห์ตลาด ไม่ใช่การประเมินราคาและไม่ใช่คำแนะนำการลงทุน",
@@ -201,10 +201,10 @@ const zh: Record<Cles, string> = {
   nav_language: "语言",
 
   land_badge: "内测版",
-  land_title_a: "出价前，先查清这套曼谷公寓",
+  land_title_a: "独立洞察，",
   land_title_em: "",
   land_title_b: "",
-  land_sub: "粘贴房源链接。我们用五个房产网站的真实在售数据与它对比。",
+  land_sub: "Lowi 是一项独立的房地产市场分析服务，基于结构化市场数据、自有分析模型和独立对比来评估房产机会。",
   land_free: "免费摘要 · 完整报告为 PDF · Lowi 不收卖方一分钱",
   land_disclaimer: "基于挂牌价与下架记录，而非成交价。这是市场分析，不是估价，也不构成投资建议。",
   land_p1_t: "价格合理吗？",

@@ -37,7 +37,26 @@ sur le premier run, beaucoup plus bas ensuite (voir panne connue ci-dessous).
 changé → ticket `parser_break` (le format d'adresse a pu changer, cf. panne
 connue).
 
-## Modes de panne connus
+## ⚠ Depuis le 2026-10-20 : mode « liste » (cartes), aucune fiche ouverte
+La procédure ci-dessus et plusieurs pannes ci-dessous décrivent le mode
+« fiche » d'avant la refonte du site (~17/09). État actuel, `mode` dans la
+config :
+- **Liste vente** `/en/condo-buysell/<n>` : 200, cartes lues directement
+  (prix, surface, chambres, SDB, étage, immeuble). La **dédup incrémentale
+  marche** (prix en liste).
+- **Fiches et liste location** : **202 + challenge AWS WAF**. Ligne
+  `[WAF-CHALLENGE]` au log ; la recherche s'arrête net ; les annonces de ce
+  type ne sont pas délistées (`ids_hors_couverture`). **Pas de contournement**
+  sans décision de l'utilisateur (posture).
+- **Filtre Bangkok = référentiel d'immeubles** des autres sources (les cartes
+  ne disent pas où est le bien). Khet et coordonnées viennent de l'immeuble
+  (`raw_data.coords = "referentiel_immeuble"`). ~70 % des cartes retenues,
+  quelques vrais immeubles de Bangkok perdus faute d'être au référentiel.
+- Sonde : `[SONDE-ECHEC]` si la page 1 vente est un challenge ou n'a aucune
+  carte lisible.
+- Test : `agents/tests/test_livinginsider_cartes.py`.
+
+## Modes de panne connus (mode fiche, avant le 2026-10-20)
 - **Aucune dédup incrémentale possible.** Contrairement à FazWaz/DDproperty/
   PropertyScout, la page de LISTE ne porte aucun prix (seulement des URLs
   nues) → `run.py` ne peut jamais sauter une fiche déjà connue au prix

@@ -89,7 +89,8 @@ def _sitemap_fige(log_path: str | None) -> bool:
 
 def _classer(nouvelles: int | None, erreurs: int, mediane: float | None,
              bande: list | None, err_images: int = 0,
-             sitemap_fige: bool = False) -> tuple[str, str]:
+             sitemap_fige: bool = False,
+             seuil_images: int = SEUIL_ERREURS_IMAGES) -> tuple[str, str]:
     """Rend (verdict, sévérité).
 
     ⚠ `err_images` est SÉPARÉ des autres erreurs, et c'est le point.
@@ -118,7 +119,7 @@ def _classer(nouvelles: int | None, erreurs: int, mediane: float | None,
     if bande and nouvelles > bande[1]:
         return "volume_anormal", "low"
     # Les annonces arrivent, mais leurs photos non : la source n'est pas « saine ».
-    if err_images >= SEUIL_ERREURS_IMAGES:
+    if err_images >= seuil_images:
         return "images_perdues", "medium"
     return "ok", "low"
 
@@ -158,9 +159,14 @@ def run(led, run_id: int, lane: str, spec: dict) -> dict:
         bande = (ext.get("bandes") or {}).get("nouvelles")
 
         err_images = m.get("erreurs_images", 0) or 0
+        # Bande `erreurs_images` propre à l'agent (2026-10-20, PropertyHub) : ~1
+        # couverture sur 4 y renvoie 403 même en navigateur — fichier supprimé côté
+        # CDN, pas une panne. À 10 pour tous, la source sonnerait à chaque run.
+        bande_img = (ext.get("bandes") or {}).get("erreurs_images")
+        seuil_img = bande_img[1] + 1 if bande_img else SEUIL_ERREURS_IMAGES
         fige = _sitemap_fige(last["log_path"])
         verdict, severite = _classer(nouvelles, erreurs, mediane, bande, err_images,
-                                     sitemap_fige=fige)
+                                     sitemap_fige=fige, seuil_images=seuil_img)
         # Deux runs d'affilée sur un sitemap figé = le site ne publie plus son
         # sitemap : là, c'est un vrai trou de collecte qui mérite d'être vu.
         if verdict == "sitemap_non_regenere":

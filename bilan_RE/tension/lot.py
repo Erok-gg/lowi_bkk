@@ -95,12 +95,32 @@ def calculer(t1: date, cfg: dict, db: str = DB, limite: int | None = None, journ
 
     cache = {}   # (modèle, niveau, chambres) → résultat : partagé par tous les immeubles
 
-    def niveau_large(nom_m, m, cle, cs, chambres, parent, ref):
+    def niveau_large(nom_m, m, cle, cs, chambres, parent, ref, minimum=None):
         k = (nom_m, cle, chambres)
         if k not in cache:
             cache[k] = coeur.evaluer(fs_de([c for c in cs if chambres is None or c.chambres == chambres]),
-                                     parent, ref, cfg, m)
+                                     parent, ref, cfg, m, minimum)
         return cache[k]
+
+    # Minimum par NIVEAU (config v4, décision utilisateur du 2026-10-22) : un district
+    # entier et un immeuble de dix lots ne se jugent pas sur le même effectif.
+    mpn = cfg["minimum_par_niveau"]
+
+    def minimum_de(niveau: str, lots: int = 0) -> dict:
+        if niveau == "Bangkok":
+            return mpn["Bangkok"]
+        if niveau in cfg["zones"]:
+            return mpn.get(niveau, mpn["zone"])
+        if niveau == "rayon":
+            return mpn["rayon"]
+        if niveau == "immeuble":
+            return {"cohortes": max(1, math.ceil(mpn["immeuble_part_des_lots"] * lots)),
+                    "sorties": mpn["immeuble"]["sorties"]}
+        return mpn["khet"]
+
+    import sqlite3
+    from . import immeuble as _imm
+    base = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
 
     tout = calc.cohortes
     zones = cfg["zones"]
@@ -117,7 +137,8 @@ def calculer(t1: date, cfg: dict, db: str = DB, limite: int | None = None, journ
             voisins = list(grille.autour(lat, lng, cfg["rayon_km"])) if lat is not None else []
             annee = next((c.annee for c in cs_imm if c.annee), None)
             charges = next((a.charges for c in cs_imm for a in c.annonces if a.charges), None)
-            ligne = {"immeuble": max(libelles[condo], key=libelles[condo].get), "cle": condo, "khet": khet, "lat": lat, "lng": lng, "annee": annee,
+            lots = _imm.lots_recenses(base, condo)
+            ligne = {"lots_recenses": lots, "immeuble": max(libelles[condo], key=libelles[condo].get), "cle": condo, "khet": khet, "lat": lat, "lng": lng, "annee": annee,
                      "charges_thb_m2": charges, "par_chambres": {}}
             for ch in [None] + chambres_presentes:
                 cle_ch = "all" if ch is None else str(ch)
@@ -133,12 +154,13 @@ def calculer(t1: date, cfg: dict, db: str = DB, limite: int | None = None, journ
                     for nom_niv, cle, cs in niveaux:
                         if cs is None:   # district : filtré à la volée puis mis en cache
                             cs = [c for c in tout if c.khet == khet]
-                        r = niveau_large(nom_m, m, cle, cs, ch, parent, ref)
+                        r = niveau_large(nom_m, m, cle, cs, ch, parent, ref, minimum_de(nom_niv))
                         chaine[nom_niv] = _resume(r)
                         if r["n_cohortes"]:
                             parent = r["signaux"]
-                    for nom_niv, cs in ((f"within {cfg['rayon_km']:g} km", voisins), ("building", cs_imm)):
-                        r = coeur.evaluer(fs_de(filt(cs)), parent, ref, cfg, m)
+                    for nom_niv, cs, mini in ((f"within {cfg['rayon_km']:g} km", voisins, minimum_de("rayon")),
+                                              ("building", cs_imm, minimum_de("immeuble", lots))):
+                        r = coeur.evaluer(fs_de(filt(cs)), parent, ref, cfg, m, mini)
                         chaine[nom_niv] = _resume(r)
                         if r["n_cohortes"]:
                             parent = r["signaux"]
@@ -167,7 +189,9 @@ def calculer(t1: date, cfg: dict, db: str = DB, limite: int | None = None, journ
 def ecrire(res: dict, dossier: str | None = None) -> str:
     dossier = dossier or SORTIE      # lu à l'appel : remplaçable dans les essais
     os.makedirs(dossier, exist_ok=True)
-    nom = os.path.join(dossier, f"scores-{res['fin_fenetre'][:7]}.json")
+    # Un fichier par JOUR depuis le passage au calcul quotidien (2026-10-20) :
+    # nommé au mois, chaque run écrasait le précédent et la série disparaissait.
+    nom = os.path.join(dossier, f"scores-{res['fin_fenetre'][:10]}.json")
     for chemin in (nom, os.path.join(dossier, "scores-latest.json")):
         tmp = chemin + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:

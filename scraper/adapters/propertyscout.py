@@ -190,6 +190,15 @@ class PropertyscoutAdapter(BaseAdapter):
         p = ((data or {}).get("props") or {}).get("pageProps", {}).get("property")
         if not isinstance(p, dict):
             return
+        # Date de creation de l'annonce, telle qu'affichee en « Date Listed » :
+        # `extsourceCreatedAt` (creation chez la source amont) quand elle existe,
+        # sinon `createdAt`. Mesure du 2026-10-22 sur 10 fiches : croit
+        # strictement avec l'identifiant, donc c'est une vraie date de creation
+        # et non une remontee en tete de liste (cas du posted_at de DDproperty).
+        # `first_seen` en retardait de 2 semaines a 3 ans.
+        cree = p.get("extsourceCreatedAt") or p.get("createdAt")
+        if isinstance(cree, str) and re.match(r"\d{4}-\d{2}-\d{2}", cree):
+            rec["listed_at_source"] = cree[:10]
         # chambres / SDB / surface (souvent absents du SERP)
         if rec.get("bedrooms") is None:
             rec["bedrooms"] = _rooms(p.get("bedroomsCount") if p.get("bedroomsCount") is not None else p.get("numberBedrooms"))

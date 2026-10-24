@@ -1,0 +1,33 @@
+{
+  "_comment": "Hipflat (hipflat.co.th, Lifull Connect) — SERP HTML rendue serveur, 30 cartes/page, prix en THB via le cookie _wl_currency. robots.txt : Allow / (sauf /generate-seo-friendly-url, /api/v1/projects/). Sonde du 2026-10-20 : 62 233 ventes + 118 991 locations sur Bangkok, pagination plafonnee a 167 pages (~5 010) par recherche -> decoupage district > chambres > prix croissant/decroissant. ~1 annonce sur 4 en tete de liste est syndiquee FazWaz (reference U1234567) : ecartee a la fiche, memorisee dans output/hipflat-ecartees.json.",
+  "source": "hipflat",
+  "base_url": "https://www.hipflat.co.th",
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  "rate_limit_seconds": 3.0,
+  "throttle": "adaptatif",
+  "rate_limit_floor_seconds": 1.0,
+  "fetcher_backend": "curl_cffi",
+  "_fetcher_backend_pourquoi": "Obligatoire ici : l adaptateur pose le cookie THB sur la session curl_cffi du Fetcher.",
+  "image_rate_limit_seconds": 0.4,
+  "timeout_seconds": 30,
+  "max_pages": 167,
+  "_max_pages_pourquoi": "Plafond du site mesure (page 167 = derniere non vide). En dessous, le decoupage par chambres/prix est desactive (mode test).",
+  "max_nouvelles": 4000,
+  "_max_nouvelles_x2_2026-10-21": "x2 demande utilisateur. ~3,9 s par nouvelle annonce mesure au 1er cycle (20/10). Retour : 2000.",
+  "_max_nouvelles_pourquoi": "Budget d inconnues ingerees PAR RUN (run.py) : chaque nouvelle ouvre sa fiche (nom d immeuble et coordonnees n y sont que la). ~180 000 au depart -> ~90 runs a 2 000. A arbitrer.",
+  "respect_robots": true,
+  "searches": [
+    {"deal_type": "sale"},
+    {"deal_type": "rent"}
+  ],
+  "districts": ["bang-bon", "bang-kapi", "bang-khae", "bang-khen", "bang-kho-laem", "bang-khun-thian", "bang-na", "bang-phlat", "bang-rak", "bang-sue", "bangkok-noi", "bangkok-yai", "bueng-kum", "chatuchak", "chom-thong", "din-daeng", "don-mueang", "dusit", "huai-khwang", "khan-na-yao", "khlong-sam-wa", "khlong-san", "khlong-toei", "lak-si", "lat-krabang", "lat-phrao", "min-buri", "nong-chok", "nong-khaem", "pathum-wan", "phasi-charoen", "phaya-thai", "phra-khanong", "phra-nakhon", "pom-prap-sattru-phai", "prawet", "rat-burana", "ratchathewi", "sai-mai", "samphanthawong", "saphan-sung", "sathon", "suan-luang", "taling-chan", "thawi-watthana", "thon-buri", "thung-khru", "wang-thonglang", "watthana", "yan-nawa"],
+  "image": {
+    "width": 1024,
+    "height": 768,
+    "format": "webp",
+    "quality": 80,
+    "max_per_listing": 1,
+    "telecharger": true,
+    "televerser": false
+  }
+}

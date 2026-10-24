@@ -27,6 +27,9 @@ from adapters.ddproperty import DdpropertyAdapter  # noqa: E402
 from adapters.propertyscout import PropertyscoutAdapter  # noqa: E402
 from adapters.nestopa import NestopaAdapter  # noqa: E402
 from adapters.livinginsider import LivinginsiderAdapter  # noqa: E402
+from adapters.propertyhub import PropertyhubAdapter  # noqa: E402
+from adapters.hipflat import HipflatAdapter  # noqa: E402
+from adapters.dotproperty import DotpropertyAdapter  # noqa: E402
 from pipeline.fetch import Fetcher  # noqa: E402
 from pipeline.normalize import normalize  # noqa: E402
 from pipeline.geo_match import KhetMatcher  # noqa: E402
@@ -44,6 +47,9 @@ ADAPTERS = {
     "propertyscout": PropertyscoutAdapter,
     "nestopa": NestopaAdapter,
     "livinginsider": LivinginsiderAdapter,
+    "propertyhub": PropertyhubAdapter,
+    "hipflat": HipflatAdapter,
+    "dotproperty": DotpropertyAdapter,
 }
 ROOT = Path(__file__).resolve().parent
 CONFIG_DIR = ROOT / "config"
@@ -117,6 +123,13 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="fazwaz", choices=list(ADAPTERS))
     ap.add_argument("--limit", type=int, default=None, help="nb max d'annonces (test)")
+    # 2026-10-22 (DotProperty, scrap de rattrapage du soir) : un scrap encore en
+    # vol à 02:30 fait REPORTER le cycle de nuit entier (orchestrator.py,
+    # extraction_en_cours). Le scan s'arrête donc proprement à l'heure dite et
+    # se compte comme partiel : aucun délistage sur ce qu'il n'a pas eu le temps de voir.
+    ap.add_argument("--jusqua", default=None, metavar="HH:MM",
+                    help="arrêt propre à cette heure locale (le lendemain si déjà passée) ; "
+                         "le scan est alors partiel : pas de délistage")
     ap.add_argument("--full", action="store_true",
                     help="scan complet : marque les annonces disparues comme inactives")
     ap.add_argument("--fetch-detail", action="store_true",
@@ -165,6 +178,8 @@ def main() -> None:
         backend=cfg.get("fetcher_backend", "requests"),
         outage_poll_seconds=cfg.get("outage_poll_seconds", 30.0),
         outage_max_wait_seconds=cfg.get("outage_max_wait_seconds", 20 * 60.0),
+        throttle=cfg.get("throttle", "fixe"),
+        rate_limit_floor_seconds=cfg.get("rate_limit_floor_seconds", 1.0),
     )
     matcher = KhetMatcher()
     geocoder = None
@@ -219,11 +234,33 @@ def main() -> None:
     budget_visites = cfg.get("max_detail_visits")  # None = illimité
     n_visites = n_confirmees = n_reportees = n_hors_fenetre = n_indisponibles = 0
     mode_sitemap = cfg.get("discovery") == "sitemap"
+    # Budget d'annonces INCONNUES ingérées par run (2026-10-20, PropertyHub) :
+    # la source annonce 215 000 annonces Bangkok, quatre fois notre stock actif.
+    # Chaque inconnue coûte au moins une image (GET) et une empreinte (HEAD) ;
+    # tout ingérer d'un coup = ~430 000 requêtes, plus d'une journée. Au-delà
+    # du budget, l'inconnue n'est pas écrite (elle sera reprise un prochain
+    # run) — sans risque pour --full : on ne déliste que ce qui est EN BASE.
+    budget_nouvelles = cfg.get("max_nouvelles")  # None = illimité
+    n_nouvelles_reportees = 0
     seen_ids: set[str] = set()
     price_alerts: list[str] = []
     completed = False  # True si le scan est allé au bout (cond. au délistage --full)
+    echeance = None
+    if args.jusqua:
+        from datetime import datetime as _dt, timedelta as _td
+        h, m = (int(x) for x in args.jusqua.split(":"))
+        echeance = _dt.now().replace(hour=h, minute=m, second=0, microsecond=0)
+        if echeance <= _dt.now():
+            echeance += _td(days=1)
+        print(f"  arrêt prévu à {echeance:%Y-%m-%d %H:%M} (heure locale)")
+    arret_horaire = False
 
     for stub in adapter.list_urls(fetcher, limit=args.limit):
+        if echeance is not None and _dt.now() >= echeance:
+            arret_horaire = True
+            print(f"[ARRET-HORAIRE] {args.source} : arrêt à {args.jusqua} après "
+                  f"{n_total} annonces vues — scan partiel, aucun délistage")
+            break
         # Exclusion à la source (avant dédup/délistage) : on ne l'ajoute pas à
         # seen_ids → avec --full une annonce exclue déjà en base sera délistée.
         if is_excluded(excludes, stub.get("condo_name"), stub.get("title")):
@@ -240,6 +277,9 @@ def main() -> None:
             # déjà connue dont le prix (lu dans la liste) n'a pas bougé. Raccourcit
             # fortement les scraps futurs.
             existing = store.get_listing(lid)
+            # avant toute branche de dedup : le nom de l'agent est dans la liste,
+            # les annonces sautees le portent aussi
+            store.noter_courtier(args.source, stub)
 
             if stub.get("lastmod"):
                 verdict = sitemap.trier(
@@ -262,11 +302,24 @@ def main() -> None:
                     continue
                 n_visites += 1
 
+            if (existing is None and budget_nouvelles is not None
+                    and n_new >= budget_nouvelles):
+                n_nouvelles_reportees += 1
+                continue
+
             stub_price = stub.get("price")
             if (existing is not None and stub_price is not None
                     and existing["price"] is not None
                     and float(existing["price"]) == float(stub_price)
-                    and store.has_images(lid)):
+                    # `_sans_image` : la liste montre que la source n'a AUCUNE photo
+                    # (Hipflat, ~1 carte sur 3 au test du 2026-10-20) — sans ce
+                    # drapeau, la fiche serait rouverte à chaque run pour rien.
+                    and (store.has_images(lid) or stub.get("_sans_image")
+                         # `image.retenter: false` (PropertyHub) : la couverture
+                         # morte (403 S3, 29/82 mesurées) ne ressuscite pas ; la
+                         # retenter rouvrirait l'annonce à chaque run, pour ~50 000
+                         # requêtes inutiles par passage une fois le stock rattrapé.
+                         or not cfg.get("image", {}).get("retenter", True))):
                 store.touch_listing(lid)
                 n_unchanged += 1
                 n_skipped += 1
@@ -383,7 +436,7 @@ def main() -> None:
             print(f"  [erreur] {lid} : {e}")
             continue
 
-    completed = True  # boucle allée au bout
+    completed = not arret_horaire  # boucle allée au bout (pas coupée par --jusqua)
 
     # Coupure réseau non résolue en cours de scan (fetch.py a attendu 20 min
     # avant d'abandonner une URL, cf. Fetcher._attend_coupure) : le scan s'est
@@ -422,6 +475,12 @@ def main() -> None:
             if vendues:
                 print(f"  {vendues} annonce(s) marquée(s) vendues depuis ≥7 j → sorties du stock")
 
+            # Pagination plafonnée (Hipflat, 2026-10-20) : ce que l'adaptateur SAIT
+            # n'avoir pas pu voir n'est pas « disparu ». Vide pour les autres sources.
+            proteges = adapter.ids_hors_couverture(store, args.deal_type)
+            if proteges:
+                print(f"  {len(proteges)} annonce(s) hors couverture du scan → non délistées")
+                seen_ids |= proteges
             # scope l'inactivation au deal_type scrapé (sinon on délisterait l'autre catégorie)
             delisted = store.mark_missing_inactive(args.source, seen_ids, deal_type=args.deal_type)
             removed = len(delisted)
@@ -439,6 +498,15 @@ def main() -> None:
     # `metrics_from_output` et conservé au ledger : la répartition devient une
     # série, pas une observation ponctuelle.
     print(chrono.rapport(), flush=True)
+
+    # Ventes conclues lues sur les pages d'immeuble (FazWaz) : table à part,
+    # source faible. Non fatal — les annonces sont déjà écrites.
+    if hasattr(adapter, "ventes_portail") and hasattr(store, "enregistrer_ventes_portail"):
+        try:
+            neuves, lues = store.enregistrer_ventes_portail(args.source, adapter.ventes_portail())
+            print(f"  [ventes-portail] {lues} vente(s) lue(s), {neuves} nouvelle(s)", flush=True)
+        except Exception as e:
+            print(f"  [ventes-portail] ignoré : {e}", flush=True)
 
     store.record_scan_run(args.source, n_total, n_new, removed, n_changed,
                           notes="coupure-reseau" if coupure
@@ -461,6 +529,9 @@ def main() -> None:
     print(f"  scannées : {n_total} | nouvelles : {n_new} | changées : {n_changed} "
           f"| inchangées : {n_unchanged} (dont {n_skipped} dédup, fiche non re-visitée) "
           f"| retirées : {removed} | exclues : {n_excluded} | erreurs : {n_errors}")
+    if budget_nouvelles is not None:
+        print(f"  budget nouvelles : {n_new}/{budget_nouvelles} ingérées "
+              f"| {n_nouvelles_reportees} inconnues reportées au prochain run")
     if mode_sitemap:
         print(f"  sitemap : {n_confirmees} confirmées par lastmod | {n_visites} fiches visitées"
               f"{'' if budget_visites is None else f' (budget {budget_visites})'} "

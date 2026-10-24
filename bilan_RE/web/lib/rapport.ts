@@ -44,7 +44,7 @@ export function urlAcceptee(url: string): { ok: true } | { ok: false; raison: st
   if (!PORTAILS.some((p) => hote === p || hote.endsWith("." + p)))
     return {
       ok: false,
-      raison: "This portal is not covered yet. Supported: DDproperty, FazWaz, PropertyScout, Nestopa, LivingInsider.",
+      raison: "This source is not supported.",
     };
   return { ok: true };
 }
@@ -191,7 +191,10 @@ export function sansSources(r: Rapport): Rapport {
     histoire: r.histoire && {
       ...r.histoire,
       portails: [],
-      evenements: r.histoire.evenements.map((e) => ({ ...e, source: "" })),
+      // Depuis le 2026-10-22 (demande utilisateur) l'historique NOMME le portail et
+      // porte un lien tant que l'annonce est en ligne : `source`, `cle` et `url`
+      // des événements sont conservés. Retour arrière : les neutraliser ici.
+      evenements: r.histoire.evenements,
     },
     scores_calcul: r.scores_calcul && { ...r.scores_calcul, sources_gardees: null },
   };

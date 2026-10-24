@@ -6,6 +6,7 @@ import Report from "@/bilan_RE/web/components/Report";
 import { compteCourant } from "@/bilan_RE/web/lib/session";
 import { possede } from "@/bilan_RE/web/lib/comptes";
 import { langueCourante } from "@/bilan_RE/web/lib/langue";
+import { profilCourant } from "@/bilan_RE/web/lib/profil";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,10 +33,11 @@ export default async function RapportPage({ params }: { params: Promise<{ id: st
   // Le bilan reste lisible sans compte (il est gratuit, backlog #1) ; c'est le
   // rapport complet en PDF qui demande l'e-mail. L'état du compte est résolu
   // ici parce que `Report` est un composant navigateur.
-  const [compte, langue] = await Promise.all([compteCourant(), langueCourante()]);
+  const [compte, langue, profil] = await Promise.all([compteCourant(), langueCourante(), profilCourant()]);
   return (
     <Report
       r={sansSources(r)}
+      profil={profil}
       acces={{
         langue,
         connecte: Boolean(compte),

@@ -166,6 +166,10 @@ def normalize(rec: dict) -> dict:
         # que la date de notre premier passage : le time-on-market qui en découle
         # est borné par la cadence de scan.
         "posted_at": rec.get("posted_at"),
+        # Date de creation declaree par le portail (PropertyScout : ordre des
+        # identifiants verifie le 2026-10-22). Ne remplace PAS first_seen ici ;
+        # c'est le bilan qui prend le plus ancien des deux.
+        "listed_at_source": rec.get("listed_at_source"),
         # Republication signalée par le site lui-même.
         "is_auto_repost": rec.get("is_auto_repost"),
         # VENDU / LOUÉ dit par la source, AVANT même la disparition de l'annonce.

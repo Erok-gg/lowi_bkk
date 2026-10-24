@@ -10,6 +10,13 @@ export const EXPLICATIONS = {
     "same building with the same number of bedrooms and a size within ±15%, then within 1 km, then the district. Copies of " +
     "the same unit published more than once count once. Each dot is one comparable unit; the dashed line is " +
     "the median. With fewer than 5 comparables we show no verdict. These are asking prices, not sold prices.",
+  ventes:
+    "Some listing portals publish the sales they recorded in a building. We show them next to, never inside, our own " +
+    "figures, and label them as a weak source: we cannot verify where the prices come from, a building typically has about " +
+    "two such sales a year, and the figures describe the portal's own database. We only show a median when at least 5 sales " +
+    "of the same bedroom count and a size within ±15% were reported in the last 36 months; otherwise the sales are listed " +
+    "one by one. The portal's own summary line (average days before sale, discount to the listed price) is quoted as " +
+    "published, not recalculated.",
   histoire:
     "We follow the same unit across the publicly available sources we aggregate. Two listings are treated as the same unit when they share the floor (when " +
     "known), the size within 1 m² and the price within 5%, and appear within 14 days of each other. Reposts by agents are " +
@@ -34,6 +41,21 @@ export const EXPLICATIONS = {
     "Automatic checks: a price per m² more than 40% below the building (often an error, leasehold or a bait listing); a " +
     "unit in the Thai quota, which a foreigner cannot own freehold in their own name; a quota not stated; sources that " +
     "disagree on the completion year; an area that is very small for the number of bedrooms.",
+  loyer:
+    "We take the units for rent right now in the same building with the same number of bedrooms and a size within ±15%, " +
+    "compute their rent per m², and apply the median to this unit's size. Without 5 such units we use the whole building, " +
+    "then units of the same bedrooms and size within 1 km. Tested on 4,000 current rentals, the first method lands within " +
+    "8% of the advertised rent in half of the cases and within 17% in 80% of them. The range is the middle half of the " +
+    "comparables. Floor is shown for information: in our data it barely changes the rent per m² within a building. " +
+    "Gross yield is twelve months of rent divided by the asking price, before fees, vacancy and tax.",
+  renovation:
+    "Coming soon. We will count the comparable rentals advertised as renovated and compare their rent with other units of " +
+    "the same building. With the few renovated units most buildings have today, the difference is still too close to " +
+    "chance to state a result.",
+  frais:
+    "Thai transfer costs, applied to the asking price. By law they are computed on the Land Department's appraised value, " +
+    "which is usually lower: these amounts are therefore a ceiling. Who pays what is a custom, not a rule, and is set in " +
+    "the sale agreement. Check with a Thai lawyer before signing.",
   limites:
     "This report uses asking prices and listing exits observed on publicly available sources, not land-office transactions. " +
     "A listing that leaves the market may have sold, been rented out or been withdrawn. Market scores are recalculated " +

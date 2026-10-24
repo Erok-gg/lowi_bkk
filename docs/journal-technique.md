@@ -4371,3 +4371,1520 @@ committé ; la route reste gardée en usage normal.
   encadrés « How is this computed? », en `bg-sunken`). C'est le comportement
   normal d'un filigrane posé sous le contenu ; à changer seulement si on le veut
   aussi par-dessus.
+
+## 2026-10-20 — scrapling 0.4.15 vs `pipeline/fetch.py` : comparaison mesurée, rien modifié
+
+Demande : rendre le scraper plus discret et plus rapide, si possible sans les délais « humains ». Comparaison faite sur le code installé (`scrapling` 0.4.15, déjà dans le venv depuis le 2026-08-29) et sur le chronomètre du cycle du 2026-10-19 (`agents/logs/extract-*-2026-10-19T193005.log`).
+
+**Mesuré — où passe le temps, cycle du 19/10.** Attente volontaire (`attente_*`, jitter + pauses longues) : DDproperty 24,8 min, FazWaz 15,7, PropertyScout 6,0, Nestopa 5,7 → **~52 min de sommeil par nuit**, contre ~11 min de réseau réel. Les deux plus gros postes ne sont PAS des délais humains : FazWaz a attendu **90 min** la régénération du sitemap (lancé 02:30, sitemap frais vers 04:00 alors que l'entrée du 2026-10-04 la situait vers 02:04) ; le recensement DDproperty a lu 5 815 pages en 95 min, déjà à 5 onglets parallèles.
+
+**Mesuré — discrétion.** 4 sources sur 5 partent en `requests` : empreinte TLS Python/urllib3 sous un User-Agent Chrome 126 figé — l'incohérence que les anti-bots repèrent en premier. curl_cffi (`impersonate="chrome"`) annonce aujourd'hui Chrome 150. **FazWaz s'annonce comme robot** (`bkk-perso/0.1; personal research`), sans justification trouvée au journal. Nestopa publie `Crawl-delay: 10` (on tourne à 3 s, `respect_robots: false` par arbitrage du 22/08). Aucune autre source ne publie de Crawl-delay. `_RETRY_STATUS` ne contient pas 429 : un rate-limit = fiche perdue, sans recul.
+
+**Ce que scrapling apporte en plus de ce qu'on a déjà pris (curl_cffi + Adaptor)** : un moteur `Spider` asynchrone avec concurrence par domaine, `AutoThrottle` (délai = latence observée / concurrence cible, doublé sur blocage, respect de `Retry-After`), `is_blocked()` + retries de blocage, Crawl-delay honoré, checkpoint pause/reprise. `StealthyFetcher` non fonctionnel ici (`patchright` absent ; Chromium Playwright téléchargé ce matin 08:31, inutilisé).
+
+**Non fait, laissé à l'arbitrage (règle 5)** : bascule des 4 sources en `curl_cffi` (la clé `fetcher_backend` existe, rollback = retirer la clé) ; UA de FazWaz ; remplacement du jitter fixe par un délai piloté par la latence avec recul sur 429/403 ; recalage de l'heure de FazWaz sur la régénération réelle du sitemap. **Écarté** : réécrire les adaptateurs sur `scrapling.spiders` (async, 5 adaptateurs à refaire, gain borné à ~52 min/nuit sur un cycle qui n'est pas limité par là).
+
+### 2026-10-20 (suite) — curl_cffi sur toutes les sources, relances communes, cadence adaptative : livré et mesuré sur deux séries longues
+
+Suite directe de l'entrée précédente, sur demande (« fais les 3 dans l'ordre », puis « teste sur une série longue »).
+
+**1. Recalage de l'heure de FazWaz — ABANDONNÉ après mesure.** Les extracteurs tournent en parallèle et DDproperty est le chemin critique : le 19/10, FazWaz a fini à 22:15 UTC, DDproperty à 22:54, et rien n'attend FazWaz. Ses 90 min d'attente du sitemap ne rallongent donc pas le cycle. L'heure de régénération dérive en plus d'une nuit à l'autre (01:30 → 03:42 → 04:00) : aucun créneau fiable à viser.
+
+**Défaut trouvé en route : le backend curl_cffi n'avait AUCUNE relance.** La docstring de `fetch.py` et la config DDproperty annonçaient « 3 retries intégrés, backoff 1 s » depuis le 2026-08-29. Mesuré : `Session(impersonate="chrome").retry` = `RetryStrategy(count=0)`. Ces 3 retries étaient ceux de `scrapling.FetcherSession`, abandonné le même jour. DDproperty a donc tourné sept semaines sans relance, et aucun test ne le voyait : `test_fetch_retry` n'exerçait que `requests`.
+
+**2. Relances communes + 429.** L'urllib3 `Retry` (réservé à `requests`) est remplacé par une boucle unique `Fetcher._get()`, la même pour les deux backends. Budget inchangé : 3 relances, backoff 1, 2 puis 4 s. **429 ajouté** (avant : fiche perdue, sans recul). `Retry-After` est honoré jusqu'à 120 s ; au-delà on rend la main. Les 4 sources restantes passent en `fetcher_backend: curl_cffi`. ⚠ Ce backend **n'utilise pas** le champ `user_agent` : FazWaz cesse donc de s'annoncer `bkk-perso/0.1` et se présente en Chrome 150.
+
+**3. Cadence adaptative** (`throttle: "adaptatif"`, `rate_limit_floor_seconds: 1.0`). C'est la règle `AutoThrottle` de scrapling 0.4.15, recopiée et non importée, son `Spider` étant asynchrone. Elle part de `rate_limit_seconds`, puis délai = max((courant + latence)/2, latence), avec un plancher à 1 s. Le délai double sur 429/5xx, ou suit `Retry-After`. Plus de pause longue ; le jitter (×1 à ×1,8) reste. La latence des images (CDN) n'entre pas dans le réglage. Activée sur ddproperty, fazwaz, propertyscout et nestopa.
+- **LivingInsider est laissé en cadence fixe, à dessein.** Mesuré ce jour : chaque fiche renvoie **202 + `x-amzn-waf-action`** (challenge AWS WAF), avec `requests` comme avec curl_cffi. La source tourne « ok » à 0 annonce utile depuis fin septembre (ledger : 300 à 600 « scannées », 0 nouvelle). Comme un 202 compte comme un succès, la cadence adaptative l'aurait accéléré contre un pare-feu qui nous a déjà repérés. **Non traité** : contourner un WAF est une décision de posture (règle 5).
+- `recense.py` et `backfill_condo_years.py` restent en **cadence fixe** : ils ne transmettent pas `throttle`. Le recensement DDproperty (5 onglets, 95 min, ~1 page/s cumulée) n'est donc pas accéléré. Passer ses 5 onglets à 1 s quintuplerait le débit cumulé sur DDproperty : laissé à l'arbitrage.
+
+**Tests.** `test_fetch_throttle.py` (nouveau) couvre la relance d'un 522 et d'un 429 sur LES DEUX backends, le respect de `Retry-After`, la convergence vers le plancher, et l'immobilité du mode fixe. `test_fetch_retry` et `test_fetch_outage` restent verts.
+
+**Série longue n° 1** (4 sources en parallèle dans UN process, vrai parcours liste → fiche parsée par l'adaptateur, sans écriture en base) : 1 600 annonces, 1 339 requêtes, **100 % de 200**, aucun 403, 429 ni challenge. 1 599 fiches parsées. Coordonnées 400/400 sauf Nestopa (0, attendu : pas de coordonnées serveur). Secondes par page, comparées aux pages de la nuit du 19/10 (attente + réseau) : **DDproperty 1,83** (≈ 3,6–4,1 avant), **FazWaz 1,74** (≈ 2,9), **Nestopa 1,41** (≈ 4,0), **PropertyScout 4,78** (≈ 4,0, pas plus rapide : ce site répond en 1–20 s et la cadence suit sa latence, comme prévu). 4 délais dépassés, tous arrêtés à **16 366 octets reçus**, sur deux domaines différents, tous rattrapés sans perte.
+
+**Série longue n° 2** (un process par source, comme en production) : 750 annonces, 785 requêtes, 100 % de 200, **0 délai dépassé**. Les arrêts à 16 366 octets étaient donc un artefact du banc (plusieurs sessions curl_cffi dans un même process) ; la production lance chaque extracteur dans son propre process. DDproperty 1,37 s/page, FazWaz 1,41, PropertyScout 6,19 (serveur lent en journée).
+
+**Prix manquants DDproperty (25/399 puis 23/248) : sans lien avec le changement.** `parse_listing` copie le prix de la liste et ne l'écrase jamais à vide, et 60 stubs testés avaient tous un prix. Ce sont des annonces publiées sans prix. **Non expliqué** : l'écart avec la base (81 ventes sans prix sur 63 033, soit 0,13 %).
+
+**Gain attendu, non encore mesuré en production** : ~52 min d'attente par nuit → ~25 min, soit **~−13 min sur le chemin critique** (DDproperty hors recensement) et ~−28 min de temps machine. Le premier cycle réel est celui de cette nuit : `run.py` lit l'arbre de travail, ces changements partent donc ce soir **qu'ils soient commités ou non**. À vérifier demain dans le chronomètre et les statuts.
+
+**Chemin du retour** : retirer `throttle` d'une config pour revenir au mode fixe, et `fetcher_backend` pour revenir à `requests`. Aucune reprise de code nécessaire.
+
+**Non fait** : 403 non traité comme un blocage (Nestopa sert des 403 légitimes sur ses fiches) ; détection du challenge AWS WAF ; Nestopa tourne désormais à ~1 s malgré son `Crawl-delay: 10` (cadence approuvée « plancher 1 s », mais ce site demande explicitement plus lent : à revoir) ; recensement non accéléré (voir plus haut).
+
+## 2026-10-20 (suite) — LivingInsider : panne datée en deux temps, pourquoi elle n'a pas sonné, options chiffrées
+
+Enquête demandée par la séance du fetcher (`curl_cffi` partout). Lecture seule
+sur le dépôt ; **6 requêtes live** à ≥ 3 s (2 listes ancien chemin, 1 liste
+nouveau chemin, robots.txt, 2 fiches). Rien modifié hors de cette entrée.
+
+**Prémisse à corriger d'abord : la source n'est pas « morte en silence ».**
+Elle a été diagnostiquée et **suspendue sur décision utilisateur le 26/09**
+(`066fb2a`, entrées du 2026-09-26 ci-dessus). `watch-health` l'avait signalée
+chaque nuit (ledger `findings`, mesuré) : `derive` (medium) le 18/09, puis
+`parseur_casse` (**high**) les 21, 23, 24, 25 et 26/09. Les runs « ok » à
+0 nouvelle d'octobre se réduisent à **un seul** : le `run` **manuel** du 18/10
+(`manuel-extract-livinginsider-20261018.out`, 300 scannées, 0 utile, 24,7 min),
+qu'aucune surveillance ne juge puisque la source n'a plus de lane — c'est
+voulu (règle 2), mais c'est le seul vrai angle mort.
+
+**Datation (mesurée dans `agents/logs/extract-livinginsider-*.log`, horodatage UTC du nom de fichier) — deux ruptures, pas une :**
+
+| Run (UTC) | Liste | Fiches | Preuve |
+|---|---|---|---|
+| ≤ 16/09 18:00 | ok | ok | ~250 nouvelles, identifiants `LV…`, `reseau_fiche` ≈ 0,5 s |
+| **17/09 18:13** → 24/09 18:10 | **cassée** | répondent | mêmes 4 identifiants Bangkok sur les 25 pages, préfixe `LV` perdu, prix `None`, titre = nom de zone ; `reseau_fiche` 0,49 s (vraies pages) |
+| **25/09 18:10** → | cassée | **challenge** | `reseau_fiche` **0,07 s** sur 652 appels, 0 inchangée : le corps de ~2 Ko du WAF |
+
+- **Rupture 1 = refonte du site entre le 16/09 19:11 et le 17/09 18:13 UTC**
+  (dernier `last_seen` sain : 2026-09-16T19:11). Mesuré ce jour : l'ancien chemin
+  `/searchword_en/Condo/Buysell/<n>/…` répond 200 mais sert toujours la page 1
+  (canonique `/en/condo-buysell`) ; l'`ItemList` ld+json est **identique p1/p2**
+  (12 mêmes URL) ; les vraies cartes sont des liens `/en/detail/…` (72 sur la
+  p1).
+- **Rupture 2 = challenge AWS WAF sur les fiches, apparu entre le 24/09 ~19:00
+  et le 25/09 18:10 UTC** (déduit de la chute de latence, le statut HTTP n'était
+  pas journalisé à l'époque). Confirmé ce jour : `/detail_en/…` **et**
+  `/en/detail/…` → **202, 2 012 octets, `x-amzn-waf-action: challenge`**, corps
+  `window.awsWafCookieDomainList…` (page JS qui pose un jeton). La note du 26/09
+  plaçait le 202 dès le 17/09 : les logs montrent que les fiches répondaient
+  encore jusqu'au 24/09 — précision, pas contradiction sur le fond.
+
+**Pourquoi rien n'a vu le 202 lui-même (mesuré dans le code) :**
+1. `Fetcher.get_text()` rend `.text` **quel que soit le statut** : le corps du
+   challenge arrive à l'adaptateur comme une page normale.
+2. `parse_listing()` ne trouve pas « Bangkok » dans 2 Ko de JS → `return None`,
+   **le même chemin qu'une annonce hors Bangkok**. Un WAF et un filtre géo sont
+   indiscernables : ni `erreurs_http`, ni `exclues`, ni trace.
+3. `sonder()` ne vérifie que l'`ItemList` de la page de **liste** — qui a
+   survécu à la refonte sous forme de bloc figé. Il n'ouvre jamais une fiche.
+4. `Fetcher.statuts` (compteur par code HTTP, ajouté le 20/10, non committé)
+   existe mais **n'est lu par personne** : ni `run.py`, ni l'orchestrateur.
+5. `watch-health` ne juge que `nouvelles` : il a vu l'effet, jamais la cause
+   (« parseur probablement cassé » alors que le parseur n'y était pour rien
+   après le 25/09). Effet secondaire noté : sa médiane glissante sur 10 runs
+   absorbe les zéros (275,5 → 3,0 en six nuits), donc la règle `derive`
+   (< 25 % de la médiane) s'éteint d'elle-même sur une panne longue ; seule la
+   règle `nouvelles == 0` tient.
+
+**Garde-fou proposé (non implémenté) — « part de fiches bloquées » :**
+- *Mesure* : dans `Fetcher._get()`, compter à part les réponses
+  `202` + en-tête `x-amzn-waf-action` (et, par source, le 403/503 Cloudflare
+  `cf-mitigated: challenge`) ; `run.py` imprime en fin de scan une ligne
+  `fiches_bloquees=<n>/<total>` que `orchestrator.py` range dans `metrics`
+  comme `erreurs_http` aujourd'hui.
+- *Décision* : `watch-health._classer()` → verdict `challenge_waf` (**high**,
+  mail) dès que `fiches_bloquees / fiches ≥ 50 %` sur le run, **avant** le test
+  `nouvelles == 0` (sinon la cause reste « parseur cassé »). Sous 50 %,
+  `medium` sans mail : un challenge isolé arrive sur un site sain.
+- *Sonde* : `sonder()` de LivingInsider ouvre **une** fiche prise dans la liste ;
+  202+WAF → `[SONDE-ECHEC] challenge WAF`, escalade immédiate au lieu d'un scan
+  de 50 min pour rien. Coût : 1 requête par run.
+- *Se tait quand tout va bien* : sur les 4 sources saines le compteur vaut 0
+  (aucune n'émet `x-amzn-waf-action` ; à vérifier sur un cycle avant
+  d'activer le seuil). *Parle quand ça ne va pas* : rejoué sur les logs du
+  25/09 et du 18/10, il aurait donné 652/652 et 328/328 → high. **Ces deux
+  vérifications sont à faire en test, pas supposées.**
+- Fichiers touchés : `scraper/pipeline/fetch.py` (en cours de modification par
+  une autre séance — à faire après son commit), `scraper/run.py`,
+  `scraper/adapters/livinginsider.py`, `agents/bots/watch_health.py`, un test.
+
+**Options chiffrées — aucune appliquée (règle 5) :**
+
+| | Coût dev | Coût/nuit | Données | Posture |
+|---|---|---|---|---|
+| **A. Abandon** | ~0 (+ trancher les 516 actives figées au 16/09) | 0 | perd la source : 516 actives = **0,40 %** des 129 539, ~250 nouvelles brutes/nuit avant panne, 9 318 lignes en 6 semaines | neutre |
+| **B. Liste seule** (nouvelle pagination `/en/condo-buysell/<n>`, `/en/condo-rent/<n>`) | ~½–1 j (nouveau `list_urls` + lecture des cartes) | 50 pages ≈ **70–100 Mo** (1,4–2,1 Mo/page, mesuré), ~3 min à 3 s | **mesuré sur p1/p2** : 200 sans WAF, 48–72 cartes/page dont ~7 « boostées » répétées, prix + surface + chambres + SDB + étage + nom d'immeuble en clair ; **dédup incrémentale enfin possible** (prix en liste). Perdus : description, `page_text`, `posted_at`, galerie. Filtre Bangkok par carte **non vérifié**. 1 599 pages en vente (national) | ne touche pas aux fiches protégées ; risque que le WAF s'étende aux listes |
+| **C. Navigateur réel** (Playwright/Chrome qui exécute le JS du challenge) | 1–2 j + Chromium sur PC2 | ~5–10 s/fiche × ~600 ≈ **1–1,5 h** (estimé, non mesuré) | complètes | **contourne un WAF** : décision utilisateur ; risque de blocage de l'IP |
+| **D. Sitemap** (`sitemap-topic.xml`…) | — | — | découverte seulement : les fiches restent derrière le WAF, ne résout rien seul | neutre |
+| **E. Demander un accès** à LivingInsider (flux, API, liste blanche) | 0 dev | — | selon réponse | la plus propre ; délai inconnu |
+
+B est la seule option qui rouvre la source sans franchir le challenge ; elle en
+change la nature (données de carte, plus de fiche). C n'est pas recommandée
+sans décision explicite.
+
+**Non fait, et pourquoi.** Aucune option appliquée, aucun garde-fou codé :
+`fetch.py` est en cours de modification non committée par une autre séance, et
+le seuil d'un garde-fou est à trancher (règle 5). Statut des fiches entre le
+17 et le 24/09 **déduit** de la latence, pas mesuré. Filtre Bangkok sur les
+cartes de liste, comportement de la pagination au-delà de la p2, et volume réel
+d'une passe B **non mesurés**. Les 516 actives figées au 16/09 restent `active`
+(déjà relevé le 08/10, toujours à trancher). Escalades `parser_break`
+LivingInsider toujours ouvertes. Rien committé.
+
+## 2026-10-20 (suite) — deux nouvelles sources : PropertyHub et Hipflat, adaptateurs et agents branchés
+
+**Demande** : un scraper propertyhub.in.th, puis Hipflat. Adaptateurs écrits,
+testés de bout en bout en base jetable (`LOWI_OUTPUT_DIR`), agents ajoutés à
+`agents/agents.json`. **Aucun run de production** : premier passage au cycle
+de 02:30.
+
+**PropertyHub — mesuré à la sonde :**
+- robots.txt `Allow: /`. Next.js : la liste porte prix, surface, chambres, SDB,
+  projet, adresse → la dédup incrémentale (prix inchangé) s'applique.
+- **151 117 locations + 64 158 ventes** annoncées sur la zone « Bangkok », qui
+  est la province **métropolitaine** (dernière page : Samut Prakan) → filtre sur
+  l'adresse du projet.
+- Pages > 1 : 120 lignes = 60 sponsorisées **identiques d'une page à l'autre**
+  + 60 gratuites. Aucun tri par fraîcheur (`?sort=newest`, `?orderBy=` sans
+  effet) → couverture = toutes les pages (2 519 + 1 070). 1–3 s/page mesurées.
+- Coordonnées = celles du **projet**, sur la fiche seulement → cache
+  `project_id → lat/lng/année` (`output/propertyhub-projets.json`), alimenté
+  aussi par les ~6 `nearbyProjects` de chaque fiche. Test : 16/16 fiches
+  géolocalisées ; `year_built` 23/25 (le référentiel n'en avait **aucun**).
+- `contactInformation` (téléphone, e-mail) **jamais recopié**. Le texte libre
+  `detail` peut en contenir, comme les descriptifs des autres sources.
+- 6 couvertures sur 25 → **403 même en navigateur impersoné** : fichier mort
+  côté CDN, pas un blocage.
+
+**Hipflat — mesuré à la sonde :**
+- robots.txt `Allow: /` (interdits non utilisés). HTML serveur, 30 cartes/page.
+  Prix en **USD par défaut** → cookie `_wl_currency=THB` (celui que pose
+  `POST /api/currency`). La sonde échoue si le prix n'est pas en ฿, plutôt que
+  ranger des dollars en baht.
+- **62 233 ventes / 118 991 locations**, mais **pagination plafonnée à la page
+  167** (≈ 5 010 annonces/recherche, bornée par dichotomie). Pas de filtre prix
+  utilisable en URL (le formulaire passe par `/generate-seo-friendly-url`,
+  interdit par robots) ; `sort=price_asc|price_desc` fonctionne. Découpage :
+  district (50) → chambres → les deux bouts de la distribution des prix.
+  Khlong Toei location 1 ch. = 14 174 annonces : une tranche du milieu reste
+  invisible. `ids_hors_couverture` la **protège du délistage** (hook générique
+  ajouté à `BaseAdapter` et `run.py`, vide pour les autres sources) — sans quoi
+  on rejouait le défaut FazWaz des 150 pages (2026-09-13).
+- **Syndication FazWaz, mesurée** (même groupe Lifull Connect que DotProperty,
+  écarté en août pour cette raison) : **7/28** fiches échantillonnées sur 6
+  pages portent une référence d'unité FazWaz (`U6011645`, plans sur
+  cdn.fazwaz.com) — toutes en tête de liste « Premium » ; 10/10 en tête de
+  Watthana-vente. Les 21 autres viennent de flux d'agences (Proppit), dont une
+  « FreshProperty - a brand of PropertyScout » (recoupement possible avec
+  PropertyScout, non mesuré). Décision : les FazWaz sont **écartées** à la
+  fiche et leur identifiant mémorisé (`output/hipflat-ecartees.json`) pour ne
+  pas rouvrir la fiche à chaque run. Hipflat n'est donc pas un miroir — c'est
+  ce qui distingue ce cas de DotProperty (90/90 FazWaz).
+- ~1 carte sur 3 sans photo (placeholder du site). Elles étaient **rouvertes à
+  chaque run** (la dédup exige une image en base) : 8 fiches sur 25 au 2e
+  passage du test. Drapeau `_sans_image` posé par l'adaptateur et respecté par
+  `run.py` → 40/40 en dédup au passage suivant.
+
+**Changements génériques dans `run.py`** (comportement inchangé pour les 5
+sources existantes, aucune n'utilise ces clés) : `max_nouvelles` (budget
+d'annonces inconnues ingérées par run ; au-delà elles ne sont pas écrites et
+reviennent au run suivant — sans risque pour `--full`, qui ne déliste que ce
+qui est en base) ; drapeau de stub `_sans_image` ; `adapter.ids_hors_couverture`.
+
+**Défaut trouvé en testant, corrigé** : les deux caches d'adaptateur
+s'écrivaient dans `scraper/output/` même sous `LOWI_OUTPUT_DIR` — le test
+polluait la production. Racine alignée sur `run.py` ; les deux fichiers créés
+par le test déplacés hors du dépôt.
+
+**Branchement** : `extract-propertyhub` et `extract-hipflat` (T0, lane
+`daily`, vente puis location en `then`, sans `--geocode`), ajoutés aux `after`
+de watch-health / analyze-rent et à la liste suivante ; SKILL.md écrits ;
+`ops/verifie-synchro.py` et `bilan_RE/tension/rapport.py` connaissent les deux
+sources. Tests : lanes, cadence, metrics, fazwaz_sitemap (×2), courtiers
+passent ; `orchestrator.py run-lane daily --dry-run` liste les deux agents.
+
+**À arbitrer (règle 5) — valeurs posées provisoirement :**
+- **Cadence `every_days: 3`**. Estimé, **non mesuré** : un passage complet
+  coûte ~2–3 h par source (liste entière : ~3 600 pages PropertyHub, ~6 000+
+  Hipflat avec les doubles passes) + le budget de fiches → **jusqu'à ~7 h de
+  plus** la nuit où les deux tombent.
+- **`max_nouvelles: 2000`** par run : le stock initial (~200 000 PropertyHub,
+  ~180 000 Hipflat) se rattrape sur **des semaines**. Pendant ce temps, la
+  part de ces sources dans les médianes croît chaque nuit — une **rupture de
+  série** à marquer dans les études.
+- **Quota Supabase (règle 9)** : `remonter-supabase --delta` remontera ces
+  actives. À ~4 000 nouvelles par source et par passage, le serveur gagnerait
+  ~80 000 lignes par mois ; à 112 436 actives aujourd'hui, le stock de ces deux
+  sources pourrait **plus que tripler** la table. **Rien n'empêche aujourd'hui
+  ce dépassement** — exclure ces sources de la remontée, ou plafonner, est à
+  décider avant que le rattrapage avance.
+
+**Non fait, et pourquoi.** Aucun run complet (durée et volume réels inconnus
+jusqu'au premier cycle). Part réelle de la syndication FazWaz sur l'ensemble
+d'Hipflat **non mesurée** (échantillon de 28). Recoupement Hipflat ↔
+PropertyScout (FreshProperty) et PropertyHub ↔ DDproperty non mesuré : les
+doublons inter-sources iront dans la file d'`organize` comme les autres.
+Bandes `watch-health` provisoires (1–4 500). Quota étranger : exposé par
+aucune des deux. Rien committé (la branche courante porte des modifications
+d'autres séances sur `run.py`, `agents.json` et ce journal).
+
+## 2026-10-20 (suite) — PropertyHub et Hipflat exclues de la remontée Supabase
+
+**Décision utilisateur** (réponse à l'arbitrage quota de l'entrée précédente) :
+les deux sources **restent locales** tant que leur rattrapage n'est pas fini et
+que le quota n'est pas chiffré.
+
+- `ops/remonter-local.py --exclure-sources a,b` : filtre au SELECT dans
+  `charger()` **et** `statuts_morts()` (leurs délistages n'ont rien à recopier,
+  elles ne sont pas en ligne). `remonter-supabase` passe
+  `--exclure-sources propertyhub,hipflat`.
+- **Retour** : retirer l'option dans `agents/agents.json`. Les lignes exclues
+  gardent `dirty_since` (seul un envoi réussi l'efface), donc le `--delta`
+  suivant les remonte **toutes**, sans manœuvre — mais d'un seul coup, d'où
+  l'intérêt de chiffrer le quota avant.
+- **Vérifié en `--dry-run`** sur la base de test (40 PropertyHub + 38 Hipflat
+  sales, 2 mortes) : 78 annonces / 2 statuts sans l'option → **0 / 0** avec.
+  Sur la production : 0 à remonter (dernier delta il y a 8 h), l'option ne
+  change rien aux 5 autres sources.
+
+**Conséquence à garder en tête** : le site public ne montrera pas ces deux
+sources ; les statistiques locales (études, bilan acheteur) les incluront dès
+la première nuit. Les deux vues divergent donc aussi par la composition des
+sources, en plus de la fraîcheur.
+
+**Non fait** : aucun envoi réel (rien à envoyer avant le premier cycle). Le
+chiffrage du quota (coût/ligne × stock attendu) reste à faire avant de lever
+l'exclusion.
+
+## 2026-10-21 — DDproperty élague sa charge utile ; la sonde ne le voyait pas
+
+Séance de réparation autonome déclenchée par la veille du cycle (escalade Opus
+`2026-10-21.escalade-5e7c81570c`, 03:00). Trois tickets en file, **une seule
+cause** : les « 4 problèmes » vus par Haiku sont les deux échecs de sonde
+`extract-ddproperty` (principal et `then_0`), comptés une fois comme constat et
+une fois comme ligne d'erreur de journal.
+
+### Ce qui a changé chez eux, et ce que la mesure a tranché
+
+Entre le **2026-10-19 19:30 UTC** (run 927 : 48 321 annonces sur 2 615 pages,
+soit **18,5 par page**) et le **2026-10-20 19:30 UTC**, DDproperty a cessé de
+servir la charge utile de ses annonces dans
+`__NEXT_DATA__ … pageData.data.listingsData`.
+
+Mesuré le 2026-10-21 sur 16 pages réelles :
+
+| | `listingsData` | `contactAgentCardData` |
+|---|---|---|
+| vente, pages 1-8 | **10 / 160** (6 %) | 160 / 160 |
+| location, pages 1-8 | **2 / 160** (1 %) | 160 / 160 |
+
+Le diagnostic automatique disait « structure du blob changée ». **C'est faux au
+sens où on l'entend d'habitude** : là où `listingsData` répond encore, le chemin
+et les noms de champs sont strictement inchangés, et l'adaptateur les lit sans
+rien modifier. Ce n'est pas un renommage, c'est un **élagage** : la page
+continue d'émettre, pour les **vingt** annonces, les blocs annexes
+`contactAgentCardData` et `enquiryModalData` indexés par identifiant, et
+seulement ceux-là. La **fiche détail est intacte** (vérifié sur 500669058 :
+surface 54 m², 1 SDB, lat/lng, tenure, description).
+
+La distinction n'est pas cosmétique : elle décide du correctif. Chercher un
+nouveau chemin pour `fullAddress` n'aurait rien donné — il n'y en a pas.
+
+### Le second défaut, celui qui est de notre côté (règle 2)
+
+La passe couloirs de la même nuit a journalisé
+`sonde structure : OK — page 1 ok — 1 stub obtenu (951011)` **sur une page qui
+en portait vingt**, puis a scanné à ce régime sans une alerte. La sonde héritée
+de `BaseAdapter` appelle `list_urls(limit=1)` : **un stub suffisait**. Elle ne
+pouvait pas distinguer « cette page porte une annonce » de « cette page en
+porte vingt dont je n'en lis qu'une ». Un garde-fou qui ne sait pas voir une
+perte de 95 % ne garde rien.
+
+### Correctif — branche `fix/ddproperty-listingsdata-elaguee`, commit `5d9fce2`
+
+1. `_parse_list` complète par les cartes annexes les identifiants que
+   `listingsData` ne rend plus. **Fidélité** : sur les 10 identifiants présents
+   des deux côtés, url **10/10** et prix **10/10** identiques. `listingsData`
+   reste prioritaire : le jour où le tableau revient, le chemin annexe se tait
+   tout seul.
+2. Filtre province sans `fullAddress` : le suffixe du titre localisé.
+   **Mesure sur 200 cartes** : 198 « …, Bangkok », 2 « …, Nakhon Ratchasima »,
+   et le slug d'URL dit la même chose **200/200**.
+3. La fiche détail rebouche `khwaeng`, `street`, `agency_id`, `posted_at`,
+   `is_auto_repost` — on ne les y lisait pas parce que la liste les avait
+   toujours fournis. **Concordance liste ↔ fiche sur 6 annonces** :
+   `posted_at` 6/6 **à la seconde**, `agency_id` 6/6, `khwaeng` 6/6,
+   `is_auto_repost` 6/6, `street` 5/6.
+4. **Le khet n'est PAS repris de la fiche** — piège trouvé en implémentant :
+   elle écrit « Watthana » là où le point-in-polygon écrit « Vadhana District ».
+   Deux orthographes pour un même khet scinderaient les statistiques par
+   quartier. Les coordonnées sont là à 100 % et restent la seule source.
+5. La sonde compare ce qu'elle extrait à ce que la page **annonce porter**, hors
+   province, et journalise la couverture (`couverture 20/20 annonces`). **Aucun
+   seuil nouveau** : la référence est lue sur la page du jour, pas choisie.
+
+**Vérifié en production** : 198/200 annonces Bangkok sur 10 pages (contre 1 à 5
+avant) ; deux runs `run.py` réels (12 vente, 10 location) écrits en base avec
+**14 champs sur 14 au taux de remplissage du run sain de la veille** (4 962
+annonces) — seule `street` passe de 94 % à 90 %. Test :
+`agents/tests/test_ddproperty_blob_elague.py`, 23 essais hors réseau, qui
+verrouille aussi le **silence** du garde-fou sur une page saine et sur une page
+portant légitimement des annonces de province.
+
+### La donnée n'a pas été abîmée
+
+Le recensement tournait avec `--delister`. Il s'était **abstenu de lui-même** :
+« signature de fin introuvable » → `fin_atteinte = False`, donc zéro délistage.
+Les deux autres garde-fous (`DELIST_MAX_TROUS`, `DELIST_MIN_RATIO` à 50 %)
+l'auraient bloqué de toute façon. Les trois conditions d'abstention de
+`recense._delister` ont fait exactement ce pour quoi elles existent.
+
+### Autres contrôles de la séance
+
+- `pragma quick_check` sur `bangkok.db` (5,01 Go, en WAL, pendant le cycle) :
+  **ok** en 308 s. 206 872 annonces, 132 167 actives.
+- Sauvegarde clé USB du cycle précédent : **ok**, 4 969,8 Mo, **3 essais de
+  relecture sur 3** (204 250 / 129 539 à l'identique).
+- Journaux des extracteurs : **2 lignes d'erreur au total** sur les 40 derniers
+  journaux, et ce sont les deux `[SONDE-ECHEC]` ci-dessus. Aucun `Traceback`.
+- FazWaz `sitemap_non_regenere` (3 constats, 16-18/10) : **déjà résolu** par le
+  filet `_complement_liste` (710 nouvelles le 18/10, 347 le 19/10), plus aucun
+  constat depuis.
+- **LivingInsider, à décider** : 516 actives dont **0 % confirmées depuis le
+  2026-09-16**. Le run du 18/10 n'avait retenu que **12 annonces sur 300**.
+  L'adaptateur a depuis été réparé dans l'arbre de travail (non committé) :
+  vérifié ce soir par un run borné — **20 scannées, 13 nouvelles, 2 changées,
+  5 inchangées, 0 erreur**. La source est saine, mais l'agent est **hors
+  lanes** : elle ne rattrapera rien toute seule.
+
+### Ce qui n'a PAS été fait, et pourquoi
+
+- **Rien fusionné**, ni dans `main` ni dans `feat/bilan-build2-comptes`. La
+  branche part de `a9e9cd0` et ne porte qu'un commit.
+- **L'arbre de travail reste sur la branche de correctif** — le cycle lit
+  l'arbre, donc revenir sur `feat/bilan-build2-comptes` ferait **retomber
+  DDproperty à 1-6 % dès le cycle du 22/10**. Les 31 fichiers modifiés et 122
+  non suivis de la séance précédente sont intacts. Retour :
+  `git checkout feat/bilan-build2-comptes`.
+- **Aucune règle de méthode touchée** (règle 5) : ni seuil de délistage, ni
+  délai de grâce, ni cadence, ni borne de plausibilité, ni définition de calcul.
+- **Le cycle en cours n'a été ni interrompu ni relancé.** Conséquence :
+  **la moisson DDproperty de la nuit du 20 au 21/10 est perdue** (passes
+  principale et location arrêtées par la sonde, passe couloirs à ~1 annonce par
+  page, recensement abstenu). Rattrapage au premier cycle avec le correctif.
+- **Pas de `--full` de rattrapage en pleine journée**, non demandé et concurrent
+  du cycle déjà en cours.
+- **LivingInsider non réparée ici** (déjà faite ailleurs, hors lanes, 0,4 % du
+  stock) ; lui rendre une lane reste à arbitrer.
+- **Non vérifié** : le correctif sur un recensement complet (2 600 pages ×
+  5 onglets). Il n'a été éprouvé que sur 16 pages et deux runs de 12 et 10
+  annonces.
+- **Deux courriers laissés en boîte** (`queue/mail/`) : les transactionnels
+  `bilan-comptes` du 20/10, dont l'un **contient un mot de passe en clair** et
+  tous deux pointent sur `localhost:3001`. Envoyer un mot de passe par courriel
+  est une décision de posture, elle n'est pas à prendre ici. Les 2 alertes de
+  sévérité haute, elles, sont parties (un seul message groupé, même cause).
+
+Compte rendu détaillé : [agents/audits/reparations-2026-10-21.md](../agents/audits/reparations-2026-10-21.md).
+
+---
+
+## 2026-10-21 (matin, 07:00) — seconde escalade : le test du garde-fou était lui-même muet
+
+Deuxième séance autonome du même jour (escalade `fa255d2087`, PID 23500), sur le
+ticket `2026-10-21T000014`. L'entrée ci-dessus (03:00) reste telle quelle : elle
+n'est pas corrigée, elle est complétée.
+
+**Le ticket ne portait pas de rechute.** Ses 5 problèmes ont tous la cause
+traitée à 03:00. Ce qui l'a rendu décidable, c'est l'horodatage : le run #945 a
+démarré à **02:30:05**, le correctif a été commité à **03:33:04** (`5d9fce2`).
+L'échec journalisé est donc l'échec *pré-correctif*. Et sur les 5 étapes de
+`extract-ddproperty`, seules deux (principal, `then_0`) se sont arrêtées sur la
+sonde : `then_1` a rendu 70 annonces et `then_2` (recensement) a lu 1 789 pages
+en 4 h 09 **en s'abstenant de délister** (page terminale non atteinte). Aucune
+annonce perdue.
+
+**Le correctif tient, et l'élagage côté source s'aggrave.** Re-mesuré à 07:35 sur
+10 pages réelles (5 vente + 5 location) : **198/198 annonces extraites**, mais
+`listingsData` n'en sert plus que **24 sur 198 (12 %)**, et **zéro sur 8 des
+10 pages** — contre 6 % en vente et 1 % en location douze heures plus tôt. Le
+chemin par les cartes annexes porte **88 % du catalogue** : ce n'est plus un
+filet de secours, c'est le chemin principal. Sonde live : OK, couverture 19/19.
+Si les cartes annexes s'élaguent à leur tour, il ne restera que la fiche détail,
+bien plus coûteuse — c'est le risque à garder en tête.
+
+**Le seul vrai défaut trouvé, et il mord la règle 2 par la queue.**
+`agents/tests/test_ddproperty_blob_elague.py`, livré la nuit même avec le
+correctif, **plantait en `UnicodeEncodeError` dès l'essai 5 sur 8** lancé à la
+main sur ce poste : la console hérite de l'ACP (cp1252), pas de l'UTF-8. Mesure :
+les **28** vérifications passent, mais **14 n'étaient jamais ATTEINTES** — et le
+plantage tombant pile à l'essai 5, ces 14 sont **exactement** celles qui
+vérifient la sonde (essai 5 : elle se tait quand la page est entière ; 6 : elle
+parle quand la page est amputée ; 7 : reprise par la fiche détail ; 8 : page vide
+→ échec). Le test qui prouve qu'un garde-fou crie quand ça va mal ne pouvait pas
+le prouver. Et son code de sortie non nul faisait **passer le correctif pour un
+ÉCHEC** alors qu'il le validait.
+
+C'est le défaut déjà consigné le **2026-08-22/27** pour `ops/pouls.py` et
+`agents/orchestrator.py`, et déjà codifié par
+`agents/tests/test_console_utf8.py` — **13 tests sur 57** portent le garde
+`reconfigure(encoding="utf-8")`, ce nouveau ne l'avait pas. La production n'a
+jamais rien vu : `agents/core/shell.py` force l'encodage des **sous-processus**.
+Seul le lancement à la main était touché, c'est-à-dire toute vérification
+humaine. Corrigé par commit **`f3b84a7`** ; rejeu sur console par défaut :
+**28/28, code de sortie 0**.
+
+**Deux fausses pistes écartées en comptant d'abord** (règle 1) :
+- `extract-fazwaz` / `sitemap_non_regenere` était monté en sévérité haute les 16,
+  17 et 18/10 (`nouvelles=0`) — mais s'est **éteint seul** : le run du 20/10 rend
+  373 nouvelles, 0 erreur, 86 575 scannées. Le garde-fou a parlé quand ça allait
+  mal et s'est tu quand ça allait bien. Rien à corriger.
+- `propertyhub` et `hipflat` affichaient **exactement 2 000 actives par
+  deal_type** chacun. Deux sources aux `max_pages` très différents (2 600 vs 167)
+  atteignant le même chiffre rond appelait la vérification : c'est
+  `max_nouvelles: 2000`, présent dans les deux configs et délibéré (rattrapage du
+  stock initial étalé sur des semaines). Pas une anomalie.
+
+**Journaux :** 2 lignes d'erreur sur 120 fichiers / 7 jours, les deux étant cette
+sonde. Aucun `Traceback`, aucune erreur HTTP réelle.
+
+**Base :** `quick_check` **ok** (5,07 Go + 194 Mo de WAL, 277 s) · 212 715
+annonces / 138 004 actives · **0 délistage à tort** · sauvegarde clé du 20/10 ok,
+4 969,8 Mo, 3 relectures sur 3.
+
+### Ce qui n'a PAS été fait, et pourquoi
+
+- **Aucun rattrapage DDproperty.** Le cycle de 02:30 **tournait encore pendant
+  toute la séance** (`propertyhub` et `hipflat` en `--full`, premiers runs de leur
+  vie). Un scrap par-dessus aurait mis deux coureurs en concurrence, et la
+  consigne l'interdit en journée. **Conséquence assumée : la moisson DDproperty
+  du 20 au 21 est perdue.**
+- **Aucune règle de méthode touchée** : bornes, seuil d'anti-délistage, délai de
+  grâce, cadence, `max_nouvelles`, définition d'un calcul.
+- **Rien fusionné sur `main`** — l'arbre doit RESTER sur
+  `fix/ddproperty-listingsdata-elaguee`, le cycle lit l'arbre.
+- **Non mesuré, et ça reste à faire : combien des 57 tests plantent sur une
+  console cp1252 avant d'avoir fini.** Seul le test du périmètre du ticket a été
+  corrigé ; 44 n'ont pas le garde et n'ont pas été éprouvés. C'est la même classe
+  de défaut, et elle rend muet n'importe quel garde-fou vérifié à la main.
+- **Les 2 courriers transactionnels `bilan-comptes` restent en boîte**, dont l'un
+  avec un mot de passe en clair — décision de posture, inchangée depuis 03:00.
+- Le correctif **n'a toujours pas vu un recensement complet** sur la source
+  élaguée : 10 pages, pas 2 600.
+
+Compte rendu détaillé : [agents/audits/reparations-2026-10-21.md](../agents/audits/reparations-2026-10-21.md) (§ « Seconde passe »).
+
+## 2026-10-20 (suite) — PropertyHub / Hipflat : ce que les agents en aval savaient (ou pas) de ces sources
+
+**Demande** : vérifier que les agents connectés aux nouvelles sources ont les
+bonnes consignes. Revue de tout ce qui lit la base ou le ledger par source.
+**Quatre défauts trouvés, tous corrigés** — chacun aurait crié au loup ou
+faussé un chiffre dès les premières nuits :
+
+1. **`ops/fraicheur.py`** jugeait toutes les sources sur 48 h. En
+   `every_days: 3`, la part confirmée oscille 100 % → ~0 % entre deux
+   passages : deux nuits sur trois sous la moitié de la médiane, alerte
+   garantie sur une cadence voulue (règle 2). → fenêtre **par source** =
+   `(every_days + 1) × 24 h`, plancher 48 h, lue dans `agents.json`. Vérifié :
+   96 h pour les deux nouvelles, **48 h inchangé** pour les 5 autres (relevé
+   réel : ddproperty 91,5 %, fazwaz 100 %, propertyscout 100 %, nestopa 18,9 %).
+2. **`watch-health`** relève `images_perdues` dès 10 échecs d'image, pour toute
+   source. Or **29/82 = 35 %** des couvertures PropertyHub sont absentes du CDN
+   (réponse S3 `AccessDenied`, sur 3 échantillons : 6/25, 9/30, 14/27 ; la page
+   détail renvoie les mêmes fichiers morts, le site construit la même URL) —
+   ~1 400 échecs attendus pour 4 000 nouvelles. → bande optionnelle
+   `bandes.erreurs_images` par agent (PropertyHub : 0–2 500, soit ~62 %), défaut
+   10 conservé. Vérifié : 900 échecs → `ok` ; 2 000 → `images_perdues` ;
+   autre source, 12 → `images_perdues` comme avant.
+3. **Couvertures mortes retentées à chaque run** : la dédup exige une image en
+   base, donc chaque annonce sans photo était rouverte à chaque passage —
+   ~50 000 requêtes inutiles par passage une fois le stock rattrapé. →
+   `image.retenter: false` (config PropertyHub), respecté par `run.py`.
+   Vérifié : 13/13 annonces connues en dédup au passage suivant.
+4. **`scores-tension`** : une source qui part de 0 annonce ne déclenche
+   **aucune** règle de santé (`actives_debut = 0` → ni « aucun retrait » ni
+   « stock +50 % ») et serait **gardée** dans les scores pendant son
+   rattrapage. → exclusion manuelle « rattrapage » des deux sources dans
+   `bilan_RE/tension/config.json` (miroir de la décision prise pour Supabase).
+   À lever en même temps que l'exclusion de la remontée.
+
+**Vérifié sans défaut** : `organize` forme ses paires **à l'intérieur** d'une
+source (rien de spécifique à faire) ; `agents/core/metrics.py` agrège bien le
+`then` (vente + location) ; `watch-health` lit les bandes `nouvelles` dans
+`agents.json`. SKILL.md des deux agents complétés d'une section « ce que les
+autres agents font de cette source » ; `agents/README.md` à jour.
+
+**Signalé, non modifié (règle 5)** :
+- `study/run_study.py` et le bilan acheteur lisent la base locale **sans
+  filtre de source** : les deux sources entrent dans les médianes dès la
+  première nuit, à un volume qui croît de ~4 000 annonces par passage pendant
+  des semaines — rupture de série. Exclure, pondérer ou marquer la rupture est
+  une décision de méthode.
+- `watch-health` sortira probablement `derive` (medium, sans mail) quelques
+  runs quand le rattrapage finira et que `nouvelles` retombera sous 25 % de sa
+  médiane — attendu, non corrigé.
+- Annonces Hipflat dans une tranche de prix jamais affichée : ni confirmées
+  ni délistées, leur part « fraîche » restera structurellement plus basse
+  (stable, donc la médiane relative la tolère).
+- `bilan_RE/web/lib/rapport.ts` (`PORTAILS`) n'accepte pas encore d'URL
+  PropertyHub/Hipflat en entrée du bilan : c'est une fonction produit, hors
+  périmètre des agents.
+
+Tests : lanes, cadence, metrics, fraicheur, watch_health_mail_zero,
+watch_health_sitemap passent.
+
+## 2026-10-20/21 — Scores débloqués, calcul quotidien surveillé, veille sans trou de 24 h
+
+**Demande.** « Considère la base saine depuis le début, commence à donner des
+résultats » ; « ne pas laisser les robots sans activité plus de 24 h » ; scores
+« tous les jours à la fin des cycles », un défaut appelle la réparation.
+
+**Mesuré avant d'agir.**
+- Rien ne bloquait « 3 mois » dans le code. Les scores du 18/10 (fenêtre au
+  16/10) avaient **DDproperty écarté** (5 j sans retrait) : **0 score de revente
+  sur 4 851** lignes (« no reference yet »), tension à maille fine sur **1,6 %**.
+- Cause des nuits DDproperty sans retrait (13, 14, 15, 18/10) : `pages_lues` =
+  **6 400** exactement, soit le plafond `max_pages_recensement` (3 200 × 2 flux).
+  Parcours « partiel », donc délistage interdit. Flux location ~3 090 pages
+  (2 899 en août) ; le flux vente touche aussi le plafond certaines nuits alors
+  que son catalogue finit vers 2 600-2 970 : la détection de fin rate parfois.
+- Veille : **aucun journal du 17 au 19/10** alors que les cycles tournaient —
+  tâche `LowiBKK-VeilleClaude` en `Interactive`, muette session fermée.
+  Aucun run le 08/10 (maintenance déclarée).
+
+**Fait.**
+- `bilan_RE/tension/config.json` **v2** : `sante_sources.saines_forcees`
+  (DDproperty, FazWaz) pour les fenêtres jusqu'au 2026-10-20 ; au-delà le filtre
+  automatique reprend, la raison écartée reste tracée. Recalcul (25 min,
+  2 628 immeubles) : tension à maille fine **38,8 %**, **198** scores de revente.
+- `scores-tension` : **quotidien** (était 30 j), fichier daté par jour
+  (~9 Mo/jour), libellés « daily » dans le rapport et l'annexe. Cinq contrôles,
+  tous en constat **haut** (donc Opus via la veille) : délistage à l'arrêt
+  ≥ 3 j sur une grande source, source écartée, immeubles en erreur, fenêtre
+  périmée > 2 j, régression de publication (−15 points ou revente ÷ 2).
+- `ops/veille-cycle.py` : contrôle d'inactivité à chaque passage, même cycle
+  fini — un agent quotidien sans démarrage depuis > 24 h alors que rien ne
+  tourne → `schtasks /run LowiBKK-Agents` (≤ 1 fois / 6 h) + escalade Opus.
+  Tâche passée en **S4U** (même choix que LowiBKK-Agents). Vérifié : passage du
+  21/10 journalisé session fermée, escalade de la sonde DDproperty faite.
+- Tests : tension 40/40, veille 8/8, surveillance scores 3/3 (silence quand
+  tout va bien, alerte sur chaque défaut).
+
+**Non fait, et pourquoi.**
+- Plafond `max_pages_recensement` **non relevé** : volume de scrap = décision
+  utilisateur (4 000 pages ≈ +14 min/flux au pire). La détection de fin de
+  catalogue défaillante n'est pas diagnostiquée.
+- Délistage FazWaz par à-coups : cause non mesurée.
+- Leviers 3 (offre à périmètre constant) et 4 (score par source) : non lancés,
+  en attente d'arbitrage.
+- La veille ne réveille pas le poste (sinon réveil toutes les 30 min) : c'est
+  le réveil de 02:30 de LowiBKK-Agents qui garantit un passage par jour.
+- Les scores v2 ne sont pas comparables aux v1.
+
+## 2026-10-21 — LivingInsider réparé en mode « liste » ; scrapling face au challenge AWS WAF
+
+Demande : « réparer le scrapper et vérifier si scrapling peut nous aider ».
+Suite de l'entrée du 2026-10-20 (datation de la panne). Code touché :
+`scraper/adapters/livinginsider.py`, `scraper/config/livinginsider.json`,
+`agents/skills/extract-livinginsider/SKILL.md`, nouveau test
+`agents/tests/test_livinginsider_cartes.py`. **Rien committé, base de
+référence non touchée, `agents.json` non touché** (la source reste hors lanes).
+
+**1. Scrapling peut-il franchir le challenge ? (mesuré, une dizaine de requêtes)**
+- `StealthyFetcher` et `DynamicFetcher` de scrapling 0.4.15 **ne se chargent
+  pas** : ils importent `patchright`, absent du venv. Pas installé (changement
+  d'environnement de production, et décision de posture).
+- Même moteur testé directement (Playwright + Edge système, le Chromium
+  Playwright 1248 ne correspond pas au paquet installé, qui attend 1234) :
+  - **headless → 403 dès la page de liste**, pire que curl_cffi (le WAF
+    reconnaît le navigateur sans tête) ;
+  - **fenêtre visible → challenge résolu** : 1ʳᵉ fiche 202 puis 200 après
+    exécution du JS, cookie `aws-waf-token` posé, fiches suivantes 200 direct
+    avec le bloc « Floor Size » ; **~9 s par fiche**.
+- Donc : scrapling **aide déjà** pour le parsing (`Adaptor`, utilisé pour lire
+  les cartes) ; pour le challenge, il ne servirait qu'en **contournement
+  assumé** (navigateur, idéalement `patchright` qui masque le mode sans tête —
+  non mesuré). Coût estimé pour ~800 fiches/nuit : ~2 h à 9 s, une fenêtre de
+  navigateur sur PC2. **Non fait : c'est la décision de posture laissée à
+  l'utilisateur (règle 5).**
+
+**2. Réparation sans contournement : lecture des cartes de liste.**
+- Pagination réelle `/en/condo-buysell/<n>` (ancienne URL = toujours la p1).
+  Liste **vente en 200** ; liste **location en 202 challenge** (ancien et
+  nouveau chemin, constaté le 20/10 — le WAF s'est étendu depuis le 25/09).
+- Les cartes portent prix, surface, chambres, SDB, étage, immeuble, photo :
+  plus aucune fiche ouverte. **La dédup incrémentale devient possible**
+  (2ᵉ passage mesuré : 49/60 sautées).
+- **Filtre Bangkok** : les cartes ne disent pas où est le bien (vérifié : ni
+  province, ni district, ni payload structuré dans les 1,4–2,1 Mo). On garde
+  les immeubles déjà connus à Bangkok des autres sources (5 335 noms
+  normalisés) ; khet et coordonnées viennent de l'immeuble
+  (`raw_data.coords = "referentiel_immeuble"`).
+- Cartes « Sell&Rent » : deux prix arrondis (« ฿ 5.6M » + « ฿ 22K /mo ») →
+  deux annonces (vente + location, même id). **Seul accès aux loyers** tant que
+  la liste location est bloquée : 53 loyers sur le scan.
+- Identifiants préfixés `LV` comme en mode fiche : vérifié, les annonces
+  connues retombent sur leur ligne (8/60 au premier essai, 136 au scan complet).
+- Détection : `est_challenge()` (corps < 20 Ko contenant `awsWafCookie`) ;
+  ligne `[WAF-CHALLENGE]` au log, la recherche s'arrête net (aucune relance) ;
+  `sonder()` échoue en `[SONDE-ECHEC]` si la page 1 vente est un challenge ou
+  sans carte lisible (l'ancienne sonde se contentait de l'ItemList figé).
+- Délistage : `ids_hors_couverture()` protège tout un type d'annonce bloqué
+  (location) et les annonces dont l'immeuble n'est pas au référentiel (écrites
+  en mode fiche, invisibles ici par construction).
+- Ancien chemin conservé : `"mode": "fiche"` (rollback d'une clé). Il ne
+  contourne rien : une fiche challengée est marquée `_indisponible`.
+
+**Mesuré — scan `--full --no-images` sur une base de travail** (copie des
+9 318 lignes LivingInsider, `LOWI_OUTPUT_DIR` dans le scratchpad) :
+25 pages, **1 212 cartes distinctes, 825 retenues** (387 hors référentiel),
+**8,2 min**, 0 erreur ; 642 nouvelles, 47 prix changés, 183 délistées (vente,
+immeuble connu, absentes des 25 pages), 357 protégées ; location active
+264 → 314, rien délisté. Ventes : 950 k à 165 M THB, aucune sous 800 k. Avec
+images (essai à 60) : ~1,9 s/image, domaine `image.livinginsider.com` non
+filtré → ~25 min de plus pour ~800 nouvelles au premier passage, puis
+quelques dizaines par nuit.
+
+**Défauts trouvés en testant, corrigés :**
+- Nom d'immeuble lu « Condo » (étiquette de catégorie) sur 1 carte sur 6 :
+  le titre affiché diffère de son attribut dès qu'il y a un emoji → lecture
+  dans le DOM (bloc qui suit le titre). Retenues : 66 → 83 sur 120.
+- **49 ventes sur 801 à 2,4–119 THB** au 1ᵉʳ scan complet : prix « ฿ 5.6M »
+  lu sans son suffixe, et titres contenant « | … | ฿39.9M » découpés par le
+  séparateur « | ». → morceau de prix en plein-match avec suffixe M/K/`/mo`,
+  séparateur `\x1f`. Les deux cas sont dans le test.
+
+**Constaté, non traité :**
+- **216 lignes de location LivingInsider en base de référence portent un prix
+  de vente** (> 1 M THB, 5 actives) : héritage du mode fiche sur les annonces
+  vente-et-location (ex. `rent:LV1150013` à 119 M, 389 k en carte). Le scan les
+  corrige au passage pour celles revues ; les autres restent. Correction de
+  masse = décision de donnée.
+- 1 loyer à 48 THB sur 53 (`rent:LV3169788`) : cause non élucidée (carte non
+  sauvegardée) ; hors bornes `listings_sane`, donc hors statistiques.
+- ~8 immeubles de Bangkok réels manqués sur 120 cartes (Via Botani, Park 24,
+  Waterford Diamond, Dusit Residences…), absents du référentiel. Les ajouter
+  à la main ou par géocodage = à arbitrer.
+- La fenêtre de 25 pages sur un flux national trié par « boost » continue de
+  délister ce qui sort de la fenêtre (~180/nuit) : même biais qu'en mode fiche,
+  non corrigé.
+- Le chronomètre classe les pages de liste en `attente_fiche` (motif d'URL
+  dans `fetch.py`, non touché) — cosmétique.
+- **Remise en lane** (`agents.json`, `lanes: []` + `_suspendu`) **non faite** :
+  le fichier porte des modifications non committées d'autres séances, et la
+  reprise est une décision utilisateur. Premier run de production non lancé.
+
+### 2026-10-21 — premier cycle réel avec la cadence adaptative, et la piste « charge appauvrie pour robot » sur DDproperty
+
+**Mesuré au chronomètre, cycle du 2026-10-20 19:30 UTC vs celui de la veille** (attente sur les pages liste+fiche, par requête) : FazWaz 2,38 → **0,43 s**, PropertyScout 2,83 → **0,97 s**, Nestopa 3,39 → **0,30 s**. Aucune relance, aucun délai dépassé, ni 429 ni 403. Les valeurs sous le plancher de 1 s sont normales : `_throttle()` déduit le temps déjà écoulé depuis la requête précédente (réseau + parsing). **DDproperty non mesurable** : run en échec de sonde (élagage de `listingsData`, voir l'entrée précédente du jour).
+
+**Piste vérifiée : DDproperty nous servait-il une charge appauvrie parce qu'il nous jugeait robotiques ?** ~680 requêtes DDproperty à ~1 s avaient été envoyées le 20/10 en journée (séries longues), et l'élagage est apparu dans la nuit qui a suivi. La séance de réparation ne l'avait pas envisagé. Mesuré ce jour, même page de liste, trois empreintes : curl_cffi `chrome` → 200, **20/20** `listingsData` ; curl_cffi `safari` → 200, **20/20** ; `requests` + UA Chrome 126 → **403** (6 Ko). La charge est donc complète en ce moment, quelle que soit l'empreinte navigateur, alors que la séance du matin mesurait 6 % et 1 %. L'élagage est intermittent et ne dépend pas de l'empreinte TLS. **Non exclu** : un traitement par adresse IP (impossible à tester depuis ce poste). **Fait mesuré au passage** : `requests` est désormais refusé en 403 par DDproperty, ce qui confirme qu'on ne peut plus revenir à ce backend sur cette source.
+
+## 2026-10-21 — Charge des scrapers doublée, et règle d'écriture des comptes rendus
+
+### 1. Causes
+- Demande : doubler le travail fait par chaque scraper à chaque cycle.
+- Demande : les comptes rendus de la réparation de nuit étaient illisibles
+  pour qui n'est pas du métier.
+
+### 2. Conséquences
+Attendu au prochain cycle (estimé à partir des temps mesurés le 20/10) :
+
+| Source | Avant | Après | Durée en plus |
+|---|---|---|---|
+| PropertyHub | 4 000 nouvelles, ~5 h 45 | 8 000, ~10 h 30 | ~+4 h 40 |
+| Hipflat | 4 000 nouvelles, ~5 h 55 | 8 000, ~10 h 15 | ~+4 h 20 |
+| DDproperty | 150 pages par type, ~3 h 30 | 300 pages | ~+30 à 45 min |
+| FazWaz | 1 000 fiches max, 905 utilisées | 2 000 max | 0 (la limite n'était pas atteinte) |
+| PropertyScout | catalogue entier | idem | 0 (déjà tout lu) |
+| Nestopa | 1 page (interdit au-delà) | idem | 0 |
+
+Les sources tournent en parallèle : le cycle de 02:30 finirait vers **13:00**
+au lieu de ~08:30. Le stock de départ de PropertyHub et Hipflat (~200 000 et
+~180 000 annonces) se rattrape en ~25 et ~23 passages au lieu du double.
+
+### 3. Plan
+- Fait : budgets doublés, surveillance ajustée (plafond de nouvelles 9 000,
+  plafond de photos manquantes PropertyHub 5 000), règle 11 ajoutée au
+  CLAUDE.md et à la consigne de la réparation de nuit.
+- À surveiller : si le cycle déborde après 13:00, la mise en veille du poste
+  (réglée à 13 h d'inactivité) peut le couper.
+- Chaque doublement porte sa valeur de retour dans la configuration.
+
+### 4. Méthode
+Durées tirées des mesures de temps des runs du 19 et 20/10 (temps par nouvelle
+annonce : ~4,2 s PropertyHub, ~3,9 s Hipflat). Rien n'a encore tourné avec les
+nouveaux réglages.
+
+### Références techniques
+`max_nouvelles` 2000→4000 (propertyhub, hipflat), `max_pages` 150→300
+(ddproperty, propertyscout), `max_detail_visits` 1000→2000 (fazwaz) ; bandes
+`agents.json`. DDproperty vérifié en direct le 21/10 : sonde OK, 40/40, 0 erreur.
+
+### 2026-10-21 (suite) — LivingInsider remis en lane `daily`, mode « liste »
+
+Décision utilisateur, après l'entrée « LivingInsider réparé en mode liste ». `extract-livinginsider` → `lanes: ["daily"]`, motif `_repris` (le `_suspendu` reste en historique). Retour : `lanes: []`. Vérifié : `run-lane daily --all --dry-run` le liste ; `test_lanes`, `test_status_hors_lanes`, `test_fraicheur`, `test_livinginsider_cartes` passent. **Non fait** : premier run de production (au prochain cycle de nuit : ~640 nouvelles et ~25 min d'images attendues) ; aucun contournement du challenge ; les 216 loyers à prix de vente hérités du mode fiche restent en base.
+
+## 2026-10-21 (suite) — Thaiger Property : préparation d'un scraper, arrêtée à la mesure
+
+### 1. Causes
+Demande : préparer un scraper pour thaigerproperty.com.
+
+### 2. Conséquences
+Le site est une **vitrine du groupe FazWaz**, avec le même catalogue :
+- mêmes totaux affichés pour Bangkok que FazWaz (35 588 condos en vente,
+  54 410 en location) ;
+- **58 annonces sur 60** prises en tête de liste sont déjà dans notre base
+  sous FazWaz (53 encore actives) ;
+- photos hébergées chez FazWaz, même fichier de règles d'accès pour les robots.
+
+Un scraper Thaiger ne rapporterait pratiquement aucune annonce nouvelle et
+créerait des doublons. C'est le même cas que Dot Property (écarté en août).
+
+### 3. Plan
+Aucun scraper écrit. Si on le voulait quand même, ce serait une copie du
+scraper FazWaz avec une autre adresse de site — sans intérêt mesurable.
+Décision à prendre : clore, ou chercher les 2 annonces sur 60 qui ne sont pas
+chez FazWaz pour voir s'il existe une part propre à Thaiger.
+
+### 4. Méthode
+Pages de liste Bangkok vente et location téléchargées le 21/10, 60
+identifiants d'annonce comparés un à un à la base locale.
+
+### Références techniques
+Identifiants d'unité `u1234567` communs aux deux sites ; robots.txt identique
+(interdiction de `order_by`) ; sitemap déclaré `https://www.thaigerproperty.com/sitemap.xml`.
+
+## 2026-10-21 (suite) — Thaiger Property : ses statistiques, et FazWaz affiché « FazWaz / Thaiger »
+
+### 1. Causes
+- Question : Thaiger Property publie-t-il des statistiques réutilisables ?
+- Demande : afficher la source FazWaz sous le nom « FazWaz / Thaiger ».
+
+### 2. Conséquences
+- **Rien d'exclusif chez Thaiger.** Ce qu'il publie vient de la plateforme
+  FazWaz et se trouve à l'identique sur fazwaz.com : prix médian d'un condo à
+  Bangkok (~4,9 M ฿) et prix médian au m² (~157 000 ฿) ; par immeuble, l'année
+  de livraison (déjà relevée chez nous), le nombre d'étages, de bâtiments et de
+  logements, et une estimation « X % sous / au-dessus du prix de marché »
+  calculée par FazWaz.
+- Deux éléments seraient utiles et ne sont pas encore collectés : le **nombre
+  de logements par immeuble** (pour rapporter le stock en vente à la taille de
+  l'immeuble) et l'**estimation de prix de FazWaz** (comme point de comparaison
+  avec notre propre décote). Les deux se prennent sur FazWaz, pas besoin de
+  Thaiger.
+- Le site, les fiches et le bilan affichent désormais « FazWaz / Thaiger ».
+  L'identifiant interne reste « fazwaz » : le changer casserait les ~86 000
+  annonces en base et l'historique des agents.
+
+### 3. Plan
+- Fait : nom affiché changé (filtre des tableaux, fiche au survol, rapport de
+  tension), note dans la consigne de l'agent FazWaz.
+- À décider : collecter le nombre de logements par immeuble et l'estimation
+  de prix FazWaz.
+- Non fait : le bilan acheteur n'accepte pas encore un lien Thaiger en entrée
+  (il ne reconnaît que les liens fazwaz.com) — c'est un changement de
+  fonctionnement, pas un renommage.
+
+### 4. Méthode
+Page « Bangkok » de Thaiger, une page de quartier et une page d'immeuble lues
+le 21/10, comparées à ce que notre scraper FazWaz relève déjà. Vérification de
+types du site passée.
+
+### Références techniques
+`lib/sources.ts` (`sourceLabel`), `components/ListingsTable.tsx`,
+`components/PropertyCard.tsx`, `bilan_RE/tension/rapport.py`
+(`SOURCES_LISIBLES`), `agents/skills/extract-fazwaz/SKILL.md`.
+
+## 2026-10-21 (suite) — FazWaz : nombre de logements et estimation de prix par immeuble
+
+### 1. Causes
+Demande : collecter, pour chaque immeuble, le nombre de logements et
+l'estimation de FazWaz (« les annonces de cet immeuble sont X % sous ou
+au-dessus du prix de marché »).
+
+### 2. Conséquences
+- Ces deux informations ne figurent **pas** sur les pages d'annonce (0 sur 24
+  vérifiées). Elles sont sur la page de l'immeuble, vers laquelle chaque
+  annonce renvoie (24 sur 24).
+- Taux de remplissage mesurés : **nombre de logements 32 sur 32** immeubles,
+  **estimation de prix 37 sur 52** (environ 7 sur 10 : FazWaz ne l'affiche pas
+  pour tous les immeubles).
+- L'estimation est une **moyenne par immeuble**, pas un avis sur une annonce
+  précise. Elle est négative quand l'immeuble se vend sous le marché selon
+  FazWaz (exemples relevés : de -50 % à +8 %).
+- Coût : une page de plus par immeuble, gardée en mémoire 30 jours. Au plus 300
+  pages d'immeuble par passage (~10 à 15 minutes). Les ~4 500 immeubles connus
+  seront couverts en ~15 passages, ensuite seuls les immeubles des annonces
+  nouvelles ou modifiées sont relus.
+- L'estimation est conservée **dans le temps** (une valeur par relevé) : on
+  pourra suivre son évolution.
+
+### 3. Plan
+- Fait : collecte ajoutée au scraper FazWaz, active dès le prochain cycle.
+- Les données sont rangées dans un fichier par immeuble et recopiées dans les
+  annonces nouvellement lues. Elles ne sont **pas encore utilisées** dans les
+  statistiques, ni affichées : à décider (par exemple, rapporter le nombre
+  d'annonces en vente à la taille de l'immeuble, ou comparer l'estimation de
+  FazWaz à notre propre calcul de décote).
+- Pas de changement de structure de la base : rien à défaire côté base. Pour
+  couper la collecte, un réglage suffit.
+
+### 4. Méthode
+- Avant d'écrire : 24 annonces actives prises au hasard, puis 12 pages
+  d'immeuble lues à la main.
+- **Erreur de mesure corrigée en route** : sur 2 des 12 pages, le pourcentage
+  d'abord compté appartenait à un immeuble **voisin** affiché plus bas sur la
+  page. Seule la phrase propre à l'immeuble est désormais lue ; le vrai taux
+  était 9 sur 12, pas 11 sur 12.
+- Premier essai en direct : 3 immeubles sur 20 sans nombre de logements, tous
+  en construction (écrits autrement que les immeubles livrés). Corrigé, puis
+  second essai : 20 sur 20.
+- Second passage sur les mêmes annonces : 0 page d'immeuble relue (la mémoire
+  de 30 jours fonctionne). Tests FazWaz existants : tous passent.
+
+### Références techniques
+`scraper/adapters/fazwaz.py` (`lire_projet`, `_projet`, cache
+`output/fazwaz-projets.json`, clés `raw_data.projet_*`) ;
+`scraper/config/fazwaz.json` → `projets` (`visiter`, `max_par_run` 300,
+`rafraichir_jours` 30). Retour : `"visiter": false`.
+
+## 2026-10-21 — Tension v3 : naissance par identifiant ; la liquidité retombe à 0 (à arbitrer)
+
+**Mesuré.** `first_seen` datait notre découverte : au 18/10, stock vente
+DDproperty 3 996 → 40 562 entre t−90 j et t1, FazWaz 5 753 → 13 444, dont
+10 341 et 9 024 annonces nouvelles dans des immeubles DÉJÀ suivis — un
+périmètre constant par immeuble n'aurait donc rien corrigé. Les identifiants de
+DDproperty, FazWaz, PropertyScout, PropertyHub et Nestopa sont des compteurs
+(maximum mensuel strictement croissant). Naissance = premier jour où la
+frontière d'identifiants dépasse celui de l'annonce. Validation : 99,2 % des
+`posted_at` DDproperty ≥ naissance − 2 j, écart médian 0 j (91 127 annonces).
+Retard de découverte p90 : 30 j DDproperty, 32 j FazWaz ; PropertyScout p50
+29 j, non expliqué. PropertyHub : `createdAt` cohérent avec l'ordre des
+identifiants (4,4 % d'inversions), utilisé.
+
+**Fait (config v3, commits bbc431e, 40cfc4a).** Offre au même périmètre (stock
+passé = annonces qui existaient, sources suivies à t−90 j) ; âges depuis la
+naissance, entrée sous observation à la première vue. Effet au 18/10 : offre
+Bangkok −0,99 → −0,15, écoulement inchangé, rang des districts corrélé à 0,57.
+Défaut trouvé en relisant, corrigé : Hipflat (identifiant haché) n'avait pas
+de date de début de suivi et serait entré dans l'offre comme stock nouveau.
+
+**Défaut causé par ce changement, détecté par la surveillance du jour même.**
+Recalcul v3 (fenêtre au 19/10) : scores de revente publiés **199 → 0**, tension
+à maille fine 34,2 → 29,9 %. `scores-tension` a levé `regression_publication`
+(constat haut). Diagnostic, Bangkok à prix du marché (4 530 cohortes, 172
+sorties identiques) : âge médian de sortie **34 j (v2) → 94 j (v3)** — la v2
+sous-estimait la durée d'un facteur ~3 ; effectif à risque minimal avant 90 j
+382 → 129. Par district il passe sous `risque_min` = 10 : moins de 5 districts
+publiables, plus de référence, plus de score de revente.
+
+**Non fait, et pourquoi.** Pas de retour à la v2 pour la liquidité : ce serait
+publier des durées fausses d'un facteur 3. Pas d'abaissement de `risque_min`.
+Correctif à arbitrer (méthode = décision utilisateur). Le score v2 du cycle du
+21/10 a été écrasé par le recalcul v3 (même nom de fichier, même fin de
+fenêtre). L'escalade Opus déclenchée par le constat porte la consigne « ne rien
+changer aux règles de méthode ». `created_at` PropertyScout non capté.
+
+## 2026-10-21 (12:15) — Réparation autonome, troisième passe : rien à réparer
+
+**Causes.** Les escalades de 10:00 et 11:00 ont buté sur la limite d'usage du
+compte ; trois tickets restaient ouverts. L'un reprenait DDproperty (déjà
+corrigée) et la chute des scores 199 → 0 (méthode v3, à arbitrer). Les deux
+autres déclaraient LivingInsider muette : la source a été remise en rotation à
+08:55, après le départ du cycle, et le contrôle de 10:54 a lu la nouvelle
+configuration.
+**Conséquences.** Aucune perte. LivingInsider relancée à 11:00 : 839 lues,
+640 nouvelles, 0 erreur ; location toujours bloquée par l'anti-robot du site,
+protégée du retrait (366 hors couverture).
+**Plan.** Tickets et escalade clos, 2 alertes envoyées. Non fait : aucun code
+touché (pas de défaut nouveau) ; contrôle de fin de cycle laissé tel quel (cas
+d'une configuration modifiée en plein cycle, isolé) ; scores de revente et 2
+courriers transactionnels laissés à l'utilisateur ; aucun scrap en journée.
+**Méthode.** Registre des runs + historique git ; base : intégrité ok,
+214 730 annonces / 140 103 actives ; sauvegarde clé ok 3/3. Détail :
+`agents/audits/reparations-2026-10-21.md` § Troisième passe.
+
+## 2026-10-22 — Date de création déclarée par le portail (PropertyScout) et relevé multi-portails
+
+**Causes.** `first_seen` ne dit que notre premier passage. Sur PropertyScout il
+retardait l'ancienneté d'une annonce de 2 semaines à 3 ans (suivi commencé le
+24/06/2026, découverte tardive). Le portail affiche pourtant « Date Listed ».
+
+**Conséquences.** Mesuré : sur 10 fiches réparties sur toute la plage
+d'identifiants, la date croît strictement avec l'identifiant → vraie date de
+création (le `posted_at` de DDproperty, lui, est une remontée). Après rattrapage,
+4 020 annonces PropertyScout ont une date ; écart moyen `first_seen` − date =
+372 j sur les actives (max 3 091 j : une annonce datée de 2018, à regarder). Le
+bilan de l'annonce test passe de ~110 à 445 jours en ligne. `first_seen` n'est PAS
+modifié.
+
+**Plan — fait.** Colonne locale `listed_at_source` (SQLite uniquement, hors
+`COLONNES_LISTING` : aucune migration Supabase) ; `COLONNES_LOCALES`,
+`_migrate()`, `normalize.py`, adaptateur PropertyScout (`extsourceCreatedAt`, à
+défaut `createdAt`) ; rattrapage sans réseau depuis `page_text`
+(`bilan_RE/ops/remplir-date-source.py`) ; règle `min(first_seen, date source)` dans
+`bilan_RE/tension/rapport.py` (`SOURCES_DATE_FIABLE`, PropertyScout seul) ;
+migration + rollback `bilan_RE/migrations/2026-10-22_date_source{,_rollback}.sql`.
+**Retour arrière** : vider `SOURCES_DATE_FIABLE` (bilan), puis retirer la colonne
+du code et du `_migrate`, puis le rollback SQL.
+
+**Méthode.** État avant : 62 colonnes, 220 007 lignes. Après : 63 colonnes,
+220 007 lignes. `agents/tests/test_stores_alignes.py` passe (volet Postgres
+exécuté : colonnes locales absentes du serveur). Bilan relancé sur l'annonce test.
+Le test de la règle (la faire échouer exprès) n'a pas été écrit.
+
+**Non fait / non vérifié.** Aucun test automatique dédié ; la date 2018 non
+inspectée ; FazWaz et les autres sources non testées pour `SOURCES_DATE_FIABLE` ;
+le prochain scrap PropertyScout n'a pas encore tourné avec le nouvel adaptateur
+(l'extraction de `extsourceCreatedAt` est vérifiée sur une page, pas sur une
+exécution réelle) ; les captures `__NEXT_DATA__` ne sont pas gardées ; prix initial
+du bilan toujours borné à notre premier relevé (5,99 M en 07/2026 pour une annonce
+de 08/2025). Correction de méthode : les relevés multi-portails du 17 et du 22/10
+sous-lisaient les pages (JSON embarqué, ex. 28 ventes conclues FazWaz) — voir
+`bilan_RE/docs/benchmark-plateformes.md`.
+
+## 2026-10-22 — Lecture distante de la base de PC2 pour Vercel (code livré, tunnel NON posé)
+
+**Causes.** Vercel n'avait aucun chemin vers `bangkok.db` (un fichier). Choix de l'utilisateur : tunnel Cloudflare + petite API sur PC2, plutôt que la remontée vers Supabase.
+
+**Conséquences.** Rien n'est encore exposé ni branché : sans les variables `LOWI_REMOTE_API` et `LOWI_API_TOKEN` côté Vercel, le site se comporte comme avant. Une fois branché, il lit PC2 en direct, et retombe sur Supabase si PC2 est éteint ou le tunnel coupé.
+
+**Plan.** Fait : service de lecture seule (`ops/api-lecture.py`, écoute 127.0.0.1 uniquement, jeton obligatoire, base ouverte en lecture seule, cache de 15 min) et branche distante dans `lib/listings-db.ts` avec repli Supabase. Reste (attend l'utilisateur) : installer `cloudflared`, créer le tunnel nommé, générer le jeton dans `scraper/.env`, poser les 2 variables sur Vercel, lancer le service en tâche planifiée. Retour arrière : retirer `LOWI_REMOTE_API` de Vercel.
+
+**Méthode.** Mesuré : à froid `/listings` = 15 Mo, 31 s (trop long pour Vercel) ; avec cache chaud 0,04 s. Jeton absent → 401. `npm run typecheck` passe. Non vérifié : le trajet complet via tunnel et Vercel, le comportement du repli en conditions réelles, la facture Vercel (règle 9 : 15 Mo tirés par instance et par heure).
+
+Références techniques : `ops/api-lecture.py`, `lib/listings-db.ts` (`fromRemote`). Les pages `bilan_RE/web` ne sont pas couvertes.
+
+**Annulation (2026-10-22, même séance).** La voie « tunnel Cloudflare + API sur PC2 » est abandonnée à la demande de l'utilisateur, qui ne peut pas l'engager. Retiré : le service de lecture, la branche distante de la couche de lecture, le binaire téléchargé, le jeton. Rien n'avait été posé sur Vercel ni chez Cloudflare. Les mesures ci-dessus (31 s à froid, 15 Mo) restent valables si l'idée revient.
+
+**À améliorer plus tard (2026-10-22).** Le chargement complet des annonces par chaque instance Vercel (≈ 22 Mo mesurés à froid) est la vraie source de volume, pas le choix de la source de données. Trois pistes chiffrées dans CLAUDE.md (règle 9). Non fait : lecture de l'usage réel Vercel/Supabase.
+
+## 2026-10-22 (suite) — Ventes conclues des portails : collectées, tenues à l'écart, affichées comme source faible
+
+**Causes.** Demande de l'utilisateur : ajouter au scrap les prix de vente
+conclus que publient les portails, les garder séparés, et, s'ils entrent au
+bilan, les étiqueter « source faible ». Le benchmark du jour montrait ces données
+dans le JSON embarqué de la page d'immeuble FazWaz, que le scrap lit déjà.
+
+**Conséquences.** Aucune requête de plus : la page d'immeuble FazWaz était déjà
+lue pour le nombre de logements. 29 ventes sur Knightsbridge Prime Sathorn,
+chacune avec date, prix, surface, étage, chambres, quota. FazWaz écrit aussi sa
+propre synthèse (29 ventes, 159 000 THB/m², 715 jours en moyenne avant vente,
+vendu 7 % sous le prix affiché) : capturée telle quelle. Mesuré : 6 immeubles sur
+10 en ont, 4 à 17 ventes sur 8 ans ; l'origine n'est pas indiquée. Les
+entrées du cache d'immeubles sans clé « ventes » sont relues en priorité dans le
+budget existant (300 pages par run) : rattrapage étalé sur ~15 runs, sans pic.
+
+**Plan — fait.** `scraper/pipeline/ventes_portail.py` (lecture) ; tables locales
+`ventes_portail` et `ventes_portail_projets` (créées par `_migrate`, appliquées à
+`bangkok.db`, migration + rollback dans `bilan_RE/migrations/2026-10-22_ventes_portail*.sql`) ;
+`fazwaz.py` (`ventes_portail()`, relecture des entrées anciennes) ; `run.py`
+(écriture non fatale en fin de run) ; bilan : bloc « Reported sales » étiqueté
+« Weak source », sans nommer le portail, médiane seulement à partir de 5 ventes
+comparables sur 36 mois (`rapport.py`, `types.ts`, `Report.tsx`, `explications.tsx`).
+Tables jamais jointes à `listings`, jamais dans une médiane de marché, jamais
+poussées vers Supabase. **Retour arrière** : renvoyer `None` dans
+`_ventes_portail`, retirer l'appel de `run.py` et la création dans `_migrate`,
+puis le rollback SQL.
+
+**Méthode.** Essai `agents/tests/test_ventes_portail.py` (parseur, format cassé,
+rejouabilité, étiquette, seuil de médiane, base temporaire) et
+`test_stores_alignes.py` : passent. `npm run typecheck` : propre. Bilan relancé
+sur l'annonce test : bloc présent, 4 ventes comparables < 5, donc pas de médiane
+(le garde-fou parle). Les 29 ventes de Knightsbridge ont été chargées dans la base
+réelle depuis la page déjà lue (même code que le scrap).
+
+**Non fait / non vérifié.** Aucun run de production du scrap FazWaz avec le
+nouveau code ; l'affichage n'a pas été vu dans un navigateur (typecheck seul) ;
+Hipflat : sa page d'immeuble (testée sur 1 projet) donne des moyennes et tendances
+en prose, en USD, **pas de lignes de ventes** — extracteur non écrit, d'autres
+projets à sonder (le benchmark du 17/10 en comptait 6/10) ; PropertyScout
+« Market stats » : API non identifiée (extension Chrome non connectée) ; DDproperty
+et LivingInsider non lus ; `/api/` et `/graphql` de FazWaz et
+`/api/v1/projects/` de Hipflat **non appelés** (interdits par robots.txt) ;
+l'origine des prix (registre foncier ou saisie d'agent) reste inconnue ; droits
+d'usage à valider (backlog 38) avant tout affichage public.
+
+## 2026-10-22 (fin) — Validation de la collecte des ventes conclues par un run réel
+
+**Causes.** La collecte FazWaz des ventes conclues n'avait été testée que sur une
+page enregistrée et une base temporaire. Demande : la valider par un run réel court.
+
+**Conséquences.** (1) Run de production, mode sitemap : bloqué à dessein, la
+protection du 04/10 refuse de relire un sitemap déjà lu (plus frais : 22/10
+02:21) et réessaie dans 15 min ; arrêté, rien écrit. (2) Run de production en
+mode liste (6 annonces) : les 6 étaient déjà connues à prix inchangé, donc fiche
+non rouverte et page d'immeuble non lue — l'écriture en fin de run s'est exécutée
+sans erreur (« 0 vente lue »), base de production inchangée (29 ventes, 1 immeuble).
+(3) Run réel dans un dossier de sortie isolé (méthode prévue par `LOWI_OUTPUT_DIR`,
+base vide donc fiches rouvertes) : 6 pages d'immeuble lues, **34 ventes écrites
+pour 6 immeubles, 6 synthèses de portail, 6 sur 6 étiquetées « faible »**,
+0 erreur. Les 6 immeubles de cet échantillon avaient tous des ventes (contre 6 sur
+10 dans le relevé du 22/10 : l'échantillon est trop petit pour conclure).
+
+**Plan.** Rien à corriger. Le rattrapage des 336 immeubles du cache se fera dans
+le budget existant (300 pages par run) aux prochains scraps réels.
+
+**Méthode.** Journaux `ops/logs/essai-ventes-portail*.log`, comptes lus dans les
+bases avant/après.
+
+**Non fait / non vérifié.** Aucune vente nouvelle n'est entrée dans la base de
+production par le scrap (les 29 viennent du chargement manuel de Knightsbridge) ;
+le chemin sitemap n'a pas été exercé de bout en bout ; en arrêtant le run bloqué,
+la commande d'arrêt par motif a aussi fermé 4 processus d'interpréteur de commandes
+de cette session (aucun scrap de production ne tournait).
+
+## 2026-10-22 — réparation autonome : rien à réparer
+
+**Causes.** Cycle de 02:30 complet (5 extracteurs, 5 147 annonces), 0 ticket, 0 escalade, 0 erreur dans les journaux des 30 dernières heures. **Conséquences.** Base 220 007 / 138 110 actives ; sauvegarde clé vérifiée 3 fois. **Plan.** Aucune modification. **Non fait :** `quick_check` complet non relancé (trop long, la sauvegarde relue 3 fois en tient lieu) ; 2 courriers `bilan-comptes` laissés dans `queue/mail` (non-alertes, dont un mot de passe en clair) — à arbitrer ; « scores de revente 199 → 0 » reste à décider. **Méthode.** Lecture du témoin, du tableau d'agents, des journaux, comptage direct en base. Détail : `agents/audits/reparations-2026-10-22.md`.
+
+## 2026-10-22 — DotProperty devient une source, scrapée le soir de 21:00 à 02:00
+
+### 1. Causes
+Demande : ajouter DotProperty et le faire tourner le soir, aussi longtemps que
+la nuit le permet, pour rattraper son stock.
+
+### 2. Conséquences
+- **La conclusion d'août était fausse.** On avait écarté DotProperty parce que
+  toutes ses photos venaient d'une adresse « fazwaz ». En réalité, cette
+  adresse est le stockage de photos du groupe Lifull Connect, le même que pour
+  Hipflat : elle ne dit rien de l'origine des annonces.
+- Mesure directe sur 179 annonces : **153 (85 %)** ont déjà un équivalent dans
+  notre base (même immeuble, même prix, surtout chez DDproperty et FazWaz) ;
+  **26 (15 %)** n'existent dans aucune de nos sources. Sur ~180 000 annonces,
+  cela fait de l'ordre de **27 000 annonces nouvelles**.
+- Le site se lit en entier (pas de limite de pages, contrairement à Hipflat).
+- Le scrap tourne **de 21:00 à 02:00 au plus tard**. Il ne peut pas aller
+  au-delà : un scrap encore en cours à 02:30 ferait reporter tout le cycle de
+  nuit des autres sources.
+- Attendu (estimé, non mesuré sur une nuit réelle) : lecture complète de la
+  liste en ~2 h, puis jusqu'à **3 000 nouvelles annonces par soir**. Le
+  rattrapage prendra des semaines.
+- Tant que la liste n'est pas lue en entier avant 02:00, **aucune annonce
+  DotProperty n'est retirée** : on ne retire que ce qu'on a eu le temps de
+  vérifier.
+- Comme PropertyHub et Hipflat : pas envoyée au site public, pas comptée dans
+  les scores de tension pendant le rattrapage.
+
+### 3. Plan
+- Fait : scraper de production, nouvelle tâche Windows de 21:00 (avec réveil
+  du poste), arrêt automatique à 02:00, surveillance et tests adaptés.
+- Premier passage : **ce soir, 22/10 à 21:00**.
+- À vérifier demain : durée réelle de la lecture de la liste et nombre de
+  nouvelles annonces, pour recaler la limite de 3 000.
+- Pour revenir en arrière : supprimer la tâche « LowiBKK-Soir », ou vider la
+  lane de l'agent.
+
+### 4. Méthode
+- 6 pages de liste (vente, location ; début, milieu, fin) comparées à la base,
+  annonce par annonce.
+- Essai en base jetable : 25 annonces sur 25 complètes (surface, salles de
+  bain, coordonnées, quartier, description) ; 2e passage entièrement
+  reconnu sans rouvrir de fiche ; arrêt horaire testé : le scan s'arrête à
+  l'heure dite et ne retire rien.
+- Simulation de la lane du soir : elle lance bien le maintien d'éveil du poste
+  puis DotProperty. Tâche Windows relue après installation.
+
+### Références techniques
+`scraper/adapters/dotproperty.py` (réécrit), `scraper/config/dotproperty.json`
+(`max_pages` 4200, `max_nouvelles` 3000), `scraper/run.py` (`--jusqua HH:MM`,
+marqueur `[ARRET-HORAIRE]`, scan partiel sans délistage), `agents/agents.json`
+(lane `soir`, agent `extract-dotproperty`, `garde-veille` sur `soir`,
+exclusion `remonter-supabase`), `ops/install-soir-task.ps1` (tâche
+`LowiBKK-Soir`, `WakeToRun`, sans `StartWhenAvailable`),
+`agents/tests/test_lanes.py` (lane annexe déclarée + garde-veille),
+`bilan_RE/tension/config.json`, `lib/sources.ts`, `ops/verifie-synchro.py`.
+
+## 2026-10-22 (suite) — DotProperty : le maximum d'annonces dès cette nuit
+
+### 1. Causes
+Demande : profiter de toute la fenêtre de cette nuit pour rapporter le plus
+d'annonces DotProperty possible.
+
+### 2. Conséquences
+- La limite de 3 000 nouvelles annonces par soir est levée : seule l'heure
+  d'arrêt borne désormais le travail.
+- La nuit est partagée : **ventes de 21:00 à 23:30, locations de 23:30 à
+  02:00**. Sans ce partage, la soirée entière passerait sur les ventes et les
+  locations ne seraient jamais lues.
+- Attendu (estimé à ~3 secondes par nouvelle annonce, d'après l'essai du
+  jour) : de l'ordre de **3 000 ventes et 3 000 locations**, soit ~6 000
+  annonces cette nuit, au lieu de 3 000.
+- Aucun délistage DotProperty tant que les listes ne sont pas lues en entier
+  dans leur créneau.
+
+### 3. Plan
+Fait. À relire demain matin : nombre réel d'annonces rapportées pour chaque
+type, et heure d'arrêt effective. Pour revenir à une limite : remettre 3 000
+dans la configuration.
+
+### 4. Méthode
+Simulation de la lane du soir : vente puis location, avec leurs heures
+d'arrêt. Test des lanes passé.
+
+### Références techniques
+`scraper/config/dotproperty.json` (`max_nouvelles` 50000) ; `agents/agents.json`,
+`extract-dotproperty` : `cmd` vente `--jusqua 23:30`, `then` location
+`--jusqua 02:00`, bande `nouvelles` 1–12000.
+
+## 2026-10-22 (suite) — Bilan acheteur : loyer estimé et rénovation pour les investisseurs, frais d'achat pour tous
+
+### 1. Causes
+Demande : quand la personne choisit « I invest in properties » sur la page
+d'accueil, le bilan doit estimer le loyer qu'elle pourra demander et dire si
+une rénovation fait monter le loyer. Pour tout le monde, un bloc de frais
+d'achat.
+
+### 2. Conséquences
+- **Loyer estimé.** Calculé à partir des locations du même immeuble, de même
+  taille et de même nombre de chambres. Testé sur 4 000 locations réelles : il
+  tombe à moins de 8 % du loyer affiché dans la moitié des cas, à moins de
+  17 % dans 80 % des cas. Rendement brut affiché.
+- **Étage.** Il est montré par tranches mais ne change pas l'estimation :
+  dans nos données, à immeuble égal, il ne fait presque pas varier le loyer au
+  m² (moins de 1 % pour dix étages).
+- **Rénovation.** On compte les annonces comparables qui se disent rénovées et
+  on compare leur loyer à celui des autres, **dans le même immeuble
+  seulement**. Une première version comparait tout le quartier et trouvait
+  −32 % : les logements rénovés sont surtout dans les immeubles anciens, moins
+  chers. Corrigé avant livraison.
+- **Frais d'achat.** Taux légaux appliqués au prix demandé, avec qui paie
+  d'habitude. Ce sont des plafonds (la loi part d'une valeur d'expertise en
+  général plus basse). Exemple : 1 % pour l'acheteur dans le cas courant.
+- Le profil est gardé dans le navigateur ; le même rapport montre donc les
+  blocs investisseur à une personne et pas à une autre.
+
+### 3. Plan
+- Fait : calculs, affichage page et PDF, lecture des menus d'accueil, test des
+  frais, méthode documentée.
+- À décider : le seuil de 10 % qui fait dire « la rénovation augmente
+  sensiblement le loyer » (proposé, pas arbitré).
+- À faire valider : les frais d'achat, par un avocat thaï (consigné au
+  journal juridique).
+- Non fait : traduction thaï / chinois des nouveaux blocs (en anglais, comme
+  le reste du rapport) ; les rapports déjà calculés n'ont pas les nouveaux
+  blocs tant qu'ils ne sont pas recalculés.
+
+### 4. Méthode
+Mesures sur les 70 591 locations actives (étage, rénovation), essai de quatre
+façons d'estimer un loyer sur 4 000 locations tirées au hasard, trois bilans
+générés sur de vraies annonces, puis la page affichée avec les deux profils :
+le profil investisseur montre loyer et rénovation, l'autre non ; les frais
+apparaissent dans les deux. Vérification de types et tests du moteur passés.
+
+### Références techniques
+`bilan_RE/tension/rapport.py` (`_loyer_estime`, `_renovation`, `_frais_achat`,
+`_locations`), `bilan_RE/tension/config.json` (`bornes_loyer`, `renovation`,
+`frais_achat`), `bilan_RE/web/components/Report.tsx` (`LoyerBloc`,
+`RenovationBloc`, `FraisBloc`), `bilan_RE/web/lib/profil.ts` (cookie
+`lowi_profil`), `bilan_RE/web/lib/types.ts`, `explications.tsx`,
+`AnalyseForm.tsx`, `app/beta/page.tsx`, `app/beta/r/[id]/page.tsx` et `pdf/`,
+`bilan_RE/tests/test_frais_achat.py`, `docs/methodes-calculs.md` §13.
+
+## 2026-10-22 (suite) — Bilan acheteur : bloc « rénovation » mis en attente
+
+### 1. Causes
+Le seuil qui permet de dire « la rénovation augmente sensiblement le loyer »
+devait être choisi. En le mesurant, il est apparu que le problème n'est pas le
+seuil mais le peu de logements rénovés par immeuble.
+
+### 2. Conséquences
+- Sur 101 immeubles comparables, on conclurait « augmente » presque aussi
+  souvent en choisissant au hasard des logements **non** rénovés : 31 % contre
+  24 % au seuil de 10 %, 12 % contre 11 % au seuil de 20 %.
+- Décision : le bloc affiche « Coming soon » pour le profil investisseur. Le
+  loyer estimé et les frais d'achat restent affichés.
+
+### 3. Plan
+- Fait : bloc en attente, texte d'explication adapté, méthode notée.
+- À décider plus tard, deux pistes chiffrées : exiger au moins 3 logements
+  rénovés et 5 autres par immeuble (35 immeubles mesurables, 29 % de « oui »
+  contre 16 % au hasard), ou un test par tirage au sort dans chaque immeuble
+  (13 % de « oui », au plus 10 % au hasard).
+- Le calcul tourne toujours dans le moteur ; seul l'affichage est coupé.
+
+### 4. Méthode
+Pour chaque immeuble, écart de loyer au m² entre logements rénovés et autres,
+comparé à 1 680 tirages où l'étiquette « rénové » est donnée au hasard à des
+logements qui ne le sont pas. Page vérifiée avec le profil investisseur.
+
+### Références techniques
+`bilan_RE/web/components/Report.tsx` (`RenovationBloc` non branché, bloc
+« Coming soon »), `explications.tsx` (`renovation`), `docs/methodes-calculs.md` §13.
+
+## 2026-10-22 (suite) — Build Vercel en échec : polices servies depuis le dépôt
+
+### 1. Causes
+Le build Vercel de la branche a échoué au chargement des polices du site
+(Hanken Grotesk et JetBrains Mono). Next 15.4 les télécharge chez Google au
+moment du build ; la feuille reçue par le serveur de Vercel contenait une
+adresse de fichier sans extension, que Next ne sait pas lire.
+
+### 2. Conséquences
+- Aucun déploiement possible tant que Google répond ainsi au serveur de build.
+  Depuis ce poste, la même requête répondait normalement : la panne dépend du
+  réseau du build, elle peut revenir à tout moment.
+- Après correction : les polices sont les **mêmes fichiers**, servies depuis
+  le dépôt (deux fichiers, 66 ko en tout). Le rendu ne change pas, et le build
+  ne dépend plus de Google.
+
+### 3. Plan
+Fait : polices dans le dépôt, build de production vérifié. Pour revenir en
+arrière : reprendre le chargement Google dans le layout.
+
+### 4. Méthode
+Build de production complet lancé dans une copie de travail séparée (le
+serveur de développement en cours n'a pas été touché) : compilation réussie,
+deux fichiers de police embarqués.
+
+### Références techniques
+`app/layout.tsx` : `next/font/google` → `next/font/local` ; `app/fonts/`
+(`HankenGrotesk-latin.woff2`, `JetBrainsMono-latin.woff2`, sous-ensemble latin,
+polices variables, licence SIL OFL 1.1). Erreur d'origine :
+`Cannot read properties of null (reading '1')`, `@next/font/dist/google/loader.js:122`.
+
+
+## 2026-10-23 — La veille de nuit a réveillé Opus pour une panne qui n'existait pas, et deux garde-fous étaient muets
+
+### 1. Causes
+À 04:30, la veille du cycle a signalé qu'une collecte d'annonces était
+« suspendue ». Elle ne l'était pas. Trois mesures prises pendant qu'elle
+tournait : son carnet de bord grossissait de 2 119 caractères en 25 secondes,
+elle en était à la page 164 sur 300 de sa deuxième étape sur quatre, et ses
+trente dernières exécutions donnent une durée médiane de 5 h 27 (de 2 h 46 à
+20 h) alors qu'elle n'en était qu'à 2 h 06. Elle a terminé ses quatre étapes
+sans incident.
+
+Le réveil pour rien tient à deux défauts de fabrication, indépendants.
+
+Premier défaut : la porte qui décide de déranger quelqu'un cherchait des mots
+dans du texte libre. La veille est en deux étages — un programme rassemble les
+preuves et décide, un assistant rapide les relit et commente en français libre.
+Pour ne pas déranger à chaque remarque, la porte ne retenait que les
+formulations graves, et cherchait pour cela le mot « processus », qui chez le
+programme n'apparaît que dans « processus absent ». L'assistant avait écrit
+« processus vivant » — le contraire exact — et le mot passait quand même.
+Vérifié : deux tournures anodines sur deux ouvraient l'escalade, dont « le
+processus tourne normalement ». Le garde-fou criait au loup sur une phrase qui
+disait que tout allait bien.
+
+Second défaut : le dossier de preuves ne portait aucun repère de durée.
+« En cours depuis deux heures » n'était pas interprétable, faute de savoir
+combien de temps cette collecte dure d'habitude — et elle ne rend ses comptes
+qu'à la fin, si bien que l'absence de compte rendu à mi-course est la normale.
+
+Troisième défaut, trouvé en cherchant le premier : les trois surveillances qui
+regardent depuis l'EXTÉRIEUR du cycle — le battement de fin de cycle, la veille
+elle-même, le contrôle de fraîcheur — écrivaient bien leur fiche de
+signalement, mais ne l'inscrivaient pas au registre. Or le tableau de bord lit
+le registre, pas les fiches. Mesure : 46 signalements de sévérité haute déposés
+par ces trois outils depuis leur mise en service, 0 inscrit. Ce matin, le
+tableau de bord annonçait « aucune alerte en cours » avec une alerte grave en
+attente depuis sept heures. C'est le défaut jumeau du précédent : une
+surveillance muette et une surveillance qui crie au loup apprennent toutes
+deux à ne plus regarder (règle 2 ; trois s'étaient déjà révélés inertes le même
+jour en août).
+
+Quatrième défaut, mineur : la liste des contrôles à rejouer du test de la
+veille était recopiée à la main. Les deux contrôles ajoutés ce matin n'y
+figuraient pas — ils ne s'exécutaient pas, et l'affichage annonçait « 8/8 ».
+
+### 2. Conséquences
+Sur les données : aucune. Rien perdu, rien corrompu, aucune annonce supprimée ;
+le cycle de nuit s'est déroulé de bout en bout. Contrôle d'intégrité complet
+sans défaut sur la base de référence, 228 722 annonces dont 146 980 actives,
+les huit sources vues dans les délais de leur propre cadence. La sauvegarde sur
+clé du dernier cycle a réussi : 5 234,7 Mo copiés, relus trois fois avec le même
+décompte (220 007 annonces, 138 110 actives) avant retrait de l'ancienne copie.
+
+Sur la surveillance, c'est plus sérieux : le tableau de bord affichait « aucune
+alerte » depuis la mise en service de ces trois outils, quelle que soit la
+réalité. Et un Opus de nuit a été consommé pour rien.
+
+### 3. Plan
+Fait et vérifié, sur la branche `fix/veille-escalade-prose-haiku` (commits
+`d47de34` et `b4ec774`, non fusionnés sur `main`) :
+- la porte d'escalade ne reconnaît plus que les formulations que le programme
+  écrit lui-même ; les ajouts de l'assistant sont consignés au CHANGELOG —
+  donc mesurables — mais ne déclenchent plus d'escalade tant que le cycle
+  tourne, et remontent comme avant une fois le cycle fini. Le modèle constate,
+  le code décide (journal du 2026-07-31) ;
+- chaque run en cours arrive désormais avec son temps de course et la durée
+  habituelle mesurée de son agent (médiane, plus court, plus long sur 30 runs),
+  et la consigne dit explicitement qu'un run dans sa plage habituelle est
+  normal ;
+- les trois surveillances extérieures inscrivent leurs signalements au
+  registre ;
+- `agents/tests/test_escalades_declarees.py` (nouveau) relit les APPELS dans
+  les sources et refuse de passer si un quatrième appelant oubliait ; il
+  vérifie aussi qu'il trouve bien les appels (≥ 8), sans quoi il passerait vert
+  en ne mesurant rien. 11 appels vérifiés, 2,1 s ;
+- le lanceur de `test_veille_cycle.py` déduit sa liste. 10/10.
+
+Pour revenir en arrière : la branche n'est pas fusionnée, un `git checkout` du
+fichier concerné suffit. Aucune migration, aucun schéma touché.
+
+Laissé à l'arbitrage, avec les chiffres (règle 5) :
+- à partir de quelle durée considérer une collecte comme bloquée. Repère fourni,
+  seuil non posé : le poser serait décider de la posture.
+- la cadence de rattrapage des deux sources ajoutées le 2026-10-20 : 4 000
+  annonces par passage, tous les 3 jours, pour ~200 000 de stock initial, soit
+  ~150 jours. Réglage voulu et documenté dans leurs configs ; seul le rythme
+  mérite peut-être d'être rediscuté.
+
+### 4. Ce qui n'a PAS été fait, et pourquoi
+- **Aucun seuil de durée posé** : décision de posture, elle appartient à
+  l'utilisateur.
+- **Aucune règle de méthode touchée** : ni bornes de plausibilité, ni délai de
+  grâce, ni garde-fou anti-délistage, ni cadence, ni définition de calcul.
+- **Rien fusionné sur `main`.**
+- **Les trois courriers en attente n'ont pas été envoyés.** Ce ne sont pas des
+  alertes mais du courrier transactionnel de la beta (agent `bilan-comptes`) :
+  deux « rapport prêt » et un envoi de mot de passe, tous pointant vers
+  `http://localhost:3001`, donc des liens morts hors du poste. L'un porte un
+  mot de passe en clair. Les router vers la boîte d'alertes du projet aurait
+  été une erreur d'adressage doublée d'une diffusion de secret. Ils restent en
+  place. Aucune alerte de sévérité haute n'était en attente d'envoi.
+- **La collecte en cours n'a pas été interrompue** : observée, pas touchée.
+- **Non vérifié** : l'effet des correctifs sur un vrai cycle. Ils ne seront
+  éprouvés en conditions réelles qu'au prochain départ de nuit.
+
+### 5. Trois alertes des jours précédents, vérifiées sans suite
+- `extract-ddproperty` / structure du blob changée (2026-10-20) : déjà réparé
+  par `5d9fce2` sur la branche de travail courante. Runs 964 et 968 : 12 768 et
+  12 764 annonces scannées, 0 erreur HTTP, 0 trace d'erreur. Non récurrent.
+- `extract-fazwaz` / sitemap non régénéré (16, 17 et 18/10) : éteint depuis le
+  déplacement du départ à 02:30. Runs 911 à 988 : 710, 347, 373, 277 et 102
+  nouvelles. Non récurrent.
+- `scores-tension` / scores de revente 199 → 0 (2026-10-21) : conséquence
+  attendue du passage de la config de tension en v3 le même jour (naissance par
+  identifiant séquentiel, décision utilisateur), survenu entre les runs 959 et
+  961 à vingt minutes d'intervalle. Pas une panne. L'alerte compare à la valeur
+  précédente, donc elle s'est tue d'elle-même (0 → 0 au run 981). Reste à
+  trancher, et NON tranché ici : faut-il taire ce garde-fou quand
+  `config_version` change ? Comparer deux versions est comparer des
+  incomparables — la config le déclare elle-même — mais changer quand une alerte
+  parle est une décision de posture.
+
+### Références techniques
+`ops/veille-cycle.py` (`doit_escalader`, `ECHECS_CONSOMMES`, `PREFIXE_HAIKU`,
+`duree_habituelle`, `CONSIGNE_HAIKU`), `ops/pouls.py`, `ops/fraicheur.py`
+(`ledger=` sur `escalation.create`, dont la docstring promettait déjà la
+déclaration). Ticket :
+`agents/queue/done/2026-10-22T213012-veille-claude-cycle_probleme.json`.
+Compte rendu : `agents/audits/reparations-2026-10-23.md`. Run 989,
+`pragma quick_check` = ok, `agents/logs/extract-ddproperty-2026-10-22T193004.log*`
+(4 phases).
+
+## 2026-10-23 — Hipflat et PropertyHub passent en quotidien (demande explicite)
+
+**Causes.** Cadence provisoire de 3 jours (2026-10-20) remplacée à la demande de l'utilisateur. **Conséquences.** Les deux agents sont dus dès le cycle de 02:30 ; coût annoncé ~3-4 h de plus par passage sur le cycle de nuit — **non remesuré**, à relever au 1er cycle. **Plan.** `every_days` 3 → 1 dans `agents/agents.json` (non commité). Les 1 098 erreurs HTTP de PropertyHub (run du 20/10) sont **laissées de côté** : la donnée arrive, décision de l'utilisateur. DotProperty reste en lane `soir` (21:00), déjà quotidien. **Méthode.** Relecture du JSON et de `orchestrator status` : les trois agents apparaissent dus.
+
+## 2026-10-23 (suite) — Relever la cadence d'un agent le déclarait mort dans la minute ; et le journal d'un extracteur sobre reste vide pendant des heures
+
+**Causes.** Deux défauts distincts, le second trouvé en mesurant le premier.
+
+*Un.* L'entrée précédente consigne le passage de `extract-propertyhub` et
+`extract-hipflat` de 3 jours à 1 jour (`agents/agents.json`, modifié à 09:05:31
++07:00, après le cycle de 02:30). À 09:30:02, `controle_inactivite` les a
+déclarés inactifs depuis **55,0 h** pour un seuil de 24 h, relancé
+`LowiBKK-Agents` et réveillé Opus. Les deux agents étaient à l'heure : dernier
+run `ok` le 2026-10-20T19:30 UTC (runs 948/949), prochain dû le 24/10 sous la
+cadence alors en vigueur. `inactifs()` mesurait les heures depuis le dernier
+démarrage et les comparait au seuil **de la cadence du jour**, sans tenir
+compte du fait que le temps écoulé l'avait été sous une autre. Contrefactuel
+vérifié sur `HEAD:agents/agents.json` : avec `every_days: 3`, aucun des deux
+agents n'entre dans `agents_quotidiens()` — donc aucune alerte possible.
+Reproduit à l'identique (55,0 h sur les deux) en rejouant le ledger réel privé
+des runs 1006/1007, à l'instant exact du constat.
+
+*Un bis.* `controle_inactivite` relance le cycle **puis** escalade, en passant
+à Opus les problèmes mesurés **avant** la relance. Le ticket affirmait donc
+« et rien ne tourne » alors que les deux extracteurs étaient partis 4 s plus
+tôt (runs 1006/1007, `2026-10-23T02:30:08+00:00`, processus vérifiés vivants).
+L'Opus appelé a cherché une panne déjà réparée par l'appelant lui-même.
+
+*Deux.* En vérifiant que les deux extracteurs relancés avançaient, mesure
+inattendue : `agents/logs/extract-propertyhub-2026-10-23T023008.log` pesait
+**0 octet après 15 minutes**, pendant que `extract-hipflat`, parti la même
+seconde, en était à 200 ko — et pendant que la base montrait propertyhub
+écrire **23 annonces / 50 s**. Son journal du 20/10 pèse 298 ko : le texte
+arrive, mais à la fin d'un run de 5 h 47. Cause : `agents/core/shell.py` vide
+le tampon du **parent** à chaque ligne lue (`fh.flush()`), mais l'**enfant**
+groupe sa sortie par blocs de 8 ko tant qu'elle ne va pas vers un terminal.
+`PYTHONIOENCODING` et `PYTHONUTF8` y étaient déjà posés (correctif du
+2026-08-22) ; ils règlent l'encodage, pas le groupage. Un agent bavard franchit
+le seuil en permanence, un agent sobre peut mettre des heures.
+
+**Conséquences.** Aucune donnée perdue, aucune collecte manquée : les deux
+sources avaient été relevées le 21/10 et leur premier passage quotidien a
+démarré à 09:30. Le coût est une **troisième fausse alerte en deux nuits** —
+2 constats hauts, une relance du cycle en pleine journée, un Opus réveillé.
+Le défaut *deux* n'avait encore rien cassé, mais il nourrit directement le
+premier : c'est en lisant un journal vide qu'on croit un extracteur mort, et
+il rend tout diagnostic plus long pendant près de six heures par run.
+
+**Plan.** Branche `fix/veille-inactivite-cadence-changee`, commits `b21e6b4`
+et `4490e4f`.
+
+- `ops/veille-cycle.py` : `cadences_declarees()` + `planchers_cadence()`
+  mémorisent la cadence vue de chaque agent quotidien dans
+  `agents/state/veille/cadences.json` ; un **changement constaté** remet le
+  décompte à zéro à l'instant du constat, et `inactifs()` prend ce plancher en
+  compte. **`INACTIVITE_MAX_H` reste à 24 h** : c'est une règle de méthode, et
+  ce n'est pas le seuil qui était faux mais le point de départ du décompte.
+- Choix encodé et commenté : **l'amorçage ne pose aucun plancher**. Si le
+  premier passage en posait un, l'installation du fichier d'état aveuglerait
+  les 20 agents quotidiens pendant 24 h — un garde-fou muet vaut celui qui crie
+  (règle 2). Seul un changement de cadence accorde le délai, et le délai est un
+  report : vérifié, l'alerte repart 25 h après le changement.
+- `ops/veille-cycle.py` : le résultat de `relancer_cycle()` est joint aux
+  preuves du ticket (`relance_inactivite`), pour qu'un Opus ne reparte plus
+  chercher ce que l'appelant venait de réparer.
+- `agents/core/shell.py` : `PYTHONUNBUFFERED=1` sur les sous-processus.
+  Retour arrière : retirer la ligne.
+- Tests : `agents/tests/test_veille_cadence_changee.py` (6 cas, 13
+  vérifications — dont la repro du défaut et le fait que le garde-fou reparle
+  après le délai) et `agents/tests/test_log_au_fil_de_leau.py` (2 cas, 5
+  vérifications — vrai sous-processus, vrai tuyau, vrai fichier, enfant sobre
+  à dessein ; vérifié en échec avant correctif, en succès après ; le 2e cas
+  garde le correctif UTF-8 du 2026-08-22 que le 1er aurait pu défaire).
+- Ticket `2026-10-23T023006-veille-claude-cycle_probleme` résolu et déplacé ;
+  escalade réconciliée dans le ledger (`Escalades ouvertes : 0`).
+
+**Méthode.** Horodatage de `agents/agents.json` (09:05:31, soit 25 min avant le
+constat et après le cycle), ledger (runs 948/949 `ok` le 20/10), contrefactuel
+sur la config d'avant le changement, puis rejeu de `inactifs()` sur une copie
+du ledger réel ramenée à l'état de 09:30:02 : 2 alertes avant correctif,
+0 après, 2 de nouveau 25 h plus tard. Pour le défaut *deux* : relevé de la
+taille des deux journaux trois fois en une minute (0 / 197 274 / 200 324 o)
+pendant que la base montrait les deux sources écrire, puis repro en vase clos.
+Tests voisins repassés : `test_veille_cycle` 10/10, `test_orchestrator_tee`,
+`test_console_utf8`, `test_lanes`, `test_metrics`.
+
+Santé du reste, vérifiée : `pragma quick_check` = ok (331 s) et
+`pragma foreign_key_check` = ok sur `scraper/output/bangkok.db` (5 384 Mo, WAL,
+**deux écrivains concurrents au moment du contrôle**) ; 229 435 annonces /
+146 513 actives ; les 8 sources vues dans les 14 h ; sauvegarde sur clé du
+cycle réussie (5 383 Mo, 3 relectures concordantes à 228 722 / 145 800 avant
+rotation). Journaux : aucune ligne `[erreur]`, aucun `Traceback`, aucun
+`SONDE-ECHEC` sur le cycle complet du 22/10. Le motif le plus fréquent de tous
+les journaux conservés — `database is locked`, **12 995 occurrences** — est
+entièrement ancien (2026-08-25 et 2026-09-08, rien depuis 45 j) ; compté avant
+de conclure, précisément pour ne pas le traiter comme un défaut courant.
+
+**Ce qui n'a PAS été fait, et pourquoi.**
+- **La cadence des deux agents n'a pas été retouchée** : elle vient d'être
+  fixée par l'utilisateur ce matin (entrée précédente). La corriger pour faire
+  taire une alerte serait trancher à sa place (règle 5).
+- **`INACTIVITE_MAX_H` n'a pas bougé** — même raison.
+- **Les runs 1006/1007 n'ont pas été arrêtés** : ce sont les passages légitimes
+  du nouveau rythme. Couper un `--full` en vol ferait passer pour délistées les
+  annonces non encore revues.
+- **Les 6 constats hauts du 17 au 21/10 n'ont pas été rouverts** : antérieurs
+  aux deux derniers cycles, qui sont propres, et déjà traités dans les
+  réparations de ces jours-là.
+- **Le surcoût du passage en quotidien n'est pas mesuré** (annoncé ~3-4 h par
+  passage et par agent) : à relever au premier cycle complet qui enchaînera les
+  deux.
+- **Aucune vérification en conditions de nuit réelle** : les tests passent, le
+  premier cycle sous correctif est celui de cette nuit.
+- **Les 3 courriers de `agents/queue/mail/` n'ont pas été envoyés et restent en
+  place** : ce ne sont pas des alertes mais des messages applicatifs de
+  `bilan-comptes` à un utilisateur (un mot de passe en clair, deux liens de
+  rapport), adressés à `schoenauer.anthony@gmail.com` et pointant vers
+  `http://localhost:3001` — inatteignable hors du poste. Les réexpédier vers la
+  boîte d'alerte publierait un mot de passe chez un tiers pour des liens
+  inutilisables.
+
+### Références techniques
+`ops/veille-cycle.py` (`CADENCES_VUES`, `cadences_declarees`,
+`planchers_cadence`, `inactifs(planchers=)`, `relance_inactivite` dans
+`escalader`), `agents/core/shell.py` (`PYTHONUNBUFFERED`).
+Tests : `agents/tests/test_veille_cadence_changee.py`,
+`agents/tests/test_log_au_fil_de_leau.py`. Ticket :
+`agents/queue/done/2026-10-23T023006-veille-claude-cycle_probleme.json`.
+Compte rendu : `agents/audits/reparations-2026-10-23.md` (seconde
+intervention). Runs 948/949, 1006/1007.

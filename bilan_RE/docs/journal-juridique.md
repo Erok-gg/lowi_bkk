@@ -88,3 +88,12 @@ Points établis dans cette session et jamais reportés ici (aucun n'est validé 
 - **Aucun test ne garde ces contraintes.** Elles tiennent aujourd'hui par vérification manuelle (`grep`) ; une régression ne déclencherait rien. C'est le garde-fou à écrire avant toute mise en vente.
 - `AnalyseForm.tsx` nomme encore un portail dans le `placeholder` du champ URL — laissé à l'arbitrage de l'utilisateur.
 - Rien de ce qui précède n'est validé par un avocat.
+
+## 2026-10-22 — Bloc « Buying costs » : à faire valider
+Le bilan affiche désormais une estimation des frais d'achat (droit de mutation
+2 % partagé par moitié, taxe spécifique 3,3 % ou timbre 0,5 % côté vendeur,
+retenue à la source du vendeur, inscription d'hypothèque, formulaire de
+change pour un étranger, fonds de réserve pour du neuf, frais d'avocat
+indicatifs 30 000–60 000 ฿). Points à faire confirmer : taux en vigueur, usage
+du partage, mention « plafond » (calcul sur le prix et non sur la valeur
+d'expertise), et formulation qui ne soit pas un conseil fiscal.

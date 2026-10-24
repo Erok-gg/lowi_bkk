@@ -4,20 +4,28 @@
   "base_url": "https://www.livinginsider.com",
   "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
   "rate_limit_seconds": 3.0,
+  "_throttle_pourquoi": "2026-10-20 : laisse en cadence FIXE a dessein. Mesure ce jour : chaque fiche renvoie 202 + x-amzn-waf-action (challenge AWS WAF), avec requests comme avec curl_cffi. Un 202 compte comme un succes pour la cadence adaptative, qui accelererait vers 1 s contre un pare-feu qui nous a deja reperes. A rebasculer quand le blocage sera traite.",
+  "fetcher_backend": "curl_cffi",
+  "_fetcher_backend_pourquoi": "2026-10-20 : bascule des 4 sources restantes apres DDproperty (29/08). Avec requests, empreinte TLS Python/urllib3 sous un UA Chrome 126 fige : incoherence reperee par les anti-bots. curl_cffi impersone Chrome (150 mesure) avec des en-tetes coherents. NB : le champ user_agent n est PAS utilise par ce backend. Rollback : retirer cette cle.",
   "image_rate_limit_seconds": 0.4,
   "timeout_seconds": 30,
   "max_pages": 25,
   "respect_robots": true,
+  "mode": "liste",
+  "_mode_pourquoi": "2026-10-20 : 'liste' = on lit les cartes des pages de liste, aucune fiche ouverte. Mesure : fiches en 202 + x-amzn-waf-action (challenge AWS WAF) depuis le 25/09, liste location aussi le 20/10 ; liste vente en 200 avec prix/surface/chambres/SDB/etage/immeuble. 'fiche' = ancien chemin (visite de chaque fiche), sans contournement du challenge. Rollback : 'fiche'.",
   "searches": [
     {
-      "path": "/searchword_en/Condo/Buysell/{page}/property-listing-condo-for-sale.html",
+      "path_first": "/en/condo-buysell",
+      "path": "/en/condo-buysell/{page}",
       "deal_type": "sale"
     },
     {
-      "path": "/searchword_en/Condo/Rent/{page}/property-listing-condo-for-rent.html",
+      "path_first": "/en/condo-rent",
+      "path": "/en/condo-rent/{page}",
       "deal_type": "rent"
     }
   ],
+  "_searches_pourquoi": "Refonte du site vers le 17/09 : /searchword_en/Condo/<Buysell|Rent>/<n>/... sert toujours la page 1 (canonique /en/condo-buysell) et son ld+json ItemList est un bloc fige de 12 URL. Vraie pagination : /en/condo-buysell/<n> (1 599 pages en vente, flux national), 48 a 72 cartes par page dont ~7 'boostees' repetees.",
   "image": {
     "width": 1024,
     "height": 768,

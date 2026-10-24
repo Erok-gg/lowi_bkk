@@ -2,6 +2,10 @@
 name: extract-fazwaz
 description: Extraction FazWaz (vente et location) vers SQLite local. Découverte par le sitemap du site (lastmod par annonce), fiche de détail pour chaque annonce visitée. Utiliser pour lancer, diagnostiquer ou réparer le scrap FazWaz.
 ---
+> **Affichée « FazWaz / Thaiger » depuis le 2026-10-21.** thaigerproperty.com est une vitrine du
+> groupe FazWaz : même catalogue (58/60 annonces testées déjà en base, mêmes totaux Bangkok).
+> Une seule source, deux portails ; l'identifiant technique reste `fazwaz`.
+
 
 # extract-fazwaz
 

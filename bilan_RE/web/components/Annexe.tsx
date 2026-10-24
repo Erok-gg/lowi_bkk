@@ -6,8 +6,10 @@
  *
  * Trois contraintes tenues ici, et vérifiées par agents/tests/test_annexe.py :
  *
- *   1. AUCUNE SOURCE NOMMÉE, AUCUN DÉCOMPTE DE SOURCES. Demande utilisateur du
- *      2026-10-20 : « un agrégat de données provenant de sources publiques
+ *   1. SOURCES NOMMÉES UNIQUEMENT DANS L'HISTORIQUE DE L'ANNONCE (changement du
+ *      2026-10-22, demande utilisateur : portail + favicon + lien tant que l'annonce
+ *      est en ligne). Partout ailleurs : aucune source nommée, aucun décompte.
+ *      Demande antérieure du 2026-10-20 : « un agrégat de données provenant de sources publiques
  *      disponibles représentant des offres de prix », et rien de plus. C'est
  *      aussi ce qui a fait retirer `h.portails` de l'identité du rapport et
  *      `calc.sources_gardees` du bloc méthode : les deux les nommaient.
@@ -40,7 +42,7 @@ import type { Rapport } from "@/bilan_RE/web/lib/types";
  * la désynchronisation. Valeur actuelle : version 1, posée le 2026-10-17
  * (docs/methodes-calculs.md §12).
  */
-export const METHODE_CHANGEE_LE = "2026-10-17";
+export const METHODE_CHANGEE_LE = "2026-10-22";
 
 const jour = (s: string) =>
   new Date(s + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -57,11 +59,6 @@ export default function Annexe({ r, doux, faible }: { r: Rapport; doux: string; 
 
   return (
     <div className={`space-y-1 text-[11px] leading-relaxed ${doux}`}>
-      <p className={`font-data text-[10px] uppercase tracking-[0.14em] ${faible}`}>
-        Method version {calc?.config_version ?? "—"} · listing data as at {ou(r.donnees_du)} · market scores to{" "}
-        {ou(calc?.fin_fenetre)} · method last changed {jour(METHODE_CHANGEE_LE)}
-      </p>
-
       <Titre>What this report is</Titre>
       <p>
         A <strong>market analysis</strong>: it places this unit, and the building it sits in, against the other units
@@ -77,17 +74,18 @@ export default function Annexe({ r, doux, faible }: { r: Rapport; doux: string; 
         <strong>asking prices</strong> — what sellers and landlords are currently asking. This matters more than any
         other statement in this annex. <strong>No public source in Thailand discloses the price actually paid.</strong>{" "}
         Every figure therefore measures seller demand, not concluded transactions, which is why this report ranks and
-        compares rather than estimating a value. It reproduces no listing, photograph, description or link: only figures
-        computed from them.
+        compares rather than estimating a value. It reproduces no photograph or description: only figures computed from them.
+        The listing's history names the portal each copy of the unit was found on and links to it while it is still online.
       </p>
 
       <Titre>Reference date, and revision</Titre>
       <p>
         Figures are computed over a rolling window ending on the dates shown above, and market scores are recalculated{" "}
-        {calc?.frequence_calcul === "mensuelle" ? "monthly" : "periodically"}. Earlier figures{" "}
+        {calc?.frequence_calcul === "quotidienne" ? "daily" :
+          calc?.frequence_calcul === "mensuelle" ? "monthly" : "periodically"}. Earlier figures{" "}
         <strong>are expected to change</strong> as later data arrives: a window that looked complete can be revised once
         withdrawals and re-listings are resolved. Comparisons between reports should always be read against the method
-        version, printed above.
+        version recorded with each report.
       </p>
 
       <Titre>What was examined, and what was not</Titre>
@@ -203,7 +201,7 @@ export default function Annexe({ r, doux, faible }: { r: Rapport; doux: string; 
 
       <Titre>Method version and changes</Titre>
       <p>
-        Every report prints the method version it was produced under. The method is frozen under that identifier: two
+        The method version each report was produced under is recorded with it. The method is frozen under that identifier: two
         reports bearing the same version were computed the same way. Any change takes a new version, with the date and
         the nature of the change recorded. A record of changes is available on request.
       </p>

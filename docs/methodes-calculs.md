@@ -433,12 +433,14 @@ Groupe `unit_key` = même immeuble × chambres × tranche de 5 m² × type. Une 
 ### Santé des sources, recalculée à chaque fenêtre
 Une source est écartée si elle ne retire rien alors qu'elle a au moins 200 actives, si elle reste 5 jours ou plus sans retrait en fin de fenêtre, si son stock gonfle de plus de 50 % (recensement), ou par exclusion manuelle datée (LivingInsider depuis le 16/09, Nestopa). **Constat au 2026-10-17 : aucune fenêtre n'a ses deux grandes sources saines.** Au 12/10, FazWaz est écarté (stock +73 %, rattrapage du sitemap) ; au 15/10, c'est DDproperty (5 jours sans retrait). Tant que ça dure, la composition du score change d'une semaine à l'autre et la série n'est pas comparable.
 
+**Mis à jour le 2026-10-20.** Remesuré avec les données à jour, les fenêtres finissant les 15, 17 et 19/10 gardent toutes deux grandes sources : DDproperty a délisté 2 529 annonces le 17/10. Cause des trous DDproperty, mesurée au ledger : chaque nuit sans retrait est un recensement arrêté au plafond `max_pages_recensement` (3 200 pages par flux, 6 400 lues), donc avant la fin du catalogue, ce qui interdit le délistage. **Décision de l'utilisateur** : la base est considérée saine depuis `fiable_depuis`. `sante_sources.saines_forcees` (config v2) garde DDproperty et FazWaz sur toutes les fenêtres jusqu'au 2026-10-20 ; au-delà, les règles automatiques reprennent. Le calcul devient **quotidien** en fin de cycle, et l'agent `scores-tension` alerte (constat haut → réparation) dès **3** jours sans retrait d'une grande source, deux jours avant l'exclusion.
+
 ### Tension : 6 signaux bruts, 5 familles pondérées
 | Famille | Signal | Sens (+ = vendeur) | Poids |
 |---|---|---|---|
 | Écoulement | sorties ÷ cohortes à risque, par mois | + | 0,35 |
 | Durée | âge médian de sortie, **Kaplan-Meier avec censure et troncature à gauche** | − | 0,20 |
-| Offre | −ln(stock t ÷ stock t−90 j) | + | 0,15 |
+| Offre | −ln(stock t ÷ stock t−90 j), **même périmètre aux deux dates** (v3, voir ci-dessous) | + | 0,15 |
 | Prix | part des cohortes avec une baisse sur 30 j (−) et prix/m² à panier constant sur 90 j (+), moyennés | ± | 0,15 |
 | Vendeurs | cohortes actives par immeuble | − | 0,15 |
 
@@ -453,5 +455,57 @@ Postulat de l'utilisateur : **on revend à la valeur de marché**. Seules compte
 ### Prix/m² face aux comparables
 Stock actif en fin de fenêtre : immeuble tous lots, immeuble mêmes chambres et ±15 % de surface, puis 1 km et district. Médiane, p25–p75, part des comparables moins chers, verdict. Sous 5 comparables : pas de verdict.
 
+### Date de naissance d'une annonce (config v3, 2026-10-21)
+`first_seen` date notre **découverte**, pas la mise en ligne. Sur la fenêtre au 18/10, 10 % des annonces DDproperty et FazWaz ont été trouvées plus de 30 jours après leur création, et le stock en vente DDproperty passait de 3 996 à 40 562 entre t−90 j et t1, presque entièrement par rattrapage de couverture. Le signal offre lisait ça comme un marché qui s'effondre.
+
+**Méthode.** Les identifiants de DDproperty, FazWaz, PropertyScout, PropertyHub et Nestopa sont des compteurs. La **frontière** d'une source à la date d est le plus grand identifiant vu jusqu'à d. Une annonce est née le premier jour où la frontière a dépassé son identifiant, jamais après sa première vue. Hipflat (identifiant haché) garde sa première vue. PropertyHub, suivi depuis le 2026-10-20 seulement, prend aussi son `createdAt` (distinct de `refreshed_at`, la remontée) : vérifié cohérent avec l'ordre des identifiants (4,4 % d'inversions entre voisins sur 4 000 annonces), il date des annonces depuis 2019, avec une médiane au 2026-09-09.
+
+**Validation.** Sur 91 127 annonces DDproperty datables, **99,2 %** ont un `posted_at` (date de remontée, donc postérieure à la création) supérieur ou égal à la naissance estimée moins 2 j, avec un écart médian de **0 j**. PropertyScout : retard médian de découverte de 29 j, non expliqué, donc datation moins éprouvée.
+
+**Usage.** (1) Offre : le stock passé compte les annonces qui **existaient** à t−90 j, même découvertes depuis, et les deux stocks ne retiennent que les sources déjà suivies à t−90 j (PropertyHub et Hipflat en sont exclues jusqu'au 2027-01-18). (2) Durée et liquidité : les âges partent de la naissance, et l'entrée sous observation est la première vue (troncature à gauche exacte). (3) Écoulement : inchangé, une sortie n'étant observable qu'après la découverte.
+
+**Effet mesuré au 18/10.** Offre Bangkok −0,99 → **−0,15**. Étendue des districts −1,40…−0,69 → −0,24…−0,09. Corrélation de rang v2/v3 : 0,57, l'ancien classement suivait la couverture. Écoulement inchangé.
+
+**Biais restant, non mesuré.** Une annonce née avant t−90 j et retirée avant qu'on la voie manque au stock passé. L'offre reste donc légèrement tirée vers « l'offre gonfle ».
+
 ### Ce que ces scores ne disent pas
 Ce sont des **prix affichés** et des **retraits d'annonces**, pas des ventes. Les poids sont des hypothèses de départ, à recalibrer par validation prédictive (le score à t annonce-t-il les baisses et les délais à t + 1 mois ?) dès 3 mois d'historique.
+
+## 13. Bilan acheteur — loyer estimé, rénovation, frais d'achat (ajouté le 2026-10-22)
+
+**Loyer estimé** (affiché au profil « investisseur ») = médiane du loyer/m² des
+locations actives du **même immeuble, mêmes chambres, surface ±15 %** × surface
+du lot. Replis : immeuble entier, puis mêmes chambres et taille dans 1 km
+(confiance basse). Minimum 5 comparables, copies comptées une fois, bornes
+loyer 3 k–500 k et surface 15–500 m². Fourchette = p25–p75 × surface.
+Rendement brut = loyer × 12 / prix demandé.
+*Choix mesuré* (4 000 locations tirées au hasard, valeur prédite contre loyer
+affiché) : m²-même-taille × surface 8,2 % d'erreur médiane (80 % sous 16,9 %),
+loyer médian même taille 8,3 %, m² immeuble entier 8,8 %, sans même taille
+9,8 %. **L'étage ne pondère pas** : pente médiane +0,09 %/étage dans 396
+groupes immeuble × chambres (IQR −0,21 / +0,47) ; montré par tranches (1-9,
+10-24, 25+) à titre indicatif.
+
+**Rénovation** = part des locations comparables dont le titre ou la
+description dit « renovated » (1,5 % des locations actives). L'effet sur le
+loyer ne se mesure **qu'à l'intérieur d'un immeuble** (≥ 2 rénovées, ≥ 3
+autres) ; dans le rayon, médiane des écarts par immeuble (≥ 3 immeubles). Une
+comparaison toutes adresses confondues donnait −32 / −34 % : les rénovées
+sont surtout dans des immeubles anciens. Seuil « sensible » : +10 % (proposé,
+à arbitrer). À l'échelle de Bangkok : +0,2 % en médiane, > +10 % dans 37
+groupes sur 134.
+**En attente (2026-10-22, décision utilisateur) : le bloc affiche « Coming
+soon ».** Raison mesurée sur 101 immeubles : le verdict « augmente » sort
+presque aussi souvent en étiquetant au hasard des logements NON rénovés
+(+10 % : 31 % contre 24 % au hasard ; +20 % : 12 % contre 11 %). Pistes
+chiffrées : effectifs ≥ 3 rénovées / ≥ 5 autres (35 immeubles mesurables,
+29 % contre 16 % au hasard) ou test par tirage au sort dans l'immeuble (13 %
+retenus, ≤ 10 % au hasard par construction).
+
+**Frais d'achat** (tous profils) : taux légaux (droit de mutation 2 %, taxe
+spécifique 3,3 % ou droit de timbre 0,5 %, retenue à la source vendeur,
+inscription d'hypothèque 1 % du prêt) appliqués au **prix demandé** — la base
+légale est la valeur d'expertise, en général inférieure : ce sont des plafonds.
+Le partage acheteur / vendeur est un usage. Total « acheteur » = postes
+certains seulement (moitié du droit de mutation). Taux dans
+`bilan_RE/tension/config.json` → `frais_achat`. À valider par un avocat thaï.

@@ -44,6 +44,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import shutil
 import sqlite3
+import statistics
 import hashlib
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -87,6 +88,29 @@ MOTIFS_ERREUR = re.compile(r"\[erreur|Traceback|SONDE-ECHEC")
 #: cycle. La panne de fond, elle, reste détectée par son propre run `failed`.
 PREFIXE_JOURNAL_VEILLE = "veille-opus-"
 
+#: Demande de l'utilisateur (2026-10-20) : « ne pas laisser les robots sans
+#: activité plus de 24 h ». La veille ne regardait que le cycle du jour, et
+#: s'éteignait dès qu'il était fini : un agent sauté par un cycle « terminé »,
+#: ou un cycle jamais reparti le lendemain, n'était vu par personne. Mesuré au
+#: ledger : aucun run le 08/10 (nuit de maintenance), et aucun journal de veille
+#: du 17 au 19/10 alors que les cycles tournaient (tâche en Interactive,
+#: session fermée).
+INACTIVITE_MAX_H = 24
+#: Relancer LowiBKK-Agents n'est pas dangereux (MultipleInstances, verrous et
+#: `is_due` de l'orchestrateur), mais une relance toutes les 30 min sur une
+#: panne qui la fait échouer ne servirait à rien : une fois toutes les 6 h.
+RELANCE_ECART_MIN_H = 6
+AGENTS_JSON = ROOT / "agents" / "agents.json"
+#: Cadences déjà vues, pour ne pas compter contre un agent le temps écoulé sous
+#: une cadence qui n'existait plus. Mesuré le 2026-10-23 : la cadence de
+#: propertyhub et hipflat est passée de 3 j à 1 j à 09:05 ; à 09:30 les deux
+#: agents affichaient 55,0 h sans démarrage — un retard parfaitement légitime
+#: sous l'ancienne cadence (dernier passage le 21/10 à 02:30, prochain dû le
+#: 24/10). Résultat : 2 alertes hautes, une relance du cycle et un Opus réveillé
+#: pour une panne qui n'existait pas (règle 2). Le seuil de 24 h n'est PAS en
+#: cause et ne bouge pas : c'est le point de départ du décompte qui était faux.
+CADENCES_VUES = ETAT / "cadences.json"
+
 
 def _ecrire(msg: str) -> None:
     JOURNAL.mkdir(parents=True, exist_ok=True)
@@ -122,7 +146,38 @@ def runs_du_cycle(debut_utc: str) -> list[dict]:
         r["metrics"] = {k: v for k, v in m.items() if not isinstance(v, (list, dict))}
         if r["status"] == "running":
             r["pid_vivant"] = Ledger._processus_vivant(r["pid"])
+            # Sans ces deux repères, « running depuis 2 h » n'est pas
+            # interprétable : cf. duree_habituelle().
+            try:
+                debut = datetime.fromisoformat(r["started_at"])
+                r["tourne_depuis_min"] = round(
+                    (datetime.now(timezone.utc) - debut).total_seconds() / 60, 1)
+            except (TypeError, ValueError):
+                pass
+            r["duree_habituelle"] = duree_habituelle(r["agent"])
     return rows
+
+
+def duree_habituelle(agent: str) -> dict | None:
+    """Durée des 30 derniers runs réussis de cet agent, en minutes.
+
+    POURQUOI (2026-10-23) : les preuves ne disaient NULLE PART combien de temps
+    un agent met d'habitude. Haiku a donc lu « running depuis 2 h, pas de
+    métriques » et conclu « extraction suspendue » — alors que la médiane
+    mesurée d'`extract-ddproperty` est de 327 min, et qu'il n'écrit ses
+    métriques qu'à la fin. Un Opus réveillé pour rien. On ne pose pas de seuil
+    ici (ce serait une décision de posture, règle 5) : on fournit le repère
+    mesuré et on laisse juger."""
+    cx = sqlite3.connect(f"file:{LEDGER}?mode=ro", uri=True, timeout=30)
+    d = [r[0] for r in cx.execute(
+        "select round((julianday(ended_at) - julianday(started_at)) * 1440, 1) "
+        "from agent_runs where agent = ? and status = 'ok' and ended_at is not null "
+        "order by id desc limit 30", (agent,)) if r[0] is not None]
+    cx.close()
+    if not d:
+        return None
+    return {"runs_mesures": len(d), "mediane_min": round(statistics.median(d), 1),
+            "plus_court_min": min(d), "plus_long_min": max(d)}
 
 
 def constats_hauts(debut_utc: str) -> list[dict]:
@@ -261,6 +316,10 @@ Règles :
 - "probleme" dès qu'une preuve montre un échec : run failed/interrompu, constat haut,
   lignes d'erreur, pouls --verifier en échec, extracteurs_ok < extracteurs_lances,
   annonces_ecrites à 0, cycle pas parti, erreurs dans les métriques d'un run.
+- Un run "running" dont le processus est vivant et dont "tourne_depuis_min" reste
+  dans la plage de son "duree_habituelle" est NORMAL : ne le signale pas. Ces
+  agents mettent plusieurs heures et n'écrivent leurs métriques qu'à la fin —
+  des métriques vides en cours de route ne sont pas une panne.
 - Ne cite que ce qui figure dans les preuves. N'invente aucun chiffre.
 
 État décidé par le code : {etat}
@@ -365,10 +424,18 @@ def escalader(jour: str, preuves: dict, problemes: list[str], verdict: dict, lan
         "veille-claude", "cycle_probleme", "high",
         f"veille du cycle : {len(problemes)} problème(s) — {problemes[0][:120]}",
         {"problemes": problemes, "verdict_haiku": verdict,
+         **({"relance_inactivite": preuves["relance_inactivite"]}
+            if preuves.get("relance_inactivite") else {}),
          "runs": [{k: r[k] for k in ("id", "agent", "status", "exit_code", "started_at", "ended_at")}
                   for r in preuves["runs"]]},
         "Reproduire, diagnostiquer, corriger sur une branche si c'est un défaut de code ; "
-        "consigner si c'est un incident passager. Ne rien changer aux règles de méthode.")
+        "consigner si c'est un incident passager. Ne rien changer aux règles de méthode.",
+        # ledger= OBLIGATOIRE : sans lui, escalation.create() écrit le ticket mais
+        # ne le DÉCLARE pas, et `orchestrator status` lit le ledger, pas la file.
+        # Mesure du 2026-10-23 : 46 tickets de sévérité haute déposés par
+        # pouls / veille-claude / fraicheur, 0 déclaré — donc « Escalades
+        # ouvertes : 0 » affiché alors qu'un ticket attendait depuis 7 h.
+        ledger=Ledger())
     _ecrire(f"ticket {ticket}")
     pid = None
     if lancer:
@@ -410,9 +477,146 @@ def escalader(jour: str, preuves: dict, problemes: list[str], verdict: dict, lan
     return ticket
 
 
+# ─── Inactivité (> 24 h) ────────────────────────────────────────────────────
+
+def cadences_declarees() -> dict[str, int]:
+    """Cadence déclarée de chaque agent de la lane quotidienne."""
+    cfg = json.loads(AGENTS_JSON.read_text(encoding="utf-8"))
+    return {a["name"]: int(a.get("every_days", 1)) for a in cfg["agents"]
+            if "daily" in (a.get("lanes") or [])}
+
+
+def agents_quotidiens() -> list[str]:
+    """Agents que --due doit lancer chaque jour. Lanes vides = suspendu ou
+    manuel à dessein (livinginsider, storage…) : pas une inactivité."""
+    return [n for n, j in cadences_declarees().items() if j == 1]
+
+
+def planchers_cadence(maintenant: datetime) -> dict[str, datetime]:
+    """Date à partir de laquelle la cadence ACTUELLE de chaque agent s'applique.
+
+    Un agent dont la cadence vient de passer à 1 jour n'a encore rien à se
+    reprocher : le temps écoulé l'a été sous l'ancienne cadence, où il était à
+    l'heure. On date donc le changement au premier passage qui le constate, et
+    le décompte d'inactivité repart de là.
+
+    PREMIÈRE OBSERVATION = AUCUN PLANCHER, à dessein. Si l'amorçage posait un
+    plancher, l'installation du fichier d'état aveuglerait la surveillance
+    pendant 24 h sur les 20 agents quotidiens — un garde-fou qui se tait vaut
+    celui qui crie (règle 2). Seul un CHANGEMENT constaté accorde le délai.
+    """
+    declarees = cadences_declarees()
+    try:
+        vues = json.loads(CADENCES_VUES.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        vues = {}
+    planchers, sortie = {}, {}
+    for nom, jours in declarees.items():
+        vu = vues.get(nom) or {}
+        if vu.get("every_days") == jours:
+            sortie[nom] = vu                       # cadence inchangée : on garde la date
+        else:
+            # Amorçage (agent inconnu du fichier) : pas de plancher. Changement
+            # constaté (cadence différente) : plancher à maintenant.
+            depuis = maintenant.isoformat(timespec="seconds") if vu else None
+            sortie[nom] = {"every_days": jours, "depuis": depuis}
+            if depuis:
+                _ecrire(f"cadence de {nom} : {vu.get('every_days')} j -> {jours} j "
+                        f"— décompte d'inactivité remis à zéro")
+        if sortie[nom].get("depuis"):
+            planchers[nom] = datetime.fromisoformat(sortie[nom]["depuis"])
+    if sortie != vues:
+        ETAT.mkdir(parents=True, exist_ok=True)
+        CADENCES_VUES.write_text(json.dumps(sortie, ensure_ascii=False, indent=1),
+                                 encoding="utf-8")
+    return planchers
+
+
+def inactifs(maintenant: datetime, noms: list[str],
+             planchers: dict | None = None) -> list[tuple[str, float]]:
+    """(agent, heures depuis son dernier DÉMARRAGE) au-delà du seuil. Un agent
+    jamais lancé est ignoré : `is_due` le prend au prochain cycle, et le
+    signaler ici crierait au loup à chaque ajout d'agent.
+
+    `planchers` recule le point de départ du décompte quand la cadence de
+    l'agent a changé depuis son dernier passage (cf. planchers_cadence)."""
+    cx = sqlite3.connect(f"file:{LEDGER}?mode=ro", uri=True, timeout=30)
+    derniers = dict(cx.execute("select agent, max(started_at) from agent_runs group by agent"))
+    cx.close()
+    out = []
+    for n in noms:
+        if not derniers.get(n):
+            continue
+        depuis = datetime.fromisoformat(derniers[n])
+        plancher = (planchers or {}).get(n)
+        if plancher and plancher > depuis:
+            depuis = plancher
+        h = (maintenant - depuis).total_seconds() / 3600
+        if h > INACTIVITE_MAX_H:
+            out.append((n, round(h, 1)))
+    return out
+
+
+def quelque_chose_tourne(tache: dict) -> bool:
+    if tache.get("etat") == "Running":
+        return True
+    cx = sqlite3.connect(f"file:{LEDGER}?mode=ro", uri=True, timeout=30)
+    pids = [p for (p,) in cx.execute("select pid from agent_runs where status='running'")]
+    cx.close()
+    return any(p and Ledger._processus_vivant(p) for p in pids)
+
+
+def relancer_cycle(maintenant: datetime) -> str:
+    marque = ETAT / "relance-inactivite.json"
+    try:
+        derniere = datetime.fromisoformat(json.loads(marque.read_text(encoding="utf-8"))["le"])
+        if (maintenant - derniere).total_seconds() / 3600 < RELANCE_ECART_MIN_H:
+            return f"relance déjà tentée le {derniere:%d/%m %H:%M} — attente"
+    except (OSError, json.JSONDecodeError, KeyError, ValueError):
+        pass
+    r = subprocess.run(["schtasks", "/run", "/tn", "LowiBKK-Agents"], capture_output=True,
+                       text=True, errors="replace", timeout=60)
+    ETAT.mkdir(parents=True, exist_ok=True)
+    marque.write_text(json.dumps({"le": maintenant.isoformat(timespec="seconds"),
+                                  "code": r.returncode}), encoding="utf-8")
+    return f"LowiBKK-Agents relancée (schtasks code {r.returncode})"
+
+
+def controle_inactivite(preuves: dict, maintenant: datetime, escalade: bool) -> None:
+    """Indépendant du marqueur de fin de cycle : tourne à chaque passage."""
+    from agents.core import maintenance
+    if maintenance.active(maintenant) or quelque_chose_tourne(preuves["tache_agents"]):
+        return
+    morts = inactifs(maintenant, agents_quotidiens(), planchers_cadence(maintenant))
+    if not morts:
+        return
+    problemes = [f"{n} : aucun démarrage depuis {h} h (seuil {INACTIVITE_MAX_H} h), "
+                 "et rien ne tourne" for n, h in morts]
+    _ecrire("inactivité : " + " | ".join(problemes))
+    if not escalade:
+        _ecrire("relance et escalade désactivées (--sans-escalade)")
+        return
+    relance = relancer_cycle(maintenant)
+    _ecrire(relance)
+    # Opus diagnostique POURQUOI le cycle a sauté ces agents ; la relance, elle,
+    # ne l'attend pas. Mais le constat « rien ne tourne » date d'AVANT elle :
+    # sans cette ligne, le ticket du 2026-10-23 09:30 affirmait que rien ne
+    # tournait alors que les 2 extracteurs étaient partis 4 s plus tôt, et Opus
+    # a cherché une panne déjà réparée. Signature sans les heures (cf. _signature).
+    preuves = dict(preuves, relance_inactivite=relance)
+    escalader(f"{maintenant:%Y-%m-%d}", preuves, problemes, {}, lancer=True)
+
+
 # ─── Passage ────────────────────────────────────────────────────────────────
 
-ECHECS_CONSOMMES = (": failed", ": interrompu", "processus", "constat haut", "pas parti")
+#: Chaque motif est un morceau de phrase que CE MODULE fabrique lui-même
+#: (cf. etat_mecanique) — jamais un mot isolé qu'une prose libre pourrait
+#: contenir par accident. « processus » tout seul y figurait et laissait
+#: passer « processus vivant », qui dit le contraire d'un processus disparu.
+ECHECS_CONSOMMES = (": failed", ": interrompu", "mais processus", "constat haut", "pas parti")
+#: Marque les problèmes ajoutés par Haiku : de la PROSE LIBRE, et non les
+#: phrases que ce module fabrique.
+PREFIXE_HAIKU = "(haiku) "
 
 
 def doit_escalader(etat: str, problemes: list[str]) -> bool:
@@ -420,12 +624,28 @@ def doit_escalader(etat: str, problemes: list[str]) -> bool:
     les échecs déjà consommés (run terminé en échec, processus disparu,
     constat haut). Les lignes d'erreur d'un extracteur qui tourne encore sont
     souvent des reprises réseau (« délai curl dépassé… repris », 3 fois le
-    30/09, toutes rattrapées) : on attend la fin du cycle pour en juger."""
+    30/09, toutes rattrapées) : on attend la fin du cycle pour en juger.
+
+    Les ajouts de Haiku ne franchissent PAS cette porte pendant que le cycle
+    tourne. Deux faits mesurés le 2026-10-23 :
+    (1) le filtre cherchait « processus » dans de la prose libre, si bien que
+        « processus vivant » ouvrait l'escalade — 2 tournures sur 2 essayées
+        passaient, dont « le processus tourne normalement » ;
+    (2) le seul problème que Haiku ait relevé seul, à 04:30 ce jour-là, était
+        faux : « extraction suspendue » sur extract-ddproperty à 2 h de course,
+        alors que la médiane mesurée de cet agent est de 327 min (30 derniers
+        runs, de 166 à 1 201 min) et que son journal grossissait de 2 119
+        octets en 25 s, page 164 sur 300. Soit 1 ajout sur 1 infondé, pour un
+        Opus réveillé en pleine nuit (règle 2).
+    Le modèle constate, le code décide (journal du 2026-07-31). Ces ajouts
+    restent consignés au CHANGELOG — donc mesurables — sans réveiller
+    personne ; cycle fini, ils remontent comme avant."""
     if not problemes:
         return False
     if etat != "en_cours":
         return True
-    return any(m in p for p in problemes for m in ECHECS_CONSOMMES)
+    du_code = [p for p in problemes if not p.startswith(PREFIXE_HAIKU)]
+    return any(m in p for p in du_code for m in ECHECS_CONSOMMES)
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -438,6 +658,7 @@ def main() -> int:
     preuves = rassembler(maintenant)
     jour = preuves["debut_cycle_local"][:10]
     fin = ETAT / f"{jour}.json"
+    controle_inactivite(preuves, maintenant, escalade=not a.sans_escalade)
     if fin.exists() and not a.forcer:
         return 0                      # cycle du jour déjà vérifié : on dort
 
@@ -489,13 +710,21 @@ def main() -> int:
     # erreur(s) » dans les métriques d'un run ok). On l'ajoute, marqué comme tel,
     # pour pouvoir mesurer plus tard combien de ces ajouts étaient fondés.
     if verdict.get("verdict") == "probleme" and not problemes:
-        problemes = [f"(haiku) {x}" for x in verdict.get("problemes") or ["sans détail"]]
+        problemes = [f"{PREFIXE_HAIKU}{x}" for x in verdict.get("problemes") or ["sans détail"]]
 
     if doit_escalader(etat, problemes):
         if not a.sans_escalade:
             escalader(jour, preuves, problemes, verdict, lancer=True)
         else:
             _ecrire("escalade désactivée (--sans-escalade) : " + " | ".join(problemes))
+    elif problemes:
+        # Retenu, pas perdu : le CHANGELOG garde la trace de ce que Haiku a cru
+        # voir pendant que le cycle tournait, pour pouvoir mesurer plus tard la
+        # proportion d'ajouts fondés (1 sur 1 infondé au 2026-10-23).
+        for x in problemes:
+            _ecrire(f"retenu (cycle en cours, pas d'escalade) : {x}")
+            if not a.sans_escalade:
+                alert.log("veille-claude", "low", f"retenu pendant le cycle : {x[:300]}")
 
     if etat == "termine" and not a.forcer:
         ETAT.mkdir(parents=True, exist_ok=True)
